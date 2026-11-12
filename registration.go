@@ -8,6 +8,7 @@ import (
 const (
 	pluginID   = "grok-quality-guard"
 	pluginName = "Grok Quality Guard"
+	pluginLogo = "https://raw.githubusercontent.com/wzdnzd/grok-quality-guard/main/assets/logo.png"
 )
 
 var pluginVersion = "0.1.0"
@@ -42,7 +43,8 @@ func pluginRegistration() registration {
 			Name:             pluginName,
 			Version:          pluginVersion,
 			Author:           "wzdnzd",
-			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
+			GitHubRepository: "https://github.com/wzdnzd/grok-quality-guard",
+			Logo:             pluginLogo,
 			ConfigFields: []pluginapi.ConfigField{
 				{Name: "passive_guard", Type: pluginapi.ConfigFieldTypeBoolean, Default: true, Description: "Observe request quality without changing routing."},
 				{Name: "transparent_guard", Type: pluginapi.ConfigFieldTypeBoolean, Default: false, Description: "Hold and validate safe replayable Grok streams before emitting them."},
