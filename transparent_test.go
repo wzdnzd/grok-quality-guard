@@ -411,6 +411,40 @@ func TestRouteModelSafetyAndCandidateChecks(t *testing.T) {
 	}
 }
 
+func TestRouteModelBypassesWhenNoAvailableXAIAuth(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{"disabled": true})
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+	request := rpcModelRouteRequest{ModelRouteRequest: pluginapi.ModelRouteRequest{
+		SourceFormat:       "codex",
+		RequestedModel:     "grok-4.7",
+		Stream:             true,
+		Body:               []byte(`{"model":"grok-4.7","messages":[{"role":"user","content":"hi"}]}`),
+		AvailableProviders: []string{"claude"},
+	}}
+	encoded, errMarshal := json.Marshal(request)
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	raw, errRoute := plugin.RouteModel(encoded)
+	if errRoute != nil {
+		t.Fatal(errRoute)
+	}
+	var routeEnvelope struct {
+		OK     bool                         `json:"ok"`
+		Result pluginapi.ModelRouteResponse `json:"result"`
+	}
+	if errUnmarshal := json.Unmarshal(raw, &routeEnvelope); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	if !routeEnvelope.OK || routeEnvelope.Result.Handled {
+		t.Fatalf("request with no available xAI auth was handled: %s", raw)
+	}
+	if routeEnvelope.Result.Reason != "xai_auth_unavailable" {
+		t.Fatalf("route reason = %q, want xai_auth_unavailable", routeEnvelope.Result.Reason)
+	}
+}
+
 func responsesRequestForTest(model string, stream bool) rpcExecutorRequest {
 	streamText := "false"
 	if stream {

@@ -83,12 +83,31 @@ func (p *Plugin) RouteModel(request []byte) ([]byte, error) {
 	if strings.Contains(strings.ToLower(strings.TrimSpace(req.Query.Get("alt"))), "compact") || isResponsesCompactionRequest(req.Body) {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false, Reason: "responses_compaction"})
 	}
+	// Keep no-auth requests on the host path so logs retain xAI provider attribution
+	if !p.routeHasAvailableXAIAuth(req.AvailableProviders) {
+		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false, Reason: "xai_auth_unavailable"})
+	}
 	return okEnvelope(pluginapi.ModelRouteResponse{
 		Handled:    true,
 		TargetKind: pluginapi.ModelRouteTargetSelf,
 		Target:     pluginID,
 		Reason:     "grok_quality_guard_transparent",
 	})
+}
+
+func (p *Plugin) routeHasAvailableXAIAuth(providers []string) bool {
+	if len(providers) > 0 {
+		for _, provider := range providers {
+			if isGrokProvider(provider) {
+				return true
+			}
+		}
+		return false
+	}
+	if errEnsure := p.ensureSelectionIndex(); errEnsure != nil {
+		return false
+	}
+	return p.selectionIndex.Total() > 0
 }
 
 func (p *Plugin) Execute(request []byte) ([]byte, error) {
