@@ -13,49 +13,49 @@ import (
 )
 
 type Metrics struct {
-	FirstTokenMS    int64   `json:"first_token_ms"`
-	DurationMS      int64   `json:"duration_ms"`
-	GenerationMS    int64   `json:"generation_ms"`
-	OutputTokens    int64   `json:"output_tokens"`
-	ReasoningTokens int64   `json:"reasoning_tokens"`
-	VisibleTokens   int64   `json:"visible_tokens"`
-	EncryptedBytes  int64   `json:"encrypted_bytes"`
-	TPS             float64 `json:"tps"`
+	FirstTokenMS    int64   `json:"first_token_ms,omitempty"`
+	DurationMS      int64   `json:"duration_ms,omitempty"`
+	GenerationMS    int64   `json:"generation_ms,omitempty"`
+	OutputTokens    int64   `json:"output_tokens,omitempty"`
+	ReasoningTokens int64   `json:"reasoning_tokens,omitempty"`
+	VisibleTokens   int64   `json:"visible_tokens,omitempty"`
+	EncryptedBytes  int64   `json:"encrypted_bytes,omitempty"`
+	TPS             float64 `json:"tps,omitempty"`
 }
 
 type QualityEvidence struct {
-	At                time.Time `json:"at,omitempty"`
+	At                time.Time `json:"at,omitzero"`
 	Source            string    `json:"source,omitempty"`
 	Action            string    `json:"action,omitempty"`
 	Class             string    `json:"class,omitempty"`
 	Reason            string    `json:"reason,omitempty"`
 	Protocol          string    `json:"protocol,omitempty"`
-	Streaming         bool      `json:"streaming"`
-	Terminal          bool      `json:"terminal"`
-	HoldExpired       bool      `json:"hold_expired"`
-	HasThinking       bool      `json:"has_thinking"`
-	HasReasoningDelta bool      `json:"has_reasoning_delta"`
-	ReasoningRequired bool      `json:"reasoning_required"`
-	ReasoningStarted  bool      `json:"reasoning_started"`
-	SemanticOutput    bool      `json:"semantic_output"`
-	UsageReported     bool      `json:"usage_reported"`
-	VisibleRunes      int64     `json:"visible_runes"`
-	VisibleTokens     int64     `json:"visible_tokens"`
-	OutputTokens      int64     `json:"output_tokens"`
-	ReasoningTokens   int64     `json:"reasoning_tokens"`
-	EncryptedBytes    int64     `json:"encrypted_bytes"`
-	EncryptedFloor    int64     `json:"encrypted_floor"`
-	FirstTokenMS      int64     `json:"first_token_ms"`
-	DurationMS        int64     `json:"duration_ms"`
-	GenerationMS      int64     `json:"generation_ms"`
-	VisibleFlushMS    int64     `json:"visible_flush_ms"`
-	TPS               float64   `json:"tps"`
-	ChunkCount        int       `json:"chunk_count"`
-	ByteCount         int64     `json:"byte_count"`
-	EventCount        int       `json:"event_count"`
-	ParsedEvents      int       `json:"parsed_events"`
-	UnknownEvents     int       `json:"unknown_events"`
-	ParseFailures     int       `json:"parse_failures"`
+	Streaming         bool      `json:"streaming,omitempty"`
+	Terminal          bool      `json:"terminal,omitempty"`
+	HoldExpired       bool      `json:"hold_expired,omitempty"`
+	HasThinking       bool      `json:"has_thinking,omitempty"`
+	HasReasoningDelta bool      `json:"has_reasoning_delta,omitempty"`
+	ReasoningRequired bool      `json:"reasoning_required,omitempty"`
+	ReasoningStarted  bool      `json:"reasoning_started,omitempty"`
+	SemanticOutput    bool      `json:"semantic_output,omitempty"`
+	UsageReported     bool      `json:"usage_reported,omitempty"`
+	VisibleRunes      int64     `json:"visible_runes,omitempty"`
+	VisibleTokens     int64     `json:"visible_tokens,omitempty"`
+	OutputTokens      int64     `json:"output_tokens,omitempty"`
+	ReasoningTokens   int64     `json:"reasoning_tokens,omitempty"`
+	EncryptedBytes    int64     `json:"encrypted_bytes,omitempty"`
+	EncryptedFloor    int64     `json:"encrypted_floor,omitempty"`
+	FirstTokenMS      int64     `json:"first_token_ms,omitempty"`
+	DurationMS        int64     `json:"duration_ms,omitempty"`
+	GenerationMS      int64     `json:"generation_ms,omitempty"`
+	VisibleFlushMS    int64     `json:"visible_flush_ms,omitempty"`
+	TPS               float64   `json:"tps,omitempty"`
+	ChunkCount        int       `json:"chunk_count,omitempty"`
+	ByteCount         int64     `json:"byte_count,omitempty"`
+	EventCount        int       `json:"event_count,omitempty"`
+	ParsedEvents      int       `json:"parsed_events,omitempty"`
+	UnknownEvents     int       `json:"unknown_events,omitempty"`
+	ParseFailures     int       `json:"parse_failures,omitempty"`
 }
 
 func qualityEvidenceFromVerdict(verdict QualityVerdict, source string, at time.Time) *QualityEvidence {
@@ -75,15 +75,15 @@ func qualityEvidenceFromVerdict(verdict QualityVerdict, source string, at time.T
 }
 
 type AttemptEvidence struct {
-	At     time.Time `json:"at,omitempty"`
+	At     time.Time `json:"at,omitzero"`
 	Source string    `json:"source,omitempty"`
 	Class  string    `json:"class,omitempty"`
 	Reason string    `json:"reason,omitempty"`
 }
 type ResinState struct {
-	Managed    bool   `json:"managed"`
-	Account    string `json:"account"`
-	Generation int64  `json:"generation"`
+	Managed    bool   `json:"managed,omitempty"`
+	Account    string `json:"account,omitempty"`
+	Generation int64  `json:"generation,omitempty"`
 }
 
 type ResinLeaseDelete struct {
@@ -100,26 +100,34 @@ type ResinLeaseDelete struct {
 
 type AccountState struct {
 	AuthID                       string           `json:"auth_id"`
-	Email                        string           `json:"email,omitempty"`
-	Label                        string           `json:"label,omitempty"`
 	State                        string           `json:"state"`
 	LastReason                   string           `json:"last_reason,omitempty"`
 	LastAttempt                  *AttemptEvidence `json:"last_attempt,omitempty"`
 	LastEvidence                 *QualityEvidence `json:"last_evidence,omitempty"`
-	FirstSeenAt                  time.Time        `json:"first_seen_at,omitempty"`
-	LastObservedAt               time.Time        `json:"last_observed_at,omitempty"`
-	LastProbeAt                  time.Time        `json:"last_probe_at,omitempty"`
-	CooldownUntil                time.Time        `json:"cooldown_until,omitempty"`
-	QualityStrikeMissingThinking bool             `json:"quality_strike_missing_thinking"`
+	FirstSeenAt                  time.Time        `json:"first_seen_at,omitzero"`
+	LastObservedAt               time.Time        `json:"last_observed_at,omitzero"`
+	LastProbeAt                  time.Time        `json:"last_probe_at,omitzero"`
+	CooldownUntil                time.Time        `json:"cooldown_until,omitzero"`
+	QualityStrikeMissingThinking bool             `json:"quality_strike_missing_thinking,omitempty"`
 	SoftStrikes                  int              `json:"soft_strikes,omitempty"`
 	ErrorStrikes                 int              `json:"error_strikes,omitempty"`
 	ThinkingStrikes              int              `json:"thinking_strikes,omitempty"`
-	ProbeBackoffUntil            time.Time        `json:"probe_backoff_until,omitempty"`
+	ProbeBackoffUntil            time.Time        `json:"probe_backoff_until,omitzero"`
 	DisableKind                  string           `json:"disable_kind,omitempty"`
 	PreviousDisabled             bool             `json:"previous_disabled,omitempty"`
 	AuthDisabledIntent           *bool            `json:"auth_disabled_intent,omitempty"`
 	Resin                        ResinState       `json:"resin"`
 	Metrics                      Metrics          `json:"metrics"`
+}
+type AccountStateSummary struct {
+	State             string
+	LastReason        string
+	LastAttempt       *AttemptEvidence
+	LastObservedAt    time.Time
+	CooldownUntil     time.Time
+	ProbeBackoffUntil time.Time
+	Resin             ResinState
+	Metrics           Metrics
 }
 
 type Event struct {
@@ -162,6 +170,43 @@ func (s *StateStore) Path() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.path
+}
+
+func (s *StateStore) PolicySnapshot() Policy {
+	if s == nil {
+		return Policy{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	policy := s.state.Policy
+	if s.state.Policy.ModelPrefixes != nil {
+		policy.ModelPrefixes = append([]string(nil), s.state.Policy.ModelPrefixes...)
+	}
+	return policy
+}
+
+func (s *StateStore) ResinAccounts() map[string]struct{} {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	accounts := make(map[string]struct{})
+	for _, account := range s.state.Accounts {
+		if account != nil && account.Resin.Account != "" {
+			accounts[account.Resin.Account] = struct{}{}
+		}
+	}
+	return accounts
+}
+
+func (s *StateStore) UpdatedAt() time.Time {
+	if s == nil {
+		return time.Time{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.state.UpdatedAt
 }
 
 // SetPath moves the live state to a new file without losing concurrent updates.
@@ -374,6 +419,242 @@ func (s *StateStore) AccountSnapshot(authID string) (AccountState, bool) {
 	return *cloneAccountState(account), true
 }
 
+func (s *StateStore) AccountStateValuesForIDs(authIDs []string) []string {
+	states := make([]string, len(authIDs))
+	if s == nil {
+		return states
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for index, authID := range authIDs {
+		if account := s.state.Accounts[authID]; account != nil {
+			states[index] = account.State
+		}
+	}
+	return states
+}
+
+func (s *StateStore) AccountResinStatesForIDs(authIDs []string) []ResinState {
+	states := make([]ResinState, len(authIDs))
+	if s == nil {
+		return states
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for index, authID := range authIDs {
+		if account := s.state.Accounts[authID]; account != nil {
+			states[index] = account.Resin
+		}
+	}
+	return states
+}
+
+func (s *StateStore) AccountStateSummariesForIDs(authIDs []string) []AccountStateSummary {
+	summaries := make([]AccountStateSummary, len(authIDs))
+	if s == nil {
+		return summaries
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for index, authID := range authIDs {
+		account := s.state.Accounts[authID]
+		if account == nil {
+			continue
+		}
+		summary := AccountStateSummary{
+			State:             account.State,
+			LastReason:        account.LastReason,
+			LastObservedAt:    account.LastObservedAt,
+			CooldownUntil:     account.CooldownUntil,
+			ProbeBackoffUntil: account.ProbeBackoffUntil,
+			Resin:             account.Resin,
+			Metrics:           account.Metrics,
+		}
+		if account.LastAttempt != nil {
+			attempt := *account.LastAttempt
+			summary.LastAttempt = &attempt
+		}
+		summaries[index] = summary
+	}
+	return summaries
+}
+
+func (s *StateStore) AccountStatesForIDs(authIDs []string) []AccountState {
+	states := make([]AccountState, len(authIDs))
+	if s == nil {
+		return states
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for index, authID := range authIDs {
+		account := s.state.Accounts[authID]
+		if account == nil {
+			continue
+		}
+		states[index] = *cloneAccountState(account)
+	}
+	return states
+}
+
+func (s *StateStore) AccountsSnapshot() map[string]*AccountState {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	accounts := make(map[string]*AccountState, len(s.state.Accounts))
+	for authID, account := range s.state.Accounts {
+		if account == nil {
+			continue
+		}
+		accounts[authID] = cloneAccountState(account)
+	}
+	return accounts
+}
+
+func (s *StateStore) StateCounts() map[string]int {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	counts := make(map[string]int, 8)
+	for _, account := range s.state.Accounts {
+		if account != nil {
+			counts[account.State]++
+		}
+	}
+	return counts
+}
+
+func (s *StateStore) EventsSnapshot() []Event {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]Event(nil), s.state.Events...)
+}
+
+func (s *StateStore) RecentEventCount(since time.Time) int {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, event := range s.state.Events {
+		if event.Time.After(since) && event.Class != "" {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *StateStore) ResinSettings() (ResinSettings, bool) {
+	if s == nil {
+		return ResinSettings{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.state.Resin, s.state.Resin.Configured
+}
+
+func (s *StateStore) CatalogMatches(accounts []Account) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.state.Accounts) != len(accounts) {
+		return false
+	}
+	for _, account := range accounts {
+		if _, exists := s.state.Accounts[account.ID]; !exists {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *StateStore) UpdateAccount(authID string, fn func(*AccountState) (*Event, error)) error {
+	if s == nil {
+		return errors.New("state store is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previousUpdatedAt := s.state.UpdatedAt
+	previousEvents := s.state.Events
+	previousAccount, existed := s.state.Accounts[authID]
+	var previousCopy *AccountState
+	if previousAccount != nil {
+		previousCopy = cloneAccountState(previousAccount)
+	}
+	if s.state.Accounts == nil {
+		s.state.Accounts = make(map[string]*AccountState)
+	}
+	account := s.state.Accounts[authID]
+	if account == nil {
+		account = &AccountState{AuthID: authID, State: StateUnknown, FirstSeenAt: time.Now().UTC()}
+		s.state.Accounts[authID] = account
+	}
+	event, errFn := fn(account)
+	if errFn != nil {
+		if existed && previousCopy != nil {
+			s.state.Accounts[authID] = previousCopy
+		} else {
+			delete(s.state.Accounts, authID)
+		}
+		s.state.Events = previousEvents
+		s.state.UpdatedAt = previousUpdatedAt
+		return errFn
+	}
+	if event != nil {
+		if event.AuthID == "" {
+			event.AuthID = authID
+		}
+		if event.Time.IsZero() {
+			event.Time = time.Now().UTC()
+		}
+		appendEvent(&s.state, *event)
+	} else if existed && previousCopy != nil && reflect.DeepEqual(previousCopy, account) {
+		return nil
+	}
+	s.state.UpdatedAt = time.Now().UTC()
+	if errSave := s.saveLocked(); errSave != nil {
+		if existed && previousCopy != nil {
+			s.state.Accounts[authID] = previousCopy
+		} else {
+			delete(s.state.Accounts, authID)
+		}
+		s.state.Events = previousEvents
+		s.state.UpdatedAt = previousUpdatedAt
+		return errSave
+	}
+	return nil
+}
+
+func (s *StateStore) AppendEvent(event Event) error {
+	if s == nil {
+		return errors.New("state store is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previousUpdatedAt := s.state.UpdatedAt
+	previousEvents := s.state.Events
+	if event.Time.IsZero() {
+		event.Time = time.Now().UTC()
+	}
+	appendEvent(&s.state, event)
+	s.state.UpdatedAt = time.Now().UTC()
+	if errSave := s.saveLocked(); errSave != nil {
+		s.state.Events = previousEvents
+		s.state.UpdatedAt = previousUpdatedAt
+		return errSave
+	}
+	return nil
+}
+
 func (s *StateStore) Update(fn func(*State) error) error {
 	if s == nil {
 		return errors.New("state store is nil")
@@ -415,6 +696,15 @@ func (s *StateStore) UpdateIfChanged(fn func(*State) error) error {
 	return nil
 }
 
+func (s *StateStore) Flush() error {
+	if s == nil {
+		return errors.New("state store is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveLocked()
+}
+
 func (s *StateStore) saveLocked() error {
 	if s.path == "" {
 		return errors.New("state path is empty")
@@ -429,10 +719,6 @@ func (s *StateStore) saveLocked() error {
 		s.state.Events = []Event{}
 	}
 	trimEvents(&s.state, s.state.Policy.EventsLimit)
-	raw, errMarshal := json.MarshalIndent(s.state, "", "  ")
-	if errMarshal != nil {
-		return fmt.Errorf("encode state: %w", errMarshal)
-	}
 	dir := filepath.Dir(s.path)
 	if errMkdir := os.MkdirAll(dir, 0o700); errMkdir != nil {
 		return fmt.Errorf("create state directory: %w", errMkdir)
@@ -448,9 +734,9 @@ func (s *StateStore) saveLocked() error {
 		_ = temp.Close()
 		return fmt.Errorf("set state file permissions: %w", errChmod)
 	}
-	if _, errWrite := temp.Write(raw); errWrite != nil {
+	if errEncode := json.NewEncoder(temp).Encode(s.state); errEncode != nil {
 		_ = temp.Close()
-		return fmt.Errorf("write state temp file: %w", errWrite)
+		return fmt.Errorf("encode state: %w", errEncode)
 	}
 	if errSync := temp.Sync(); errSync != nil {
 		_ = temp.Close()

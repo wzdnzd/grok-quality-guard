@@ -336,7 +336,7 @@ func (p *Plugin) rebuildSelectionIndex() error {
 	store := p.stateStore()
 	var states map[string]*AccountState
 	if store != nil {
-		states = store.Snapshot().Accounts
+		states = store.AccountsSnapshot()
 	}
 	p.selectionIndex.Build(p.catalogSnapshot(), states)
 	return nil

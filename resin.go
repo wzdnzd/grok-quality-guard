@@ -107,10 +107,7 @@ func (p *Plugin) BindResin(ctx context.Context, authID string, dryRun bool) (Res
 	}); errUpdate != nil {
 		return result, errUpdate
 	}
-	_ = p.stateStore().Update(func(state *State) error {
-		p.recordEvent(state, authID, "", "resin_bind", "bound", "account="+generated)
-		return nil
-	})
+	_ = p.stateStore().AppendEvent(*newEvent(authID, "", "resin_bind", "bound", "account="+generated))
 	return result, nil
 }
 
@@ -146,7 +143,7 @@ func (p *Plugin) ClearResinProxy(ctx context.Context, authID string) (ResinClear
 	}
 	wantDelete := account != "" && !cfg.LocalOnly
 	commit, errCommit := p.commitResinProxyChange(authID, response.Name, encoded, func(state *State) bool {
-		stateAccount := p.ensureStateAccount(state, authID, "", "")
+		stateAccount := p.ensureStateAccount(state, authID)
 		stateAccount.Resin = ResinState{Managed: false, Generation: generation}
 		if wantDelete {
 			queueResinLeaseDeleteAndRecord(state, authID, cfg, account)
@@ -310,7 +307,7 @@ func (p *Plugin) RotateResin(ctx context.Context, authID string) error {
 		detail = fmt.Sprintf("旧租约：%s → 新租约：%s，旧租约删除已入队", oldLabel, newAccount)
 	}
 	_, errCommit := p.commitResinProxyChange(authID, response.Name, encoded, func(state *State) bool {
-		stateAccount := p.ensureStateAccount(state, authID, "", "")
+		stateAccount := p.ensureStateAccount(state, authID)
 		stateAccount.Resin = ResinState{Managed: true, Account: newAccount, Generation: generation}
 		if deleteQueued {
 			queueResinLeaseDeleteAndRecord(state, authID, cfg, previousAccount)
@@ -338,10 +335,18 @@ func resinAccountFromProxyURL(proxyURL string) string {
 }
 
 func managedResinBinding(raw map[string]json.RawMessage, stateAccount AccountState, cfg ResinSettings) (string, bool) {
-	storedAccount := strings.TrimSpace(stateAccount.Resin.Account)
-	proxyURL := strings.TrimSpace(authRawString(raw, "proxy_url"))
+	return managedResinBindingWithProxy(authRawString(raw, "proxy_url"), stateAccount, cfg)
+}
+
+func managedResinBindingWithProxy(proxyURL string, stateAccount AccountState, cfg ResinSettings) (string, bool) {
+	return managedResinBindingForState(proxyURL, stateAccount.Resin, cfg)
+}
+
+func managedResinBindingForState(proxyURL string, resinState ResinState, cfg ResinSettings) (string, bool) {
+	storedAccount := strings.TrimSpace(resinState.Account)
+	proxyURL = strings.TrimSpace(proxyURL)
 	proxyAccount := resinAccountFromProxyURL(proxyURL)
-	managed := stateAccount.Resin.Managed || storedAccount != ""
+	managed := resinState.Managed || storedAccount != ""
 	if managed {
 		if proxyAccount != "" {
 			return proxyAccount, true
@@ -402,12 +407,9 @@ func (p *Plugin) generateResinAccount(authID string, raw map[string]json.RawMess
 
 func (p *Plugin) generateResinAccountAvoiding(authID string, raw map[string]json.RawMessage, oldAccount string) (string, error) {
 	base := resinAccountBase(raw)
-	state := p.stateStore().Snapshot()
-	used := make(map[string]struct{}, len(state.Accounts))
-	for _, account := range state.Accounts {
-		if account != nil && account.Resin.Account != "" {
-			used[account.Resin.Account] = struct{}{}
-		}
+	used := p.stateStore().ResinAccounts()
+	if used == nil {
+		used = make(map[string]struct{})
 	}
 	for attempt := 0; attempt < 32; attempt++ {
 		suffix, errSuffix := randomBase36(4)

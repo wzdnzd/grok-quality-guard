@@ -186,9 +186,12 @@ func (p *Plugin) recordInternalError(authID string, errValue error) error {
 	if p.stateStore() == nil {
 		return errValue
 	}
-	_ = p.stateStore().Update(func(state *State) error {
-		p.recordEvent(state, authID, "", "internal_error", "error", sanitizeError(errValue))
-		return nil
+	_ = p.stateStore().AppendEvent(Event{
+		Time:   time.Now().UTC(),
+		AuthID: authID,
+		Action: "internal_error",
+		Result: "error",
+		Detail: sanitizeError(errValue),
 	})
 	return nil
 }

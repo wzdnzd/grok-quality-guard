@@ -63,8 +63,7 @@ func (p *Plugin) applyVerdictLocked(
 	backoff := nextProbeBackoff(policy.Probe, previousState)
 	outcome := verdictResult{}
 
-	errUpdate := store.Update(func(state *State) error {
-		account := p.ensureStateAccount(state, authID, "", "")
+	errUpdate := store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 		if priorMissingStrike {
 			account.QualityStrikeMissingThinking = true
 		}
@@ -116,7 +115,7 @@ func (p *Plugin) applyVerdictLocked(
 			if !preserveIsolation() {
 				account.State = StateHealthy
 			}
-			return nil
+			return nil, nil
 
 		case ClassSoftTPS, ClassInsufficientOutput, ClassInsufficientGeneration:
 			account.ThinkingStrikes = 0
@@ -237,8 +236,14 @@ func (p *Plugin) applyVerdictLocked(
 			}
 		}
 
-		p.recordEvent(state, authID, eventClass, eventAction, eventResult, eventDetail)
-		return nil
+		return &Event{
+			Time:   time.Now().UTC(),
+			AuthID: authID,
+			Class:  eventClass,
+			Action: eventAction,
+			Result: eventResult,
+			Detail: eventDetail,
+		}, nil
 	})
 	if errUpdate != nil {
 		return outcome, errUpdate
@@ -327,11 +332,15 @@ func (p *Plugin) scheduleVerdictCrossVerify(authID, class, source string) {
 		if !okAccount {
 			return nil, fmt.Errorf("auth not found")
 		}
-		return p.accountView(ctx, account)
+		return p.accountViewForAccount(ctx, account)
 	})
-	_ = p.stateStore().Update(func(state *State) error {
-		p.recordEvent(state, authID, class, "cross_verify_schedule", "scheduled", source)
-		return nil
+	_ = p.stateStore().AppendEvent(Event{
+		Time:   time.Now().UTC(),
+		AuthID: authID,
+		Class:  class,
+		Action: "cross_verify_schedule",
+		Result: "scheduled",
+		Detail: source,
 	})
 }
 
@@ -499,8 +508,7 @@ func (p *Plugin) saveGuardDisableLocked(
 		}
 		until = time.Now().UTC().Add(duration)
 	}
-	errState := store.Update(func(state *State) error {
-		account := p.ensureStateAccount(state, authID, "", "")
+	errState := store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 		account.State = stateForDisableKind(kind)
 		account.CooldownUntil = until
 		account.DisableKind = kind
@@ -511,7 +519,7 @@ func (p *Plugin) saveGuardDisableLocked(
 		}
 		intent := true
 		account.AuthDisabledIntent = &intent
-		return nil
+		return nil, nil
 	})
 	if errState != nil {
 		return errState
@@ -521,18 +529,15 @@ func (p *Plugin) saveGuardDisableLocked(
 			return fmt.Errorf("save guard-disabled auth: %w", errSave)
 		}
 	}
-	return store.Update(func(state *State) error {
-		account := p.ensureStateAccount(state, authID, "", "")
+	return store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 		account.AuthDisabledIntent = nil
-		p.recordEvent(state, authID, class, "guard_disable", kind, source)
-		return nil
+		return newEvent(authID, class, "guard_disable", kind, source), nil
 	})
 }
 
 func (p *Plugin) setStateExternal(authID, class string) error {
 	defer p.refreshSelectionAccount(authID)
-	return p.stateStore().Update(func(state *State) error {
-		account := p.ensureStateAccount(state, authID, "", "")
+	return p.stateStore().UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 		account.State = StateExternallyDisabled
 		account.DisableKind = ""
 		account.CooldownUntil = time.Time{}
@@ -541,8 +546,7 @@ func (p *Plugin) setStateExternal(authID, class string) error {
 		if class != "" {
 			account.LastReason = class
 		}
-		p.recordEvent(state, authID, class, "external_disable", "observed", "auth was disabled outside the guard")
-		return nil
+		return newEvent(authID, class, "external_disable", "observed", "auth was disabled outside the guard"), nil
 	})
 }
 
@@ -578,22 +582,19 @@ func (p *Plugin) ManualRestore(ctx context.Context, authID string) error {
 	stateAccount, hasState := p.stateAccount(authID)
 	guardOwned := hasState && stateAccount.DisableKind != ""
 	if authDisabled(raw) && !guardOwned {
-		if errUpdate := p.stateStore().Update(func(state *State) error {
-			account := p.ensureStateAccount(state, authID, "", "")
+		if errUpdate := p.stateStore().UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 			resetGuardDisableState(account)
-			p.recordEvent(state, authID, "", "restore", "external_left_disabled", "manual")
-			return nil
+			return newEvent(authID, "", "restore", "external_left_disabled", "manual"), nil
 		}); errUpdate != nil {
 			return errUpdate
 		}
 		return nil
 	}
 	if guardOwned {
-		if errIntent := store.Update(func(state *State) error {
-			account := p.ensureStateAccount(state, authID, "", "")
+		if errIntent := store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 			intent := false
 			account.AuthDisabledIntent = &intent
-			return nil
+			return nil, nil
 		}); errIntent != nil {
 			return errIntent
 		}
@@ -603,11 +604,9 @@ func (p *Plugin) ManualRestore(ctx context.Context, authID string) error {
 			return fmt.Errorf("save restored auth: %w", errSave)
 		}
 	}
-	return store.Update(func(state *State) error {
-		account := p.ensureStateAccount(state, authID, "", "")
+	return store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 		resetGuardDisableState(account)
-		p.recordEvent(state, authID, "", "restore", "restored", "manual")
-		return nil
+		return newEvent(authID, "", "restore", "restored", "manual"), nil
 	})
 }
 
@@ -685,18 +684,15 @@ func (p *Plugin) reconcileAccount(ctx context.Context, authID string) {
 			}
 		}
 		if target {
-			_ = store.Update(func(state *State) error {
-				account := p.ensureStateAccount(state, authID, "", "")
+			_ = store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 				account.AuthDisabledIntent = nil
-				return nil
+				return nil, nil
 			})
 			return
 		}
-		_ = store.Update(func(state *State) error {
-			account := p.ensureStateAccount(state, authID, "", "")
+		_ = store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 			resetGuardDisableState(account)
-			p.recordEvent(state, authID, "", "restore", "restored", "reconcile")
-			return nil
+			return newEvent(authID, "", "restore", "restored", "reconcile"), nil
 		})
 		return
 	}
@@ -729,11 +725,9 @@ func (p *Plugin) reconcileAccount(ctx context.Context, authID string) {
 		_ = p.saveAuthDisabled(response.Name, raw, true)
 		return
 	}
-	_ = store.Update(func(state *State) error {
-		account := p.ensureStateAccount(state, authID, "", "")
+	_ = store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 		resetGuardDisableState(account)
-		p.recordEvent(state, authID, "", "restore", "restored", "reconcile")
-		return nil
+		return newEvent(authID, "", "restore", "restored", "reconcile"), nil
 	})
 }
 

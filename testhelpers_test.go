@@ -35,6 +35,8 @@ type mockHostCall struct {
 	modelCalls     []pluginapi.HostModelExecutionRequest
 	callbacks      []string
 	authGets       []string
+	authListCalls  int
+	authModelCalls int
 }
 
 func newMockHostCall(entries []pluginapi.HostAuthFileEntry, auths map[string]json.RawMessage) *mockHostCall {
@@ -107,10 +109,12 @@ func (m *mockHostCall) call(method string, payload any) (json.RawMessage, error)
 	case pluginabi.MethodHostAuthList:
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		m.authListCalls++
 		return marshalTestResult(authListResponse{Files: append([]pluginapi.HostAuthFileEntry(nil), m.entries...)})
 	case pluginabi.MethodHostAuthModels:
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		m.authModelCalls++
 		return marshalTestResult(pluginapi.HostAuthModelsResponse{Credentials: append([]pluginapi.HostAuthModels(nil), m.authModels...)})
 	case pluginabi.MethodHostAuthGet:
 		var req pluginapi.HostAuthGetRequest
@@ -243,6 +247,20 @@ func (m *mockHostCall) call(method string, payload any) (json.RawMessage, error)
 	default:
 		return nil, fmt.Errorf("unexpected host method %s", method)
 	}
+}
+
+func (m *mockHostCall) resetCatalogCallCounts() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.authListCalls = 0
+	m.authModelCalls = 0
+	m.authGets = nil
+}
+
+func (m *mockHostCall) catalogCallCounts() (int, int, int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.authListCalls, m.authModelCalls, len(m.authGets)
 }
 
 func marshalTestResult(value any) (json.RawMessage, error) {

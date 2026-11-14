@@ -2220,7 +2220,9 @@
     const state = {
       overview: null,
       accounts: [],
+      accountDetails: new Map(),
       accountsTotal: 0,
+      accountsLoaded: false,
       stateCounts: {},
       events: [],
       policy: null,
@@ -2529,6 +2531,7 @@
       });
       if (updateHash !== false && window.history && window.history.replaceState) window.history.replaceState(null, '', '#' + name);
       if (name === 'settings') setSettingsTab(state.settingsTab, false);
+      if (name === 'accounts' || name === 'resin') window.setTimeout(() => ensureAccountData(), 0);
     }
     function setSettingsTab(name, updateHash) {
       const allowed = ['policy', 'resin'];
@@ -2552,12 +2555,12 @@
       setSettingsTab(name || 'policy');
     }
     async function loadAllAccounts() {
-      const pageSize = 200;
+      const pageSize = 10000;
       const byID = new Map();
       let total = 0;
       let stateCounts = {};
       for (let page = 1; page <= 100; page += 1) {
-        const value = await api('accounts.list', { page, page_size: pageSize });
+        const value = await api('accounts.list', { page, page_size: pageSize, summary: true });
         const items = (value && value.items) || [];
         total = Number(value && value.total || 0);
         stateCounts = (value && value.state_counts) || stateCounts;
@@ -2568,14 +2571,27 @@
       }
       return { items: Array.from(byID.values()), total: Math.max(total, byID.size), state_counts: stateCounts };
     }
+    async function ensureAccountData() {
+      if (state.accountsLoaded || state.refreshing) return;
+      await refreshSection(null, '账号数据', async () => {
+        const accounts = await loadAllAccounts();
+        applyAccountListData(accounts);
+        renderAccounts();
+        renderResin();
+      });
+    }
     function applyAccountListData(value) {
       const data = value || {};
       state.accounts = data.items || [];
       state.accountsTotal = Number(data.total || state.accounts.length);
       state.stateCounts = data.state_counts || {};
+      state.accountsLoaded = true;
       const liveIDs = new Set(state.accounts.map((account) => account.auth_id));
       Array.from(state.accountSelection).forEach((authID) => {
         if (!liveIDs.has(authID)) state.accountSelection.delete(authID);
+      });
+      Array.from(state.accountDetails.keys()).forEach((authID) => {
+        if (!liveIDs.has(authID)) state.accountDetails.delete(authID);
       });
     }
     async function refreshSection(button, label, refresh) {
@@ -2627,9 +2643,10 @@
       if (state.refreshing) return;
       state.refreshing = true;
       document.getElementById('syncLabel').textContent = '正在同步…';
+      const loadAccounts = state.activeTab === 'accounts' || state.activeTab === 'resin';
       const tasks = await Promise.allSettled([
         api('overview'),
-        loadAllAccounts(),
+        loadAccounts ? loadAllAccounts() : Promise.resolve(null),
         api('events.list', { limit: 1000 }),
         api('policy.get'),
         api('resin.config.get')
@@ -2637,7 +2654,7 @@
       const errors = [];
       if (tasks[0].status === 'fulfilled') state.overview = tasks[0].value || {};
       else errors.push(tasks[0].reason);
-      if (tasks[1].status === 'fulfilled') applyAccountListData(tasks[1].value);
+      if (tasks[1].status === 'fulfilled' && tasks[1].value) applyAccountListData(tasks[1].value);
       else errors.push(tasks[1].reason);
       if (tasks[2].status === 'fulfilled') state.events = (tasks[2].value && tasks[2].value.items) || [];
       else errors.push(tasks[2].reason);
@@ -2650,6 +2667,9 @@
       document.getElementById('syncLabel').textContent = '更新于 ' + formatTime(new Date().toISOString());
       if (errors.length) toast(errors[0].message || '部分数据加载失败', 'error');
       else if (!silent) toast('数据已刷新', 'success');
+      if (!state.accountsLoaded && (state.activeTab === 'accounts' || state.activeTab === 'resin')) {
+        window.setTimeout(() => ensureAccountData(), 0);
+      }
     }
     function metricCard(iconName, value, label, detail, tone) {
       return '<div class="metric"><span class="metric-icon ' + esc(tone || '') + '">' + icon(iconName) + '</span><div style="min-width:0"><p class="metric-label">' + esc(label) + '</p><p class="metric-value">' + esc(value) + '</p><p class="metric-detail">' + esc(detail || '') + '</p></div></div>';
@@ -3208,7 +3228,7 @@
         else closeDrawer();
       }
     }
-    function openAccountDrawer(authID) {
+    async function openAccountDrawer(authID) {
       const account = state.accounts.find((item) => item.auth_id === authID);
       if (!account) return;
       state.selectedAuthID = authID;
@@ -3216,8 +3236,18 @@
       document.getElementById('accountDrawer').hidden = false;
       document.body.classList.add('drawer-open');
       window.setTimeout(() => document.getElementById('drawerClose').focus(), 20);
+      try {
+        const detail = await api('accounts.get', { auth_id: authID });
+        if (state.selectedAuthID !== authID || !detail) return;
+        state.accountDetails.set(authID, detail);
+        const latest = state.accounts.find((item) => item.auth_id === authID);
+        if (latest) renderDrawer(latest);
+      } catch (error) {
+        toast(error.message || '账号详情加载失败', 'error');
+      }
     }
-    function renderDrawer(account) {
+    function renderDrawer(accountSummary) {
+      const account = Object.assign({}, accountSummary, state.accountDetails.get(accountSummary.auth_id) || {});
       document.getElementById('drawerTitle').textContent = account.display_full || account.display || account.label || '账号详情';
       document.getElementById('drawerSubtitle').textContent = account.auth_id_display || account.auth_id || '';
       const resinStatus = account.resin_managed ? badge((state.resin && state.resin.local_only) ? '本地管理' : '已绑定 Resin', 'info') : (account.proxy_status === 'conflict' ? badge('代理冲突', 'warn') : badge('未绑定 Resin', ''));
@@ -3264,6 +3294,7 @@
       ].join('');
     }
     function closeDrawer() {
+      if (state.selectedAuthID) state.accountDetails.delete(state.selectedAuthID);
       state.selectedAuthID = '';
       document.getElementById('accountDrawer').hidden = true;
       document.body.classList.remove('drawer-open');

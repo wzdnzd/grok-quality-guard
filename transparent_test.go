@@ -104,8 +104,8 @@ func TestTransparentCandidatesSkipQualitySuspectAccounts(t *testing.T) {
 			host := newMockHostCall(entries, auths)
 			plugin := newTestPlugin(t, host, enableTransparentForTest)
 			if errUpdate := plugin.stateStore().Update(func(value *State) error {
-				plugin.ensureStateAccount(value, "auth-1", "", "").State = state
-				plugin.ensureStateAccount(value, "auth-2", "", "").State = StateHealthy
+				plugin.ensureStateAccount(value, "auth-1").State = state
+				plugin.ensureStateAccount(value, "auth-2").State = StateHealthy
 				return nil
 			}); errUpdate != nil {
 				t.Fatal(errUpdate)
@@ -204,8 +204,8 @@ func TestTransparentStreamFailsClosedWhenAllCandidatesAreQualitySuspect(t *testi
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, enableTransparentForTest)
 	if errUpdate := plugin.stateStore().Update(func(value *State) error {
-		plugin.ensureStateAccount(value, "auth-1", "", "").State = StateSuspect
-		plugin.ensureStateAccount(value, "auth-2", "", "").State = StateDegraded
+		plugin.ensureStateAccount(value, "auth-1").State = StateSuspect
+		plugin.ensureStateAccount(value, "auth-2").State = StateDegraded
 		return nil
 	}); errUpdate != nil {
 		t.Fatal(errUpdate)

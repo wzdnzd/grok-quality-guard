@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -129,7 +131,7 @@ func TestManagementResourceAndActionAccess(t *testing.T) {
 	if strings.Contains(string(response.Body), "对齐旧插件") {
 		t.Fatal("dashboard should describe the setting semantically instead of referencing the old plugin")
 	}
-	for _, expected := range []string{"概览", "账号质量", "Resin 租约", "事件日志", "设置", "24 小时统计", "resin.config.get", "resin.clear", "leaseSelectAll", "clearSelectedBtn", "accountsPager", "leasesPager", "eventsPager", "selectFilteredBtn", "selectAllAccountsBtn", "全选当前筛选", "全选所有账号", "选择本页全部账号", "r_local_only", "本地轮换", "state_file.update", "id=\"p_state_file\" type=\"text\"", "p_selection_strategy", "p_prefer_last_success", "p_session_affinity", "policy.routing.selection_strategy", "session_affinity_max_entries", "summary-value truncate", "连续检测到缺少真实思考的响应达到该次数后触发处置或交叉验证", `type="password"`, "const REASON_DETAIL_LABELS", "'expected marker missing': '探测标记缺失'", "'output tokens per second exceeded hard threshold': '输出 Token 速度超过硬阈值'", "'output tokens per second exceeded soft threshold': '输出 Token 速度超过软阈值'", "'probe stream produced no parseable events': '探测流未产生可解析事件'", "'probe stream ended without a terminal event': '探测流结束但未收到终止事件'", "真实思考：", "终止：", "解析失败：", "<td class=\"nowrap\">", "actions-cell", "includeTime: false", "accountRefreshBtn", "leaseRefreshBtn", "eventRefreshBtn", "accountProbeAllBtn", "accountRestoreAllBtn", "accountSelectionCount", "accountSelectAll", "accountSelectFilteredBtn", "accountSelectAllBtn", "accountClearSelectionBtn", "检测所选", "恢复所选", "accounts.probe_selected", "accounts.restore_selected", "confirmDialog", "confirmAction", "confirmAccept", "confirmCancel"} {
+	for _, expected := range []string{"概览", "账号质量", "Resin 租约", "事件日志", "设置", "24 小时统计", "resin.config.get", "resin.clear", "leaseSelectAll", "clearSelectedBtn", "accountsPager", "leasesPager", "eventsPager", "selectFilteredBtn", "selectAllAccountsBtn", "全选当前筛选", "全选所有账号", "选择本页全部账号", "r_local_only", "本地轮换", "state_file.update", "id=\"p_state_file\" type=\"text\"", "p_selection_strategy", "p_prefer_last_success", "p_session_affinity", "policy.routing.selection_strategy", "session_affinity_max_entries", "summary-value truncate", "连续检测到缺少真实思考的响应达到该次数后触发处置或交叉验证", `type="password"`, "const REASON_DETAIL_LABELS", "'expected marker missing': '探测标记缺失'", "'output tokens per second exceeded hard threshold': '输出 Token 速度超过硬阈值'", "'output tokens per second exceeded soft threshold': '输出 Token 速度超过软阈值'", "'probe stream produced no parseable events': '探测流未产生可解析事件'", "'probe stream ended without a terminal event': '探测流结束但未收到终止事件'", "真实思考：", "终止：", "解析失败：", "<td class=\"nowrap\">", "actions-cell", "includeTime: false", "accountRefreshBtn", "leaseRefreshBtn", "eventRefreshBtn", "accountProbeAllBtn", "accountRestoreAllBtn", "accountSelectionCount", "accountSelectAll", "accountSelectFilteredBtn", "accountSelectAllBtn", "accountClearSelectionBtn", "检测所选", "恢复所选", "accounts.probe_selected", "accounts.restore_selected", "accountDetails: new Map()", "summary: true", "api('accounts.get'", "confirmDialog", "confirmAction", "confirmAccept", "confirmCancel"} {
 		if !strings.Contains(string(response.Body), expected) {
 			t.Fatalf("dashboard is missing %q", expected)
 		}
@@ -145,6 +147,17 @@ func TestAccountsListMasksSecrets(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "alice@example.com", map[string]any{
 		"proxy_url": "socks5h://user:proxy-secret@example.com:1080/private",
 	})
+	authPath := filepath.Join(t.TempDir(), "auth-1.json")
+	if errWrite := os.WriteFile(authPath, auths["auth-1"], 0o600); errWrite != nil {
+		t.Fatal(errWrite)
+	}
+	info, errStat := os.Stat(authPath)
+	if errStat != nil {
+		t.Fatal(errStat)
+	}
+	entries[0].Path = authPath
+	entries[0].Size = info.Size()
+	entries[0].ModTime = info.ModTime()
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, nil)
 	response := actionManagementForTest(t, plugin, "accounts.list", map[string]any{"page_size": 10})

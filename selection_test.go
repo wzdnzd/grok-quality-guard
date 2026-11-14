@@ -42,7 +42,7 @@ func setSelectionStates(t *testing.T, plugin *Plugin, states map[string]string) 
 	t.Helper()
 	if errUpdate := plugin.stateStore().UpdateIfChanged(func(state *State) error {
 		for authID, value := range states {
-			plugin.ensureStateAccount(state, authID, "", "").State = value
+			plugin.ensureStateAccount(state, authID).State = value
 		}
 		return nil
 	}); errUpdate != nil {

@@ -256,3 +256,53 @@ func TestUpdateStatePathRejectsExistingTarget(t *testing.T) {
 		t.Fatalf("active path changed after rejected move: %q", plugin.stateStore().Path())
 	}
 }
+func TestStateStoreUpdateAccountRollbackAndEventAppend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store := NewStateStore(path)
+	if errLoad := store.Load(PolicyFromConfig(DefaultConfig()), "revision"); errLoad != nil {
+		t.Fatal(errLoad)
+	}
+	if errUpdate := store.Update(func(state *State) error {
+		state.Accounts["auth-1"] = &AccountState{AuthID: "auth-1", State: StateHealthy}
+		state.Accounts["auth-2"] = &AccountState{AuthID: "auth-2", State: StateUnknown}
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	before, _ := store.AccountSnapshot("auth-1")
+	wantErr := errors.New("callback failed")
+	if errUpdate := store.UpdateAccount("auth-1", func(account *AccountState) (*Event, error) {
+		account.State = StateDegraded
+		account.LastReason = "temporary"
+		return nil, wantErr
+	}); !errors.Is(errUpdate, wantErr) {
+		t.Fatalf("UpdateAccount() error = %v, want callback error", errUpdate)
+	}
+	after, _ := store.AccountSnapshot("auth-1")
+	if after.State != before.State || after.LastReason != before.LastReason {
+		t.Fatalf("account was not rolled back: before=%#v after=%#v", before, after)
+	}
+
+	if errUpdate := store.UpdateAccount("auth-1", func(account *AccountState) (*Event, error) {
+		account.State = StateHealthy
+		return &Event{Action: "observe", Result: "recorded"}, nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	account, _ := store.AccountSnapshot("auth-1")
+	if account.State != StateHealthy {
+		t.Fatalf("account update was not persisted: %#v", account)
+	}
+	events := store.EventsSnapshot()
+	if len(events) != 1 || events[0].Action != "observe" || events[0].AuthID != "auth-1" {
+		t.Fatalf("account event was not appended: %#v", events)
+	}
+
+	if errEvent := store.AppendEvent(Event{Action: "internal_error", Result: "error"}); errEvent != nil {
+		t.Fatal(errEvent)
+	}
+	events = store.EventsSnapshot()
+	if len(events) != 2 || events[1].Action != "internal_error" {
+		t.Fatalf("standalone event was not appended: %#v", events)
+	}
+}

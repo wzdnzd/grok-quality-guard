@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -16,7 +17,6 @@ import (
 type Account struct {
 	ID          string
 	AuthIndex   string
-	Name        string
 	Type        string
 	Provider    string
 	Label       string
@@ -24,6 +24,9 @@ type Account struct {
 	Disabled    bool
 	Unavailable bool
 	Priority    int
+	Path        string
+	Size        int64
+	ModTime     time.Time
 	ProxyURL    string
 }
 
@@ -52,14 +55,20 @@ type Plugin struct {
 	workersActive      bool
 	quiescing          bool
 
-	catalogMu          sync.RWMutex
-	catalog            []Account
-	catalogByID        map[string]Account
-	catalogByAuthIndex map[string]Account
-	catalogAt          time.Time
+	catalogMu                 sync.RWMutex
+	catalog                   []Account
+	catalogByID               map[string]int
+	catalogByAuthIndex        map[string]int
+	catalogAt                 time.Time
+	catalogStateFingerprint   uint64
+	catalogRoutingFingerprint uint64
+	catalogModelsFingerprint  uint64
+	catalogRefreshMu          sync.Mutex
 
-	authModelsMu sync.RWMutex
-	grokModels   map[string]struct{}
+	authModelsMu    sync.RWMutex
+	grokModels      map[string]struct{}
+	authModelsReady bool
+	authModelsAt    time.Time
 
 	accountLocksMu sync.Mutex
 	accountLocks   map[string]*sync.Mutex
@@ -150,9 +159,9 @@ func (p *Plugin) Configure(raw []byte) error {
 	p.cfg = cfg
 	p.yamlPolicy = PolicyFromConfig(cfg)
 	p.yamlRevision = revision
-	state := p.store.Snapshot()
-	if state.Policy.PassiveGuard || state.Policy.EventsLimit > 0 || state.Policy.AutoAction != "" {
-		p.policy = state.Policy
+	statePolicy := p.store.PolicySnapshot()
+	if statePolicy.PassiveGuard || statePolicy.EventsLimit > 0 || statePolicy.AutoAction != "" {
+		p.policy = statePolicy
 	} else {
 		p.policy = p.yamlPolicy
 		if errUpdate := p.store.Update(func(s *State) error {
@@ -270,8 +279,8 @@ func (p *Plugin) Shutdown() {
 	case <-done:
 	case <-time.After(5 * time.Second):
 	}
-	if p.stateStore() != nil {
-		_ = p.stateStore().Update(func(*State) error { return nil })
+	if store := p.stateStore(); store != nil {
+		_ = store.Flush()
 	}
 }
 
@@ -296,7 +305,45 @@ func (p *Plugin) refreshLoop(ctx context.Context) {
 	}
 }
 
-func (p *Plugin) RefreshCatalog(_ context.Context) error {
+const (
+	catalogRefreshTTL    = 30 * time.Second
+	authModelsRefreshTTL = 5 * time.Minute
+)
+
+func (p *Plugin) ensureCatalog(ctx context.Context) error {
+	p.catalogMu.RLock()
+	fresh := !p.catalogAt.IsZero() && time.Since(p.catalogAt) < catalogRefreshTTL
+	p.catalogMu.RUnlock()
+	if fresh {
+		return nil
+	}
+
+	p.catalogRefreshMu.Lock()
+	defer p.catalogRefreshMu.Unlock()
+	p.catalogMu.RLock()
+	fresh = !p.catalogAt.IsZero() && time.Since(p.catalogAt) < catalogRefreshTTL
+	p.catalogMu.RUnlock()
+	if fresh {
+		return nil
+	}
+	return p.refreshCatalogLocked(ctx)
+}
+
+func (p *Plugin) RefreshCatalog(ctx context.Context) error {
+	p.catalogRefreshMu.Lock()
+	defer p.catalogRefreshMu.Unlock()
+	return p.refreshCatalogLocked(ctx)
+}
+
+func (p *Plugin) refreshCatalogLocked(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	p.catalogMu.RLock()
+	previousCatalog := p.catalog
+	previousByID := p.catalogByID
+	p.catalogMu.RUnlock()
+
 	entries, errList := p.listAuths()
 	if errList != nil {
 		return errList
@@ -320,7 +367,6 @@ func (p *Plugin) RefreshCatalog(_ context.Context) error {
 		account := Account{
 			ID:          id,
 			AuthIndex:   strings.TrimSpace(entry.AuthIndex),
-			Name:        entry.Name,
 			Type:        entry.Type,
 			Provider:    provider,
 			Label:       entry.Label,
@@ -328,6 +374,9 @@ func (p *Plugin) RefreshCatalog(_ context.Context) error {
 			Disabled:    entry.Disabled,
 			Unavailable: entry.Unavailable,
 			Priority:    entry.Priority,
+			Path:        strings.TrimSpace(entry.Path),
+			Size:        entry.Size,
+			ModTime:     entry.ModTime,
 		}
 		accounts = append(accounts, account)
 	}
@@ -337,28 +386,192 @@ func (p *Plugin) RefreshCatalog(_ context.Context) error {
 		}
 		return accounts[i].ID < accounts[j].ID
 	})
-	byID := make(map[string]Account, len(accounts))
-	byAuthIndex := make(map[string]Account, len(accounts))
-	for _, account := range accounts {
-		byID[account.ID] = account
-		if authIndex := strings.TrimSpace(account.AuthIndex); authIndex != "" {
-			byAuthIndex[authIndex] = account
+	p.refreshAuthMeta(ctx, accounts, previousCatalog, previousByID)
+	fingerprints := catalogFingerprints(accounts)
+
+	p.catalogMu.Lock()
+	stateChanged := fingerprints.state != p.catalogStateFingerprint
+	routingChanged := fingerprints.routing != p.catalogRoutingFingerprint
+	modelsChanged := fingerprints.models != p.catalogModelsFingerprint
+	p.catalog = accounts
+	byID := make(map[string]int, len(accounts))
+	byAuthIndex := make(map[string]int, len(accounts))
+	for index, account := range accounts {
+		byID[account.ID] = index
+		if authIndex := strings.TrimSpace(account.AuthIndex); authIndex != "" && authIndex != account.ID {
+			byAuthIndex[authIndex] = index
 		}
 	}
-	p.catalogMu.Lock()
-	p.catalog = accounts
 	p.catalogByID = byID
 	p.catalogByAuthIndex = byAuthIndex
+	p.catalogStateFingerprint = fingerprints.state
+	p.catalogRoutingFingerprint = fingerprints.routing
+	p.catalogModelsFingerprint = fingerprints.models
 	p.catalogAt = time.Now().UTC()
 	p.catalogMu.Unlock()
-	if authModels, errModels := p.listAuthModels(); errModels == nil {
-		p.setGrokAuthModels(authModels)
+
+	if p.grokAuthModelsNeedRefresh(modelsChanged) {
+		if authModels, errModels := p.listAuthModels(); errModels == nil {
+			p.setGrokAuthModels(authModels)
+		}
 	}
-	_ = p.syncCatalogState(accounts)
-	_ = p.rebuildSelectionIndex()
+	if stateChanged || !p.catalogStateMatches(accounts) {
+		_ = p.syncCatalogState(accounts)
+	}
+	if routingChanged || !p.selectionIndex.Ready() {
+		_ = p.rebuildSelectionIndex()
+	}
 	return nil
 }
 
+type catalogFingerprintSet struct {
+	state   uint64
+	routing uint64
+	models  uint64
+}
+
+const (
+	fingerprintOffset64 uint64 = 14695981039346656037
+	fingerprintPrime64  uint64 = 1099511628211
+)
+
+type fingerprint uint64
+
+func (value *fingerprint) writeString(text string) {
+	current := uint64(*value)
+	for index := 0; index < len(text); index++ {
+		current ^= uint64(text[index])
+		current *= fingerprintPrime64
+	}
+	current ^= 0
+	current *= fingerprintPrime64
+	*value = fingerprint(current)
+}
+
+func (value *fingerprint) writeBool(flag bool) {
+	current := uint64(*value)
+	if flag {
+		current ^= 1
+	} else {
+		current ^= 0
+	}
+	current *= fingerprintPrime64
+	*value = fingerprint(current)
+}
+
+func (value *fingerprint) writeInt(number int) {
+	current := uint64(*value)
+	encoded := uint64(number)
+	for shift := 0; shift < 64; shift += 8 {
+		current ^= encoded & 0xff
+		current *= fingerprintPrime64
+		encoded >>= 8
+	}
+	*value = fingerprint(current)
+}
+
+func catalogFingerprints(accounts []Account) catalogFingerprintSet {
+	state := fingerprint(fingerprintOffset64)
+	routing := fingerprint(fingerprintOffset64)
+	models := fingerprint(fingerprintOffset64)
+	for _, account := range accounts {
+		state.writeString(account.ID)
+		state.writeBool(account.Disabled)
+
+		models.writeString(account.ID)
+		models.writeString(account.AuthIndex)
+		models.writeString(account.Type)
+		models.writeString(account.Provider)
+
+		routing.writeString(account.ID)
+		routing.writeString(account.AuthIndex)
+		routing.writeString(account.Type)
+		routing.writeString(account.Provider)
+		routing.writeBool(account.Disabled)
+		routing.writeBool(account.Unavailable)
+		routing.writeInt(account.Priority)
+	}
+	return catalogFingerprintSet{state: uint64(state), routing: uint64(routing), models: uint64(models)}
+}
+
+func (p *Plugin) catalogStateMatches(accounts []Account) bool {
+	store := p.stateStore()
+	return store != nil && store.CatalogMatches(accounts)
+}
+
+func (p *Plugin) grokAuthModelsNeedRefresh(modelsChanged bool) bool {
+	p.authModelsMu.RLock()
+	defer p.authModelsMu.RUnlock()
+	if modelsChanged || !p.authModelsReady || p.authModelsAt.IsZero() {
+		return true
+	}
+	return time.Since(p.authModelsAt) >= authModelsRefreshTTL
+}
+
+type authMetaJob struct {
+	accountIndex int
+	path         string
+}
+
+type authMetaValue struct {
+	proxyURL string
+	loaded   bool
+}
+
+func (p *Plugin) refreshAuthMeta(ctx context.Context, accounts, previousCatalog []Account, previousByID map[string]int) {
+	if len(accounts) == 0 {
+		return
+	}
+	jobs := make([]authMetaJob, 0)
+	for index := range accounts {
+		account := &accounts[index]
+		path := strings.TrimSpace(account.Path)
+		if path == "" {
+			continue
+		}
+		if previousIndex, exists := previousByID[account.ID]; exists && previousIndex >= 0 && previousIndex < len(previousCatalog) {
+			cached := previousCatalog[previousIndex]
+			if cached.Path == path && cached.Size == account.Size && cached.ModTime.Equal(account.ModTime) {
+				account.ProxyURL = cached.ProxyURL
+				continue
+			}
+		}
+		jobs = append(jobs, authMetaJob{accountIndex: index, path: path})
+	}
+	if len(jobs) == 0 {
+		return
+	}
+
+	values := make([]authMetaValue, len(accounts))
+	_ = runBoundedQueue(ctx, jobs, 64, 8, func(_ context.Context, job authMetaJob) {
+		proxyURL, loaded := readAuthProxyURL(job.path)
+		values[job.accountIndex] = authMetaValue{proxyURL: proxyURL, loaded: loaded}
+	})
+	for _, job := range jobs {
+		value := values[job.accountIndex]
+		if value.loaded {
+			accounts[job.accountIndex].ProxyURL = value.proxyURL
+		}
+	}
+}
+
+func readAuthProxyURL(path string) (string, bool) {
+	data, errRead := os.ReadFile(path)
+	if errRead != nil {
+		return "", true
+	}
+	var metadata struct {
+		ProxyURL json.RawMessage `json:"proxy_url"`
+	}
+	if errUnmarshal := json.Unmarshal(data, &metadata); errUnmarshal != nil {
+		return "", true
+	}
+	var proxyURL string
+	if len(metadata.ProxyURL) == 0 || json.Unmarshal(metadata.ProxyURL, &proxyURL) != nil {
+		return "", true
+	}
+	return strings.TrimSpace(proxyURL), true
+}
 func (p *Plugin) syncCatalogState(accounts []Account) error {
 	store := p.stateStore()
 	if store == nil {
@@ -394,12 +607,6 @@ func (p *Plugin) syncCatalogState(accounts []Account) error {
 				}
 				state.Accounts[account.ID] = existing
 			}
-			if account.Email != "" {
-				existing.Email = account.Email
-			}
-			if account.Label != "" {
-				existing.Label = account.Label
-			}
 			if account.Disabled {
 				switch existing.State {
 				case StateCooling, StateQuotaExhausted, StateCredentialInvalid, StateDisabledByGuard:
@@ -422,7 +629,10 @@ func (p *Plugin) syncCatalogState(accounts []Account) error {
 func (p *Plugin) catalogSnapshot() []Account {
 	p.catalogMu.RLock()
 	defer p.catalogMu.RUnlock()
-	return append([]Account(nil), p.catalog...)
+	// Published catalog slices are immutable; account values only contain
+	// immutable strings and scalar fields, so sharing the backing array avoids
+	// copying several hundred kilobytes on every management request.
+	return p.catalog
 }
 
 func (p *Plugin) findAccount(authID string) (Account, bool) {
@@ -431,11 +641,13 @@ func (p *Plugin) findAccount(authID string) (Account, bool) {
 		return Account{}, false
 	}
 	p.catalogMu.RLock()
-	if account, ok := p.catalogByID[normalized]; ok {
+	if index, ok := p.catalogByID[normalized]; ok && index >= 0 && index < len(p.catalog) {
+		account := p.catalog[index]
 		p.catalogMu.RUnlock()
 		return account, true
 	}
-	if account, ok := p.catalogByAuthIndex[normalized]; ok {
+	if index, ok := p.catalogByAuthIndex[normalized]; ok && index >= 0 && index < len(p.catalog) {
+		account := p.catalog[index]
 		p.catalogMu.RUnlock()
 		return account, true
 	}
@@ -480,7 +692,7 @@ func (p *Plugin) accountLock(authID string) *sync.Mutex {
 	return lock
 }
 
-func (p *Plugin) ensureStateAccount(state *State, authID, email, label string) *AccountState {
+func (p *Plugin) ensureStateAccount(state *State, authID string) *AccountState {
 	if state.Accounts == nil {
 		state.Accounts = make(map[string]*AccountState)
 	}
@@ -488,12 +700,6 @@ func (p *Plugin) ensureStateAccount(state *State, authID, email, label string) *
 	if account == nil {
 		account = &AccountState{AuthID: authID, State: StateUnknown, FirstSeenAt: time.Now().UTC()}
 		state.Accounts[authID] = account
-	}
-	if email != "" {
-		account.Email = email
-	}
-	if label != "" {
-		account.Label = label
 	}
 	if account.FirstSeenAt.IsZero() {
 		account.FirstSeenAt = time.Now().UTC()
@@ -513,14 +719,24 @@ func (p *Plugin) updateStateAccount(authID string, fn func(*AccountState) error)
 	if p.stateStore() == nil {
 		return errors.New("state store is not initialized")
 	}
-	errUpdate := p.stateStore().UpdateIfChanged(func(state *State) error {
-		account := p.ensureStateAccount(state, authID, "", "")
-		return fn(account)
+	errUpdate := p.stateStore().UpdateAccount(authID, func(account *AccountState) (*Event, error) {
+		return nil, fn(account)
 	})
 	if errUpdate == nil {
 		p.refreshSelectionAccount(authID)
 	}
 	return errUpdate
+}
+
+func newEvent(authID, class, action, result, detail string) *Event {
+	return &Event{
+		Time:   time.Now().UTC(),
+		AuthID: authID,
+		Class:  class,
+		Action: action,
+		Result: result,
+		Detail: detail,
+	}
 }
 
 func (p *Plugin) recordEvent(state *State, authID, class, action, result, detail string) {

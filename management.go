@@ -69,39 +69,41 @@ type accountCandidate struct {
 	account Account
 }
 
+type accountSummaryView struct {
+	AuthID            string           `json:"auth_id"`
+	AuthIDDisplay     string           `json:"auth_id_display"`
+	Display           string           `json:"display"`
+	DisplayFull       string           `json:"display_full"`
+	Email             string           `json:"email,omitempty"`
+	Label             string           `json:"label,omitempty"`
+	State             string           `json:"state"`
+	LastReason        string           `json:"last_reason,omitempty"`
+	LastAttempt       *AttemptEvidence `json:"last_attempt,omitempty"`
+	LastObservedAt    time.Time        `json:"last_observed_at,omitzero"`
+	CooldownUntil     time.Time        `json:"cooldown_until,omitzero"`
+	ProbeBackoffUntil time.Time        `json:"probe_backoff_until,omitzero"`
+	ResinManaged      bool             `json:"resin_managed,omitempty"`
+	ResinAccount      string           `json:"resin_account,omitempty"`
+	ResinGeneration   int64            `json:"resin_generation,omitempty"`
+	ProxyStatus       string           `json:"proxy_status"`
+	Proxy             string           `json:"proxy,omitempty"`
+	TPS               float64          `json:"tps,omitempty"`
+	OutputTokens      int64            `json:"output_tokens,omitempty"`
+	ReasoningTokens   int64            `json:"reasoning_tokens,omitempty"`
+	EncryptedBytes    int64            `json:"encrypted_bytes,omitempty"`
+}
+
 type accountView struct {
-	AuthID                string           `json:"auth_id"`
-	AuthIDDisplay         string           `json:"auth_id_display"`
-	Display               string           `json:"display"`
-	DisplayFull           string           `json:"display_full"`
-	Email                 string           `json:"email,omitempty"`
-	Label                 string           `json:"label,omitempty"`
-	State                 string           `json:"state"`
-	LastReason            string           `json:"last_reason,omitempty"`
-	LastAttempt           *AttemptEvidence `json:"last_attempt,omitempty"`
+	accountSummaryView
 	Evidence              *QualityEvidence `json:"evidence,omitempty"`
-	LastObservedAt        time.Time        `json:"last_observed_at,omitempty"`
-	LastProbeAt           time.Time        `json:"last_probe_at,omitempty"`
-	CooldownUntil         time.Time        `json:"cooldown_until,omitempty"`
-	ProbeBackoffUntil     time.Time        `json:"probe_backoff_until,omitempty"`
+	LastProbeAt           time.Time        `json:"last_probe_at,omitzero"`
 	DisableKind           string           `json:"disable_kind,omitempty"`
-	StrikeMissingThinking bool             `json:"strike_missing_thinking"`
-	SoftStrikes           int              `json:"soft_strikes"`
-	ErrorStrikes          int              `json:"error_strikes"`
-	ThinkingStrikes       int              `json:"thinking_strikes"`
-	ResinManaged          bool             `json:"resin_managed"`
-	ResinAccount          string           `json:"resin_account,omitempty"`
-	ResinGeneration       int64            `json:"resin_generation"`
-	ProxyStatus           string           `json:"proxy_status"`
-	Proxy                 string           `json:"proxy,omitempty"`
-	TPS                   float64          `json:"tps"`
-	TTFTMS                int64            `json:"ttft_ms"`
-	OutputTokens          int64            `json:"output_tokens"`
-	ReasoningTokens       int64            `json:"reasoning_tokens"`
-	VisibleTokens         int64            `json:"visible_tokens"`
-	EncryptedBytes        int64            `json:"encrypted_bytes"`
-	HasAccessToken        bool             `json:"has_access_token"`
-	HasRefreshToken       bool             `json:"has_refresh_token"`
+	StrikeMissingThinking bool             `json:"strike_missing_thinking,omitempty"`
+	SoftStrikes           int              `json:"soft_strikes,omitempty"`
+	ErrorStrikes          int              `json:"error_strikes,omitempty"`
+	ThinkingStrikes       int              `json:"thinking_strikes,omitempty"`
+	TTFTMS                int64            `json:"ttft_ms,omitempty"`
+	VisibleTokens         int64            `json:"visible_tokens,omitempty"`
 }
 
 func (p *Plugin) HandleManagement(request []byte) ([]byte, error) {
@@ -195,30 +197,23 @@ func (p *Plugin) handleAction(ctx context.Context, action actionRequest) (any, i
 }
 
 func (p *Plugin) actionOverview(ctx context.Context) (any, int, error) {
-	_ = p.RefreshCatalog(ctx)
-	state := p.stateStore().Snapshot()
+	_ = p.ensureCatalog(ctx)
+	catalog := p.catalogSnapshot()
+	store := p.stateStore()
+	authIDs := catalogAccountIDs(catalog)
+	resinStates := store.AccountResinStatesForIDs(authIDs)
 	counts := map[string]int{}
-	for _, account := range state.Accounts {
-		if account == nil {
-			continue
-		}
-		counts[account.State]++
+	if store != nil {
+		counts = store.StateCounts()
 	}
 	resinBound := 0
 	resinUnbound := 0
 	resinConflicts := 0
 	resinCfg := p.ResinConfig()
-	for _, account := range p.catalogSnapshot() {
-		_, _, raw, errResolve := p.resolveAuth(ctx, account.ID)
-		if errResolve != nil {
-			continue
-		}
-		var stateAccount AccountState
-		if stored := state.Accounts[account.ID]; stored != nil {
-			stateAccount = *stored
-		}
-		proxy := strings.TrimSpace(authRawString(raw, "proxy_url"))
-		_, managed := managedResinBinding(raw, stateAccount, resinCfg)
+	allowProxyFallback := len(catalog) <= catalogProxyFallbackLimit
+	for index, account := range catalog {
+		proxy := p.accountProxyURL(ctx, account, allowProxyFallback)
+		_, managed := managedResinBindingForState(proxy, resinStates[index], resinCfg)
 		if managed {
 			resinBound++
 		} else if proxy != "" {
@@ -228,24 +223,23 @@ func (p *Plugin) actionOverview(ctx context.Context) (any, int, error) {
 		}
 	}
 	recentAnomalies := 0
-	since := time.Now().UTC().Add(-24 * time.Hour)
-	for _, event := range state.Events {
-		if event.Time.After(since) && event.Class != "" {
-			recentAnomalies++
-		}
+	if store != nil {
+		recentAnomalies = store.RecentEventCount(time.Now().UTC().Add(-24 * time.Hour))
 	}
 	p.mu.RLock()
 	enabled := p.cfg.Enabled
 	policy := p.policy
 	p.mu.RUnlock()
 	stateFile := ""
-	if store := p.stateStore(); store != nil {
+	updatedAt := time.Time{}
+	if store != nil {
 		stateFile = store.Path()
+		updatedAt = store.UpdatedAt()
 	}
 	return map[string]any{
 		"enabled":              enabled,
-		"updated_at":           state.UpdatedAt,
-		"auth_count":           len(p.catalogSnapshot()),
+		"updated_at":           updatedAt,
+		"auth_count":           len(catalog),
 		"states":               counts,
 		"resin":                map[string]int{"bound": resinBound, "unbound": resinUnbound, "conflict": resinConflicts},
 		"recent_anomalies_24h": recentAnomalies,
@@ -255,21 +249,26 @@ func (p *Plugin) actionOverview(ctx context.Context) (any, int, error) {
 }
 
 func (p *Plugin) actionAccountsList(ctx context.Context, params map[string]any) (any, int, error) {
-	_ = p.RefreshCatalog(ctx)
-	state := p.stateStore().Snapshot()
+	_ = p.ensureCatalog(ctx)
+	store := p.stateStore()
+	catalog := p.catalogSnapshot()
 	filterState := strings.ToLower(strings.TrimSpace(asString(params["state"])))
 	query := strings.ToLower(strings.TrimSpace(asString(params["query"])))
+	var stateValues []string
+	if filterState != "" {
+		stateValues = store.AccountStateValuesForIDs(catalogAccountIDs(catalog))
+	}
 	page := intFromParams(params, "page", 1)
 	pageSize := intFromParams(params, "page_size", 50)
 	if page < 1 {
 		page = 1
 	}
-	if pageSize < 1 || pageSize > 200 {
+	if pageSize < 1 || pageSize > 10000 {
 		pageSize = 50
 	}
-	filtered := make([]Account, 0, len(p.catalogSnapshot()))
-	for _, account := range p.catalogSnapshot() {
-		if filterState != "" && catalogAccountState(account, state) != filterState {
+	filtered := make([]Account, 0, len(catalog))
+	for index, account := range catalog {
+		if filterState != "" && catalogAccountState(account, stateValues[index]) != filterState {
 			continue
 		}
 		if query != "" && !catalogAccountMatches(account, query) {
@@ -286,26 +285,50 @@ func (p *Plugin) actionAccountsList(ctx context.Context, params map[string]any) 
 	if end > len(filtered) {
 		end = len(filtered)
 	}
-	views := make([]accountView, 0, end-start)
-	for _, account := range filtered[start:end] {
-		view, errView := p.accountView(ctx, account)
-		if errView != nil {
-			continue
+	resinCfg := p.ResinConfig()
+	allowProxyFallback := len(catalog) <= catalogProxyFallbackLimit
+	pageAccounts := filtered[start:end]
+	pageIDs := catalogAccountIDs(pageAccounts)
+	var views any
+	if boolFromParams(params, "summary") {
+		pageSummaries := store.AccountStateSummariesForIDs(pageIDs)
+		items := make([]accountSummaryView, 0, len(pageAccounts))
+		for index, account := range pageAccounts {
+			items = append(items, p.accountSummary(account, accountStateFromSummary(pageSummaries[index]), resinCfg, p.accountProxyURL(ctx, account, allowProxyFallback)))
 		}
-		views = append(views, view)
+		views = items
+	} else {
+		pageStates := store.AccountStatesForIDs(pageIDs)
+		items := make([]accountView, 0, len(pageAccounts))
+		for index, account := range pageAccounts {
+			items = append(items, p.accountView(account, pageStates[index], resinCfg, p.accountProxyURL(ctx, account, allowProxyFallback)))
+		}
+		views = items
+	}
+	stateCounts := map[string]int(nil)
+	if store != nil {
+		stateCounts = store.StateCounts()
 	}
 	return map[string]any{
 		"items":        views,
 		"page":         page,
 		"page_size":    pageSize,
 		"total":        len(filtered),
-		"state_counts": stateCounts(state),
+		"state_counts": stateCounts,
 	}, http.StatusOK, nil
 }
 
-func catalogAccountState(account Account, state State) string {
-	if stateAccount := state.Accounts[account.ID]; stateAccount != nil && stateAccount.State != "" {
-		return stateAccount.State
+func catalogAccountIDs(accounts []Account) []string {
+	ids := make([]string, len(accounts))
+	for index, account := range accounts {
+		ids[index] = account.ID
+	}
+	return ids
+}
+
+func catalogAccountState(account Account, state string) string {
+	if state != "" {
+		return state
 	}
 	if account.Disabled {
 		return StateExternallyDisabled
@@ -330,14 +353,9 @@ func (p *Plugin) selectedAccountCandidates(ctx context.Context, authIDs []string
 	if p.stateStore() == nil {
 		return nil, fmt.Errorf("state store is not initialized")
 	}
-	catalog := p.catalogSnapshot()
-	byID := make(map[string]Account, len(catalog))
-	for _, account := range catalog {
-		byID[account.ID] = account
-	}
 	candidates := make([]accountCandidate, 0, len(authIDs))
 	for _, authID := range authIDs {
-		account, okAccount := byID[authID]
+		account, okAccount := p.findAccount(authID)
 		if !okAccount {
 			return nil, fmt.Errorf("auth not found: %s", authID)
 		}
@@ -368,11 +386,13 @@ func (p *Plugin) actionAccountGet(ctx context.Context, params map[string]any) (a
 	if !okAccount {
 		return nil, http.StatusNotFound, fmt.Errorf("auth not found")
 	}
-	view, errView := p.accountView(ctx, account)
-	if errView != nil {
-		return nil, http.StatusBadGateway, errView
+	_, _, raw, errResolve := p.resolveAuth(ctx, account.ID)
+	if errResolve != nil {
+		return nil, http.StatusBadGateway, errResolve
 	}
-	return view, http.StatusOK, nil
+	stateAccount, _ := p.stateAccount(account.ID)
+	rawProxyURL := strings.TrimSpace(authRawString(raw, "proxy_url"))
+	return p.accountView(account, stateAccount, p.ResinConfig(), rawProxyURL), http.StatusOK, nil
 }
 
 func (p *Plugin) actionProbe(ctx context.Context, params map[string]any) (any, int, error) {
@@ -402,7 +422,7 @@ func (p *Plugin) actionProbe(ctx context.Context, params map[string]any) (any, i
 		if !okAccount {
 			return nil, fmt.Errorf("auth not found")
 		}
-		return p.accountView(taskCtx, account)
+		return p.accountViewForAccount(taskCtx, account)
 	})
 	return task, http.StatusAccepted, nil
 }
@@ -686,7 +706,7 @@ func (p *Plugin) actionResinRotate(_ context.Context, params map[string]any) (an
 		if !okAccount {
 			return nil, fmt.Errorf("auth not found")
 		}
-		return p.accountView(taskCtx, account)
+		return p.accountViewForAccount(taskCtx, account)
 	})
 	return task, http.StatusAccepted, nil
 }
@@ -811,8 +831,10 @@ func (p *Plugin) actionTaskList(params map[string]any) (any, int, error) {
 }
 
 func (p *Plugin) actionEventsList(params map[string]any) (any, int, error) {
-	state := p.stateStore().Snapshot()
-	events := append([]Event(nil), state.Events...)
+	events := []Event(nil)
+	if store := p.stateStore(); store != nil {
+		events = store.EventsSnapshot()
+	}
 	sort.Slice(events, func(i, j int) bool { return events[i].Time.After(events[j].Time) })
 	authID := strings.TrimSpace(asString(params["auth_id"]))
 	filtered := make([]Event, 0, len(events))
@@ -844,74 +866,102 @@ func (p *Plugin) actionEventsList(params map[string]any) (any, int, error) {
 	return map[string]any{"items": filtered[start:end], "next_cursor": end, "total": len(filtered)}, http.StatusOK, nil
 }
 
-func (p *Plugin) accountView(ctx context.Context, account Account) (accountView, error) {
-	_, _, raw, errResolve := p.resolveAuth(ctx, account.ID)
-	if errResolve != nil {
-		return accountView{}, errResolve
-	}
-	stateAccount, _ := p.stateAccount(account.ID)
-	resinAccount, resinManaged := managedResinBinding(raw, stateAccount, p.ResinConfig())
+func (p *Plugin) accountSummary(account Account, stateAccount AccountState, resinCfg ResinSettings, proxyURL string) accountSummaryView {
+	resinAccount, resinManaged := managedResinBindingWithProxy(proxyURL, stateAccount, resinCfg)
 	displayFull := strings.TrimSpace(firstNonEmpty(account.Email, account.Label, account.ID))
 	displayLabel := strings.TrimSpace(account.Label)
 	if strings.Contains(displayLabel, "@") {
 		displayLabel = maskEmail(displayLabel)
 	}
-	view := accountView{
-		AuthID:                account.ID,
-		AuthIDDisplay:         maskAuthID(account.ID),
-		Display:               maskAccountIdentity(displayFull),
-		DisplayFull:           displayFull,
-		Email:                 maskEmail(account.Email),
-		Label:                 displayLabel,
-		State:                 stateAccount.State,
-		LastReason:            stateAccount.LastReason,
-		LastAttempt:           stateAccount.LastAttempt,
-		Evidence:              stateAccount.LastEvidence,
-		LastObservedAt:        stateAccount.LastObservedAt,
-		LastProbeAt:           stateAccount.LastProbeAt,
-		CooldownUntil:         stateAccount.CooldownUntil,
-		ProbeBackoffUntil:     stateAccount.ProbeBackoffUntil,
-		DisableKind:           stateAccount.DisableKind,
-		StrikeMissingThinking: stateAccount.QualityStrikeMissingThinking,
-		SoftStrikes:           stateAccount.SoftStrikes,
-		ErrorStrikes:          stateAccount.ErrorStrikes,
-		ThinkingStrikes:       stateAccount.ThinkingStrikes,
-		ResinManaged:          resinManaged,
-		ResinAccount:          resinAccount,
-		ResinGeneration:       stateAccount.Resin.Generation,
-		ProxyStatus:           "unbound",
-		Proxy:                 maskProxyURL(authRawString(raw, "proxy_url")),
-		TPS:                   stateAccount.Metrics.TPS,
-		TTFTMS:                stateAccount.Metrics.FirstTokenMS,
-		OutputTokens:          stateAccount.Metrics.OutputTokens,
-		ReasoningTokens:       stateAccount.Metrics.ReasoningTokens,
-		VisibleTokens:         stateAccount.Metrics.VisibleTokens,
-		EncryptedBytes:        stateAccount.Metrics.EncryptedBytes,
-		HasAccessToken:        strings.TrimSpace(authRawString(raw, "access_token")) != "",
-		HasRefreshToken:       strings.TrimSpace(authRawString(raw, "refresh_token")) != "",
+	view := accountSummaryView{
+		AuthID:            account.ID,
+		AuthIDDisplay:     maskAuthID(account.ID),
+		Display:           maskAccountIdentity(displayFull),
+		DisplayFull:       displayFull,
+		Email:             maskEmail(account.Email),
+		Label:             displayLabel,
+		State:             stateAccount.State,
+		LastReason:        stateAccount.LastReason,
+		LastAttempt:       stateAccount.LastAttempt,
+		LastObservedAt:    stateAccount.LastObservedAt,
+		CooldownUntil:     stateAccount.CooldownUntil,
+		ProbeBackoffUntil: stateAccount.ProbeBackoffUntil,
+		ResinManaged:      resinManaged,
+		ResinAccount:      resinAccount,
+		ResinGeneration:   stateAccount.Resin.Generation,
+		ProxyStatus:       "unbound",
+		Proxy:             maskProxyURL(proxyURL),
+		TPS:               stateAccount.Metrics.TPS,
+		OutputTokens:      stateAccount.Metrics.OutputTokens,
+		ReasoningTokens:   stateAccount.Metrics.ReasoningTokens,
+		EncryptedBytes:    stateAccount.Metrics.EncryptedBytes,
 	}
 	if view.State == "" {
 		view.State = StateUnknown
-		if authDisabled(raw) {
+		if account.Disabled {
 			view.State = StateExternallyDisabled
 		}
 	}
 	if view.ResinAccount != "" {
 		view.ProxyStatus = "bound"
-	} else if strings.TrimSpace(authRawString(raw, "proxy_url")) != "" {
+	} else if strings.TrimSpace(proxyURL) != "" {
 		view.ProxyStatus = "conflict"
 	}
-	return view, nil
+	return view
 }
 
-func stateCounts(state State) map[string]int {
-	counts := map[string]int{}
-	for _, account := range state.Accounts {
-		if account != nil {
-			counts[account.State]++
-		}
+func accountStateFromSummary(summary AccountStateSummary) AccountState {
+	return AccountState{
+		State:             summary.State,
+		LastReason:        summary.LastReason,
+		LastAttempt:       summary.LastAttempt,
+		LastObservedAt:    summary.LastObservedAt,
+		CooldownUntil:     summary.CooldownUntil,
+		ProbeBackoffUntil: summary.ProbeBackoffUntil,
+		Resin:             summary.Resin,
+		Metrics:           summary.Metrics,
 	}
-	return counts
+}
+
+func (p *Plugin) accountView(account Account, stateAccount AccountState, resinCfg ResinSettings, proxyURL string) accountView {
+	return accountView{
+		accountSummaryView:    p.accountSummary(account, stateAccount, resinCfg, proxyURL),
+		Evidence:              stateAccount.LastEvidence,
+		LastProbeAt:           stateAccount.LastProbeAt,
+		DisableKind:           stateAccount.DisableKind,
+		StrikeMissingThinking: stateAccount.QualityStrikeMissingThinking,
+		SoftStrikes:           stateAccount.SoftStrikes,
+		ErrorStrikes:          stateAccount.ErrorStrikes,
+		ThinkingStrikes:       stateAccount.ThinkingStrikes,
+		TTFTMS:                stateAccount.Metrics.FirstTokenMS,
+		VisibleTokens:         stateAccount.Metrics.VisibleTokens,
+	}
+}
+
+// Runtime-only auths need a per-auth read for proxy metadata, so cap that fallback
+// to small catalogs and keep bulk management requests free of N+1 host calls
+const catalogProxyFallbackLimit = 200
+
+func (p *Plugin) accountProxyURL(ctx context.Context, account Account, allowFallback bool) string {
+	proxyURL := strings.TrimSpace(account.ProxyURL)
+	if proxyURL != "" || strings.TrimSpace(account.Path) != "" || !allowFallback {
+		return proxyURL
+	}
+	_, _, raw, errResolve := p.resolveAuth(ctx, account.ID)
+	if errResolve != nil {
+		return ""
+	}
+	return strings.TrimSpace(authRawString(raw, "proxy_url"))
+}
+
+func (p *Plugin) accountViewForAccount(ctx context.Context, account Account) (accountView, error) {
+	_, _, raw, errResolve := p.resolveAuth(ctx, account.ID)
+	if errResolve != nil {
+		return accountView{}, errResolve
+	}
+	stateAccount, _ := p.stateAccount(account.ID)
+	rawProxyURL := strings.TrimSpace(authRawString(raw, "proxy_url"))
+	return p.accountView(account, stateAccount, p.ResinConfig(), rawProxyURL), nil
 }
 
 func intFromParams(params map[string]any, key string, fallback int) int {

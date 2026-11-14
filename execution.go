@@ -827,9 +827,13 @@ func (p *Plugin) recordAttemptError(authID, class string, errValue error) error 
 	if p.stateStore() == nil {
 		return errValue
 	}
-	return p.stateStore().Update(func(state *State) error {
-		p.recordEvent(state, authID, class, "transparent_attempt", "failed", sanitizeError(errValue))
-		return nil
+	return p.stateStore().AppendEvent(Event{
+		Time:   time.Now().UTC(),
+		AuthID: authID,
+		Class:  class,
+		Action: "transparent_attempt",
+		Result: "failed",
+		Detail: sanitizeError(errValue),
 	})
 }
 

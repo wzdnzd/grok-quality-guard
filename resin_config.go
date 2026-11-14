@@ -81,9 +81,8 @@ func (p *Plugin) ResinConfig() ResinSettings {
 	settings := resinSettingsFromConfig(cfg)
 	store := p.stateStore()
 	if store != nil {
-		state := store.Snapshot()
-		if state.Resin.Configured {
-			settings = state.Resin
+		if stored, configured := store.ResinSettings(); configured {
+			settings = stored
 			settings.Configured = true
 			if !settings.LocalOnly {
 				if strings.TrimSpace(settings.AdminToken) == "" {

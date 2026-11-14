@@ -86,6 +86,8 @@ func (p *Plugin) setGrokAuthModels(credentials []pluginapi.HostAuthModels) {
 	}
 	p.authModelsMu.Lock()
 	p.grokModels = models
+	p.authModelsReady = true
+	p.authModelsAt = time.Now().UTC()
 	p.authModelsMu.Unlock()
 }
 

@@ -387,8 +387,7 @@ func (p *Plugin) ProbeAccount(ctx context.Context, authID string, force bool, ca
 func (p *Plugin) markProbeSuccess(authID string, sig Signals) error {
 	now := time.Now().UTC()
 	verdict := QualityVerdict{Class: ClassNone, Reason: "probe passed", Signals: sig}
-	errUpdate := p.stateStore().Update(func(state *State) error {
-		account := p.ensureStateAccount(state, authID, "", "")
+	errUpdate := p.stateStore().UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 		account.State = StateHealthy
 		account.LastProbeAt = now
 		account.LastObservedAt = now
@@ -414,8 +413,13 @@ func (p *Plugin) markProbeSuccess(authID string, sig Signals) error {
 			EncryptedBytes:  sig.EncryptedBytes,
 			TPS:             sig.TPS,
 		}
-		p.recordEvent(state, authID, "", "probe", "healthy", "probe passed")
-		return nil
+		return &Event{
+			Time:   time.Now().UTC(),
+			AuthID: authID,
+			Action: "probe",
+			Result: "healthy",
+			Detail: "probe passed",
+		}, nil
 	})
 	if errUpdate == nil {
 		p.refreshSelectionAccount(authID)
