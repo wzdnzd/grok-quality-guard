@@ -1802,7 +1802,7 @@
                   <th class="select-cell"><input id="accountSelectAll" type="checkbox" aria-label="选择本页全部账号"></th>
                   <th>账号</th>
                   <th>状态</th>
-                  <th>最近判定</th>
+                  <th>最近判定 / 禁用原因</th>
                   <th>质量指标</th>
                   <th>租约</th>
                   <th>时间</th>
@@ -2269,6 +2269,7 @@
     const REASON_DETAIL_LABELS = {
       'expected marker missing': '探测标记缺失',
       'probe transport error': '探测传输错误',
+      'model cooldown': '宿主模型冷却中',
       'probe context ended': '探测已取消或超时',
       'probe stream read error': '读取探测流失败',
       'probe stream error': '探测流错误',
@@ -2329,13 +2330,13 @@
     const esc = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
     const icon = (name) => '<svg class="icon" aria-hidden="true"><use href="#i-' + name + '"></use></svg>';
     const num = (value, digits) => new Intl.NumberFormat('zh-CN', { maximumFractionDigits: digits == null ? 0 : digits }).format(Number(value || 0));
-    const stateLabel = (value) => STATE_LABELS[value] || value || '待检测';
+    const stateLabel = (value) => STATE_LABELS[value] || (/[\u3400-\u9fff]/.test(String(value || '')) ? String(value) : '其他状态');
     const stateTone = (value) => STATE_TONES[value] || '';
-    const reasonLabel = (value) => REASON_LABELS[value] || value || '暂无判定';
+    const reasonLabel = (value) => REASON_LABELS[value] || (/[\u3400-\u9fff]/.test(String(value || '')) ? String(value) : (value ? '其他原因' : '暂无判定'));
     const SOURCE_LABELS = { passive: '被动观测', probe: '主动探测', transparent: '透明保护', response: '响应观测', stream: '流式观测' };
     const QUALITY_ACTION_LABELS = { wait: '等待更多证据', deliver: '放行', withhold: '扣留' };
     const PROTOCOL_LABELS = { chat: 'Chat Completions', responses: 'Responses', anthropic: 'Anthropic Messages' };
-    const sourceLabel = (value) => SOURCE_LABELS[value] || value || '系统';
+    const sourceLabel = (value) => SOURCE_LABELS[value] || (/[\u3400-\u9fff]/.test(String(value || '')) ? String(value) : '其他来源');
     const reasonText = (value) => {
       const text = String(value == null ? '' : value).trim();
       if (!text) return '';
@@ -2351,7 +2352,7 @@
       if (match) return '探测质量检查失败：' + reasonText(match[1]);
       match = text.match(/^host_call_failed:\s*(.+)$/i);
       if (match) return '宿主调用失败：' + reasonText(match[1]);
-      return text;
+      return /[\u3400-\u9fff]/.test(text) ? text : '其他上游错误';
     };
     const localizeDetail = (value) => String(value == null ? '' : value).split(' · ').map((part) => {
       const text = part.trim();
@@ -2371,8 +2372,8 @@
       const at = settings.includeTime !== false && attempt.at ? ' · ' + formatFullTime(attempt.at) : '';
       return prefix + verdict + detail + at;
     };
-    const actionLabel = (value) => ACTION_LABELS[value] || value || '系统记录';
-    const resultLabel = (value) => RESULT_LABELS[value] || value || '-';
+    const actionLabel = (value) => ACTION_LABELS[value] || (/[\u3400-\u9fff]/.test(String(value || '')) ? String(value) : '系统记录');
+    const resultLabel = (value) => RESULT_LABELS[value] || (/[\u3400-\u9fff]/.test(String(value || '')) ? String(value) : '-');
     const badge = (text, tone) => '<span class="badge ' + esc(tone || '') + '">' + esc(text) + '</span>';
     const modeLabel = (policy) => {
       if (!policy) return '未知';
@@ -2868,7 +2869,7 @@
       const cooldown = account.cooldown_until ? '冷却至：' + esc(formatFullTime(account.cooldown_until)) : '无冷却';
       const probe = account.probe_backoff_until ? '探测退避至：' + esc(formatFullTime(account.probe_backoff_until)) : '可立即探测';
       const attemptDetail = account.last_attempt ? '最近尝试：' + attemptLabel(account.last_attempt, { includeTime: false }) : '最近观测：' + formatTime(account.last_observed_at);
-      const reasonSummary = reasonLabel(account.last_reason);
+      const reasonSummary = account.disable_reason ? reasonLabel(account.disable_reason) : (['cooling', 'quota_exhausted', 'credential_invalid', 'disabled_by_guard'].includes(account.state) ? '插件已禁用（原因未记录）' : reasonLabel(account.last_reason));
       return '<tr><td class="select-cell"><input type="checkbox" data-account-select="' + authID + '" aria-label="选择账号" ' + (selected ? 'checked' : '') + '></td>' +
         '<td><div class="account-name" title="' + esc(account.display_full || account.display || account.label || '未命名账号') + '">' + esc(account.display || account.label || '未命名账号') + '</div><div class="subline" title="' + esc(account.auth_id) + '">' + esc(account.auth_id_display || account.auth_id) + '</div></td><td class="nowrap">' + badge(stateLabel(account.state), stateTone(account.state)) + '</td><td><div class="truncate-line" title="' + esc(reasonSummary) + '">' + esc(reasonSummary) + '</div><div class="subline truncate-line" title="' + esc(attemptDetail) + '">' + esc(attemptDetail) + '</div></td><td><div class="metric-inline"><strong>' + esc(num(account.tps, 1)) + '</strong><span class="muted">TPS</span></div><div class="subline">输出：' + esc(num(account.output_tokens)) + ' · 推理：' + esc(num(account.reasoning_tokens)) + ' · 密文：' + esc(formatBytes(account.encrypted_bytes)) + '</div></td><td>' + resin + resinDetail + '</td><td><div>' + cooldown + '</div><div class="subline">' + probe + '</div></td><td class="actions-cell"><div class="actions"><button class="btn btn-xs" type="button" data-account-action="accounts.probe" data-auth="' + authID + '">' + icon('play') + '检测</button><button class="btn btn-xs" type="button" data-open-account="' + authID + '">' + icon('eye') + '详情</button></div></td></tr>';
     }
@@ -3270,6 +3271,7 @@
         '<div class="drawer-section"><div class="detail-grid">',
         '<div class="detail-cell"><div class="detail-label">最近尝试</div><div class="detail-value">' + esc(attemptLabel(account.last_attempt)) + '</div></div>',
         '<div class="detail-cell"><div class="detail-label">最近质量判定</div><div class="detail-value">' + esc(reasonLabel(account.last_reason)) + '</div></div>',
+        '<div class="detail-cell"><div class="detail-label">插件禁用原因</div><div class="detail-value">' + esc(account.disable_reason ? reasonLabel(account.disable_reason) : (['cooling', 'quota_exhausted', 'credential_invalid', 'disabled_by_guard'].includes(account.state) ? '插件已禁用（原因未记录）' : '—')) + '</div></div>',
         '<div class="detail-cell"><div class="detail-label">输出速度</div><div class="detail-value">' + esc(num(account.tps, 1)) + ' TPS</div></div>',
         '<div class="detail-cell"><div class="detail-label">首 Token</div><div class="detail-value">' + esc(num(account.ttft_ms)) + ' 毫秒</div></div>',
         '<div class="detail-cell"><div class="detail-label">输出 / 推理</div><div class="detail-value">' + esc(num(account.output_tokens)) + ' / ' + esc(num(account.reasoning_tokens)) + '</div></div>',

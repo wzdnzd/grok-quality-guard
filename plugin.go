@@ -306,8 +306,9 @@ func (p *Plugin) refreshLoop(ctx context.Context) {
 }
 
 const (
-	catalogRefreshTTL    = 30 * time.Second
-	authModelsRefreshTTL = 5 * time.Minute
+	catalogRefreshTTL            = 30 * time.Second
+	authModelsRefreshTTL         = 5 * time.Minute
+	guardCatalogMissingRetention = 24 * time.Hour
 )
 
 func (p *Plugin) ensureCatalog(ctx context.Context) error {
@@ -587,15 +588,34 @@ func (p *Plugin) syncCatalogState(accounts []Account) error {
 	leaseDeleteQueued := false
 	errSync := store.UpdateIfChanged(func(state *State) error {
 		for authID, account := range state.Accounts {
-			if _, ok := live[authID]; !ok {
-				if cleanupResinLeases && account != nil {
-					leaseAccount := strings.TrimSpace(account.Resin.Account)
-					if leaseAccount != "" && queueResinLeaseDeleteAndRecord(state, authID, resinCfg, leaseAccount) {
-						leaseDeleteQueued = true
-					}
+			if _, ok := live[authID]; ok {
+				if account != nil {
+					account.CatalogMissingSince = time.Time{}
 				}
-				delete(state.Accounts, authID)
+				continue
 			}
+			if account == nil {
+				delete(state.Accounts, authID)
+				continue
+			}
+			// A host catalog can be temporarily partial while CPA reloads auth
+			// records. Keep guard-owned state long enough to preserve ownership.
+			if account.DisableKind != "" || account.AuthDisabledIntent != nil {
+				if account.CatalogMissingSince.IsZero() {
+					account.CatalogMissingSince = now
+					continue
+				}
+				if now.Sub(account.CatalogMissingSince) < guardCatalogMissingRetention {
+					continue
+				}
+			}
+			if cleanupResinLeases {
+				leaseAccount := strings.TrimSpace(account.Resin.Account)
+				if leaseAccount != "" && queueResinLeaseDeleteAndRecord(state, authID, resinCfg, leaseAccount) {
+					leaseDeleteQueued = true
+				}
+			}
+			delete(state.Accounts, authID)
 		}
 		for _, account := range accounts {
 			existing := state.Accounts[account.ID]
@@ -607,11 +627,16 @@ func (p *Plugin) syncCatalogState(accounts []Account) error {
 				}
 				state.Accounts[account.ID] = existing
 			}
+			existing.CatalogMissingSince = time.Time{}
 			if account.Disabled {
-				switch existing.State {
-				case StateCooling, StateQuotaExhausted, StateCredentialInvalid, StateDisabledByGuard:
-				default:
+				if existing.DisableKind != "" {
+					existing.State = stateForDisableKind(existing.DisableKind)
+					if existing.DisableReason == "" {
+						existing.DisableReason = existing.LastReason
+					}
+				} else {
 					existing.State = StateExternallyDisabled
+					existing.DisableReason = ""
 				}
 			}
 			if !account.Disabled && existing.State == StateExternallyDisabled {

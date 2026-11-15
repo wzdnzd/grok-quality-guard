@@ -397,6 +397,7 @@ func (p *Plugin) markProbeSuccess(authID string, sig Signals) error {
 		account.CooldownUntil = time.Time{}
 		account.ProbeBackoffUntil = time.Time{}
 		account.DisableKind = ""
+		account.DisableReason = ""
 		account.PreviousDisabled = false
 		account.AuthDisabledIntent = nil
 		account.QualityStrikeMissingThinking = false

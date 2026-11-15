@@ -639,6 +639,8 @@ disabled_by_guard
 
 上游账号状态错误独立于质量 strike：`credential_invalid` 直接禁用并等待凭据更新；`quota_exhausted` 使用固定 24 小时冷却，因为 Grok 免费额度按滚动 24 小时窗口恢复。这两类处置不受 `auto_action: observe` 限制，避免失效凭据或耗尽额度继续参与路由。
 
+CPA 的 `model_cooldown` 是模型级调度状态，其文案可能携带最后一次上游额度错误，但不能证明当前 auth 自身额度耗尽。插件必须将其视为 `ignored` 宿主调度错误，不得据此写入 auth 的 `disabled` 字段。
+
 `missing_thinking` strike 语义：
 
 - 成功请求不清除 strike
@@ -654,7 +656,7 @@ disabled_by_guard
 
 ### 5.4 冷却写入与恢复
 
-写 disabled 时必须读取完整 auth JSON，但只允许修改 CPA 原生字段 `disabled`。禁用原因、所有权、冷却截止时间和 strike 全部保存在 `state.json`。
+写 disabled 时必须读取完整 auth JSON，但只允许修改 CPA 原生字段 `disabled`。所有权、冷却截止时间、strike 和简短的 `disable_reason` 全部保存在 `state.json`；重启后从 state 恢复，不能依赖内存推断。
 
 必须保留 access token、refresh token、id token、expiry、email、type、provider 及其他未知字段。
 
@@ -664,7 +666,9 @@ disabled_by_guard
 - state 中该账号处于插件隔离状态
 - state 中存在非空 `disable_kind`
 
-如果 auth 已 `disabled=true` 但 state 中没有 `disable_kind`，视为外部禁用。若管理员在冷却期间手动启用 auth，reconciler 只在冷却仍有效时修复临时启用窗口；冷却已过期时尊重 auth 当前启用状态并清理插件隔离字段。
+如果 auth 已 `disabled=true` 但 state 中没有 `disable_kind`，视为外部禁用，且不得伪造禁用原因。若管理员在冷却期间手动启用 auth，reconciler 只在冷却仍有效时修复临时启用窗口；冷却已过期时尊重 auth 当前启用状态并清理插件隔离字段。
+
+CPA 或插件重启时，catalog 可能短暂为空或不完整。guard-owned state 不能在单次 catalog 缺失时删除；恢复 catalog 后继续使用原 `disable_kind` 和 `disable_reason`。
 
 ### 5.5 外部禁用
 

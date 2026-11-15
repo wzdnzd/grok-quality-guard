@@ -114,14 +114,17 @@ type AccountState struct {
 	ThinkingStrikes              int              `json:"thinking_strikes,omitempty"`
 	ProbeBackoffUntil            time.Time        `json:"probe_backoff_until,omitzero"`
 	DisableKind                  string           `json:"disable_kind,omitempty"`
+	DisableReason                string           `json:"disable_reason,omitempty"`
 	PreviousDisabled             bool             `json:"previous_disabled,omitempty"`
 	AuthDisabledIntent           *bool            `json:"auth_disabled_intent,omitempty"`
+	CatalogMissingSince          time.Time        `json:"catalog_missing_since,omitzero"`
 	Resin                        ResinState       `json:"resin"`
 	Metrics                      Metrics          `json:"metrics"`
 }
 type AccountStateSummary struct {
 	State             string
 	LastReason        string
+	DisableReason     string
 	LastAttempt       *AttemptEvidence
 	LastObservedAt    time.Time
 	CooldownUntil     time.Time
@@ -464,6 +467,7 @@ func (s *StateStore) AccountStateSummariesForIDs(authIDs []string) []AccountStat
 		summary := AccountStateSummary{
 			State:             account.State,
 			LastReason:        account.LastReason,
+			DisableReason:     account.DisableReason,
 			LastObservedAt:    account.LastObservedAt,
 			CooldownUntil:     account.CooldownUntil,
 			ProbeBackoffUntil: account.ProbeBackoffUntil,

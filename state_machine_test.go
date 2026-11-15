@@ -44,6 +44,9 @@ func TestGuardDisablePreservesTokensAndWritesAuthFirst(t *testing.T) {
 	if account.State != StateCooling || !account.QualityStrikeMissingThinking {
 		t.Fatalf("unexpected state after guard disable: %#v", account)
 	}
+	if account.DisableReason != ClassMissingThinking {
+		t.Fatalf("guard disable reason = %q, want %q", account.DisableReason, ClassMissingThinking)
+	}
 	saved := host.saves["auth-1"]
 	if len(saved) == 0 {
 		t.Fatal("auth was not saved")
@@ -226,6 +229,9 @@ func TestExternallyDisabledAuthIsNotModified(t *testing.T) {
 	if account.State != StateExternallyDisabled {
 		t.Fatalf("state = %q, want externally_disabled", account.State)
 	}
+	if account.DisableReason != "" {
+		t.Fatalf("external disable must not invent a reason: %q", account.DisableReason)
+	}
 	if len(host.saves) != 0 {
 		t.Fatal("externally disabled auth was modified")
 	}
@@ -244,6 +250,9 @@ func TestRefreshCatalogMarksExternallyDisabled(t *testing.T) {
 	account, _ := plugin.stateAccount("auth-1")
 	if account.State != StateExternallyDisabled {
 		t.Fatalf("state = %q, want externally_disabled", account.State)
+	}
+	if account.DisableReason != "" {
+		t.Fatalf("external disable must not invent a reason: %q", account.DisableReason)
 	}
 }
 

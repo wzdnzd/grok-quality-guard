@@ -512,6 +512,7 @@ func (p *Plugin) saveGuardDisableLocked(
 		account.State = stateForDisableKind(kind)
 		account.CooldownUntil = until
 		account.DisableKind = kind
+		account.DisableReason = class
 		account.PreviousDisabled = previousDisabled
 		account.QualityStrikeMissingThinking = account.QualityStrikeMissingThinking || strike
 		if class != "" {
@@ -540,13 +541,11 @@ func (p *Plugin) setStateExternal(authID, class string) error {
 	return p.stateStore().UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 		account.State = StateExternallyDisabled
 		account.DisableKind = ""
+		account.DisableReason = ""
 		account.CooldownUntil = time.Time{}
 		account.PreviousDisabled = false
 		account.AuthDisabledIntent = nil
-		if class != "" {
-			account.LastReason = class
-		}
-		return newEvent(authID, class, "external_disable", "observed", "auth was disabled outside the guard"), nil
+		return newEvent(authID, class, "external_disable", "observed", "认证文件已被外部系统禁用，原因未知"), nil
 	})
 }
 
@@ -619,6 +618,7 @@ func resetGuardDisableState(account *AccountState) {
 	account.CooldownUntil = time.Time{}
 	account.ProbeBackoffUntil = time.Time{}
 	account.DisableKind = ""
+	account.DisableReason = ""
 	account.PreviousDisabled = false
 	account.AuthDisabledIntent = nil
 	account.QualityStrikeMissingThinking = false

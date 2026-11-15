@@ -92,6 +92,9 @@ func TestProbeSuccessReenablesCooldownAndClearsStrikes(t *testing.T) {
 	if account.State != StateHealthy || account.QualityStrikeMissingThinking || account.SoftStrikes != 0 || account.ErrorStrikes != 0 || account.ThinkingStrikes != 0 {
 		t.Fatalf("unexpected state after successful probe: %#v", account)
 	}
+	if account.DisableReason != "" {
+		t.Fatalf("successful probe did not clear disable reason: %q", account.DisableReason)
+	}
 	saved, errDecode := rawAuthToMap(host.saves["auth-1"])
 	if errDecode != nil {
 		t.Fatal(errDecode)

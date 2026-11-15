@@ -173,14 +173,14 @@ func TestProbeUnauthorizedWithoutStreamIDMarksCredentialInvalid(t *testing.T) {
 
 const modelCooldownHostError = `model_cooldown: All credentials for model grok-4.7 are cooling down (last error: You've used all the included free usage for model grok-4.7 for now. Usage resets over a rolling 24-hour window - tokens (actual/limit): 506780/500000. Upgrade to a Grok subscription for higher limits: https://grok.com/supergrok)`
 
-func TestClassifyTransportErrorDetectsQuotaExhaustion(t *testing.T) {
+func TestClassifyTransportErrorIgnoresHostModelCooldown(t *testing.T) {
 	class := classifyTransportError(errors.New(modelCooldownHostError))
-	if class != ClassQuotaExhausted {
-		t.Fatalf("class = %q, want %q", class, ClassQuotaExhausted)
+	if class != ClassIgnored {
+		t.Fatalf("class = %q, want %q", class, ClassIgnored)
 	}
 }
 
-func TestProbeModelCooldownMarksQuotaExhausted(t *testing.T) {
+func TestProbeModelCooldownDoesNotDisableAuth(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, func(cfg *Config) { cfg.AutoAction = "observe" })
@@ -196,24 +196,20 @@ func TestProbeModelCooldownMarksQuotaExhausted(t *testing.T) {
 		t.Fatal(errProbe)
 	}
 	account, okAccount := plugin.stateAccount("auth-1")
-	if !okAccount || account.State != StateQuotaExhausted || account.DisableKind != DisableKindQuota {
-		t.Fatalf("account state = %#v", account)
+	if !okAccount || account.State != StateUnknown || account.DisableKind != "" {
+		t.Fatalf("host model cooldown changed auth ownership: %#v", account)
 	}
-	if account.LastReason != ClassQuotaExhausted {
-		t.Fatalf("last reason = %q, want %q", account.LastReason, ClassQuotaExhausted)
+	if account.LastAttempt == nil || account.LastAttempt.Class != ClassIgnored || account.LastAttempt.Reason != "host_call_failed: model cooldown" {
+		t.Fatalf("host model cooldown attempt = %#v", account.LastAttempt)
 	}
-	if account.LastAttempt == nil || account.LastAttempt.Class != ClassQuotaExhausted || account.LastAttempt.Reason != "host_call_failed: quota exhausted" {
-		t.Fatalf("last attempt = %#v", account.LastAttempt)
+	if len(host.saves) != 0 {
+		t.Fatalf("host model cooldown wrote auth state: %#v", host.saves)
 	}
-	if account.CooldownUntil.IsZero() {
-		t.Fatalf("quota cooldown was not applied: %#v", account)
-	}
-	saved, errDecode := rawAuthToMap(host.saves["auth-1"])
+	saved, errDecode := rawAuthToMap(host.auths["auth-1"])
 	if errDecode != nil {
 		t.Fatal(errDecode)
 	}
-	if !authDisabled(saved) {
-		t.Fatalf("probe did not cool quota-exhausted auth: %#v", saved)
+	if authDisabled(saved) {
+		t.Fatalf("host model cooldown disabled auth: %#v", saved)
 	}
-	assertNoGuardMetadata(t, saved)
 }

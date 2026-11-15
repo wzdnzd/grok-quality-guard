@@ -997,6 +997,9 @@ func classifyTransportFailure(errValue error) (string, string) {
 		return ClassProbeError, "probe transport error"
 	}
 	text := strings.ToLower(errValue.Error())
+	if isHostModelCooldownText(text) {
+		return ClassIgnored, "host_call_failed: model cooldown"
+	}
 	if strings.Contains(text, "proxy") || strings.Contains(text, "resin") || strings.Contains(text, "socks") {
 		return ClassProxyError, "probe transport error"
 	}
@@ -1009,6 +1012,20 @@ func classifyTransportFailure(errValue error) (string, string) {
 		}
 	}
 	return ClassProbeError, "probe transport error"
+}
+
+func isHostModelCooldownText(text string) bool {
+	for _, marker := range []string{
+		"model_cooldown",
+		"all credentials for model",
+		"remaining credentials are cooling down",
+		"credential is cooling down",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func classifyTransportError(errValue error) string {

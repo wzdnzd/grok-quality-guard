@@ -78,6 +78,7 @@ type accountSummaryView struct {
 	Label             string           `json:"label,omitempty"`
 	State             string           `json:"state"`
 	LastReason        string           `json:"last_reason,omitempty"`
+	DisableReason     string           `json:"disable_reason,omitempty"`
 	LastAttempt       *AttemptEvidence `json:"last_attempt,omitempty"`
 	LastObservedAt    time.Time        `json:"last_observed_at,omitzero"`
 	CooldownUntil     time.Time        `json:"cooldown_until,omitzero"`
@@ -882,6 +883,7 @@ func (p *Plugin) accountSummary(account Account, stateAccount AccountState, resi
 		Label:             displayLabel,
 		State:             stateAccount.State,
 		LastReason:        stateAccount.LastReason,
+		DisableReason:     stateAccount.DisableReason,
 		LastAttempt:       stateAccount.LastAttempt,
 		LastObservedAt:    stateAccount.LastObservedAt,
 		CooldownUntil:     stateAccount.CooldownUntil,
@@ -902,6 +904,7 @@ func (p *Plugin) accountSummary(account Account, stateAccount AccountState, resi
 			view.State = StateExternallyDisabled
 		}
 	}
+
 	if view.ResinAccount != "" {
 		view.ProxyStatus = "bound"
 	} else if strings.TrimSpace(proxyURL) != "" {
@@ -914,6 +917,7 @@ func accountStateFromSummary(summary AccountStateSummary) AccountState {
 	return AccountState{
 		State:             summary.State,
 		LastReason:        summary.LastReason,
+		DisableReason:     summary.DisableReason,
 		LastAttempt:       summary.LastAttempt,
 		LastObservedAt:    summary.LastObservedAt,
 		CooldownUntil:     summary.CooldownUntil,
