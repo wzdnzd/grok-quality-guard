@@ -441,6 +441,7 @@ usage.output_tokens - usage.reasoning_tokens
 
 - hold 超时后出现短 visible 文本，但 reasoning bill 很大；密文达到下限本身不满足该分支
 - `windowFinal` 且没有持续流式证据，`VisibleSpanMS < 1000ms`，并存在明显 dump 账单
+- hold 超时分支同样先检查 `qualityVisibleStreaming`，持续流式输出即使窗口已过期也不判 dump
 
 #### cipher_drool
 

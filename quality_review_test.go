@@ -136,6 +136,32 @@ func TestReviewEncryptedStreamNotBurst(t *testing.T) {
 	}
 }
 
+func TestReviewHoldExpiryKeepsSustainedEncryptedStream(t *testing.T) {
+	sig := Signals{
+		Terminal:        false,
+		HoldExpired:     true,
+		HasThinking:     true,
+		VisibleTokens:   20,
+		OutputTokens:    420,
+		ReasoningTokens: 400,
+		EncryptedBytes:  2048,
+		EncryptedFloor:  256,
+		FirstVisible:    true,
+		VisibleSpanMS:   1000,
+		VisibleChunks:   6,
+	}
+	if verdict := ClassifyQualityHold(sig, 8); verdict.Action != QualityActionDeliver || verdict.Class != ClassNone {
+		t.Fatalf("sustained stream at hold expiry = %#v, want deliver", verdict)
+	}
+	dump := sig
+	dump.VisibleChunks = 1
+	dump.VisibleSpanMS = 0
+	dump.VisibleTokens = 4
+	if verdict := ClassifyQualityHold(dump, 8); verdict.Class != ClassBufferedBurst {
+		t.Fatalf("single-chunk hold dump = %#v, want buffered burst", verdict)
+	}
+}
+
 func TestReviewProbeRejectsBufferedBurst(t *testing.T) {
 	config := DefaultQualityConfig()
 	sig := Signals{

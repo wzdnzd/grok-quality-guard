@@ -1102,6 +1102,11 @@ func qualityIsBurstDump(sig Signals, minOutput int64) bool {
 	shortVisible := sig.VisibleTokens > 0 && sig.VisibleTokens < defaultQualityMaxVisible
 	heavyReasoning := sig.ReasoningTokens >= defaultQualityMinReasoning
 	if sig.HoldExpired {
+		// Sustained visible delivery outranks the reasoning bill even when the
+		// hold window expires before the upstream terminal event
+		if qualityVisibleStreaming(sig) {
+			return false
+		}
 		return shortVisible && heavyReasoning
 	}
 	return shortVisible && qualityFastFlush(sig, defaultQualityFastFlushMS) && qualityHasDumpBill(sig)
