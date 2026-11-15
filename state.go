@@ -49,6 +49,8 @@ type QualityEvidence struct {
 	DurationMS        int64     `json:"duration_ms,omitempty"`
 	GenerationMS      int64     `json:"generation_ms,omitempty"`
 	VisibleFlushMS    int64     `json:"visible_flush_ms,omitempty"`
+	VisibleSpanMS     int64     `json:"visible_span_ms,omitempty"`
+	VisibleChunks     int       `json:"visible_chunks,omitempty"`
 	TPS               float64   `json:"tps,omitempty"`
 	ChunkCount        int       `json:"chunk_count,omitempty"`
 	ByteCount         int64     `json:"byte_count,omitempty"`
@@ -68,7 +70,7 @@ func qualityEvidenceFromVerdict(verdict QualityVerdict, source string, at time.T
 		VisibleRunes: sig.VisibleRunes, VisibleTokens: sig.VisibleTokens, OutputTokens: sig.OutputTokens,
 		ReasoningTokens: sig.ReasoningTokens, EncryptedBytes: sig.EncryptedBytes, EncryptedFloor: sig.EncryptedFloor,
 		FirstTokenMS: sig.FirstTokenMS, DurationMS: sig.DurationMS, GenerationMS: sig.GenerationMS,
-		VisibleFlushMS: sig.VisibleFlushMS, TPS: sig.TPS,
+		VisibleFlushMS: sig.VisibleFlushMS, VisibleSpanMS: sig.VisibleSpanMS, VisibleChunks: sig.VisibleChunks, TPS: sig.TPS,
 		ChunkCount: sig.ChunkCount, ByteCount: sig.ByteCount, EventCount: sig.EventCount,
 		ParsedEvents: sig.ParsedEvents, UnknownEvents: sig.UnknownEvents, ParseFailures: sig.ParseFailures,
 	}
@@ -157,7 +159,13 @@ type StateStore struct {
 	mu    sync.RWMutex
 	path  string
 	state State
+
+	flushMu    sync.Mutex
+	flushTimer *time.Timer
+	dirty      bool
 }
+
+const stateFlushInterval = time.Second
 
 func NewStateStore(path string) *StateStore {
 	if path == "" {
@@ -582,11 +590,21 @@ func (s *StateStore) CatalogMatches(accounts []Account) bool {
 }
 
 func (s *StateStore) UpdateAccount(authID string, fn func(*AccountState) (*Event, error)) error {
+	return s.updateAccount(authID, fn, true)
+}
+
+// RecordObservation applies an observation-only mutation in memory and
+// coalesces the durable write. Use UpdateAccount for guard, probe, admin, and
+// Resin mutations that must be durable before the caller continues.
+func (s *StateStore) RecordObservation(authID string, fn func(*AccountState) (*Event, error)) error {
+	return s.updateAccount(authID, fn, false)
+}
+
+func (s *StateStore) updateAccount(authID string, fn func(*AccountState) (*Event, error), persist bool) error {
 	if s == nil {
 		return errors.New("state store is nil")
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	previousUpdatedAt := s.state.UpdatedAt
 	previousEvents := s.state.Events
 	previousAccount, existed := s.state.Accounts[authID]
@@ -611,6 +629,7 @@ func (s *StateStore) UpdateAccount(authID string, fn func(*AccountState) (*Event
 		}
 		s.state.Events = previousEvents
 		s.state.UpdatedAt = previousUpdatedAt
+		s.mu.Unlock()
 		return errFn
 	}
 	if event != nil {
@@ -622,20 +641,48 @@ func (s *StateStore) UpdateAccount(authID string, fn func(*AccountState) (*Event
 		}
 		appendEvent(&s.state, *event)
 	} else if existed && previousCopy != nil && reflect.DeepEqual(previousCopy, account) {
+		s.mu.Unlock()
 		return nil
 	}
 	s.state.UpdatedAt = time.Now().UTC()
-	if errSave := s.saveLocked(); errSave != nil {
-		if existed && previousCopy != nil {
-			s.state.Accounts[authID] = previousCopy
-		} else {
-			delete(s.state.Accounts, authID)
+	if persist {
+		if errSave := s.saveLocked(); errSave != nil {
+			if existed && previousCopy != nil {
+				s.state.Accounts[authID] = previousCopy
+			} else {
+				delete(s.state.Accounts, authID)
+			}
+			s.state.Events = previousEvents
+			s.state.UpdatedAt = previousUpdatedAt
+			s.mu.Unlock()
+			return errSave
 		}
-		s.state.Events = previousEvents
-		s.state.UpdatedAt = previousUpdatedAt
-		return errSave
+	} else {
+		s.dirty = true
+	}
+	s.mu.Unlock()
+	if !persist {
+		s.scheduleFlush()
 	}
 	return nil
+}
+
+func (s *StateStore) scheduleFlush() {
+	if s == nil {
+		return
+	}
+	s.flushMu.Lock()
+	if s.flushTimer != nil {
+		s.flushMu.Unlock()
+		return
+	}
+	s.flushTimer = time.AfterFunc(stateFlushInterval, func() {
+		s.flushMu.Lock()
+		s.flushTimer = nil
+		s.flushMu.Unlock()
+		_ = s.Flush()
+	})
+	s.flushMu.Unlock()
 }
 
 func (s *StateStore) AppendEvent(event Event) error {
@@ -678,34 +725,43 @@ func (s *StateStore) Update(fn func(*State) error) error {
 	return nil
 }
 
-func (s *StateStore) UpdateIfChanged(fn func(*State) error) error {
+// UpdateIfChanged applies a periodic catalog or Resin sync mutation. The
+// callback must report whether it changed the state. Callers validate before
+// mutating; a save failure leaves the in-memory state authoritative so the next
+// flush can retry instead of paying for a full clone on every invocation.
+func (s *StateStore) UpdateIfChanged(fn func(*State) (bool, error)) error {
 	if s == nil {
 		return errors.New("state store is nil")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	previous := cloneState(s.state)
-	if errFn := fn(&s.state); errFn != nil {
-		s.state = previous
+	changed, errFn := fn(&s.state)
+	if errFn != nil {
 		return errFn
 	}
-	if reflect.DeepEqual(previous, s.state) {
+	if !changed {
 		return nil
 	}
 	s.state.UpdatedAt = time.Now().UTC()
-	if errSave := s.saveLocked(); errSave != nil {
-		s.state = previous
-		return errSave
-	}
-	return nil
+	s.dirty = true
+	return s.saveLocked()
 }
 
 func (s *StateStore) Flush() error {
 	if s == nil {
 		return errors.New("state store is nil")
 	}
+	s.flushMu.Lock()
+	if s.flushTimer != nil {
+		s.flushTimer.Stop()
+		s.flushTimer = nil
+	}
+	s.flushMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.dirty {
+		return nil
+	}
 	return s.saveLocked()
 }
 
@@ -757,6 +813,7 @@ func (s *StateStore) saveLocked() error {
 			return fmt.Errorf("replace state file: %w", errRetry)
 		}
 	}
+	s.dirty = false
 	return nil
 }
 

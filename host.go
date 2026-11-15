@@ -115,12 +115,9 @@ func (p *Plugin) closeModelStream(streamID string) error {
 	if streamID == "" {
 		return nil
 	}
+	defer p.untrackModelStream(streamID)
 	_, errCall := hostCall(pluginabi.MethodHostModelStreamClose, pluginapi.HostModelStreamCloseRequest{StreamID: streamID})
-	if errCall != nil {
-		return errCall
-	}
-	p.untrackModelStream(streamID)
-	return nil
+	return errCall
 }
 
 func cloneHeader(headers http.Header) http.Header {
@@ -166,6 +163,70 @@ func marshalRawMap(value map[string]json.RawMessage) (json.RawMessage, error) {
 type modelStreamReadResult struct {
 	Response pluginapi.HostModelStreamReadResponse
 	Err      error
+}
+
+var errModelStreamReaderClosed = fmt.Errorf("model stream reader closed")
+
+// modelStreamReader keeps one blocking host reader goroutine per model stream
+// instead of starting a goroutine for every chunk.
+type modelStreamReader struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	events chan modelStreamReadResult
+	done   chan struct{}
+}
+
+func (p *Plugin) openModelStreamReader(ctx context.Context, streamID string) *modelStreamReader {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	readerCtx, cancel := context.WithCancel(ctx)
+	reader := &modelStreamReader{
+		ctx:    readerCtx,
+		cancel: cancel,
+		events: make(chan modelStreamReadResult, 1),
+		done:   make(chan struct{}),
+	}
+	go func() {
+		defer close(reader.done)
+		defer close(reader.events)
+		for {
+			response, errRead := p.readModelStream(context.Background(), streamID)
+			result := modelStreamReadResult{Response: response, Err: errRead}
+			select {
+			case reader.events <- result:
+			case <-reader.ctx.Done():
+				return
+			}
+			if errRead != nil || response.Done {
+				return
+			}
+		}
+	}()
+	return reader
+}
+
+func (reader *modelStreamReader) Next() (pluginapi.HostModelStreamReadResponse, error) {
+	if reader == nil {
+		return pluginapi.HostModelStreamReadResponse{}, errModelStreamReaderClosed
+	}
+	select {
+	case <-reader.ctx.Done():
+		return pluginapi.HostModelStreamReadResponse{}, reader.ctx.Err()
+	case result, ok := <-reader.events:
+		if !ok {
+			return pluginapi.HostModelStreamReadResponse{}, errModelStreamReaderClosed
+		}
+		return result.Response, result.Err
+	}
+}
+
+func (reader *modelStreamReader) Close() {
+	if reader == nil {
+		return
+	}
+	reader.cancel()
+	<-reader.done
 }
 
 func (p *Plugin) readModelStreamContext(ctx context.Context, streamID string) (pluginapi.HostModelStreamReadResponse, error) {

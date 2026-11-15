@@ -24,6 +24,7 @@ const (
 	ClassProxyError                = "proxy_error"
 	ClassCredentialInvalid         = "credential_invalid"
 	ClassQuotaExhausted            = "quota_exhausted"
+	ClassRateLimited               = "rate_limited"
 	ClassIgnored                   = "ignored"
 	ClassInsufficientOutput        = "insufficient_output_tokens"
 	ClassInsufficientGeneration    = "insufficient_generation_window"
@@ -63,6 +64,8 @@ type Signals struct {
 	UsageReported     bool
 	FirstVisible      bool
 	VisibleFlushMS    int64
+	VisibleSpanMS     int64
+	VisibleChunks     int
 	Terminal          bool
 	HoldExpired       bool
 	SemanticOutput    bool
@@ -158,15 +161,35 @@ func sseLineComplete(line string) bool {
 	}
 	if data, ok := strings.CutPrefix(line, "data:"); ok {
 		data = strings.TrimSpace(data)
-		return data == "" || data == "[DONE]" || json.Valid([]byte(data))
+		if data == "" || data == "[DONE]" {
+			return true
+		}
+		if !jsonCandidateComplete(data) {
+			return false
+		}
+		return json.Valid([]byte(data))
 	}
 	if line == "[DONE]" {
 		return true
 	}
 	if line[0] == '{' || line[0] == '[' {
+		if !jsonCandidateComplete(line) {
+			return false
+		}
 		return json.Valid([]byte(line))
 	}
 	return false
+}
+
+// jsonCandidateComplete cheaply rejects obviously partial JSON before the
+// full json.Valid scan. It avoids re-validating a growing buffer for every
+// chunk of a large SSE data line.
+func jsonCandidateComplete(value string) bool {
+	if value == "" {
+		return false
+	}
+	last := value[len(value)-1]
+	return last == '}' || last == ']'
 }
 
 func (p *SSEParser) processLine(line string) (SSEEvent, bool) {
@@ -213,6 +236,7 @@ type StreamAnalyzer struct {
 	terminalAt     time.Time
 	visibleText    strings.Builder
 	visibleRunes   int64
+	visibleChunks  int
 	aggregateRunes int64
 	visibleDelta   bool
 	reasoningDelta bool
@@ -221,12 +245,14 @@ type StreamAnalyzer struct {
 	encryptedBytes int64
 	minEncrypted   int64
 	bytesPerToken  int64
+	retainText     bool
 	signals        Signals
 }
 
 func NewStreamAnalyzer() *StreamAnalyzer {
 	return &StreamAnalyzer{
 		streaming:     true,
+		retainText:    true,
 		startedAt:     time.Now(),
 		minEncrypted:  defaultEncryptedBytes,
 		bytesPerToken: defaultEncryptedBytesPerToken,
@@ -278,6 +304,13 @@ func (a *StreamAnalyzer) SetProtocol(value string) {
 		return
 	}
 	a.protocol = normalizeQualityProtocol(value)
+}
+
+func (a *StreamAnalyzer) SetRetainText(value bool) {
+	if a == nil {
+		return
+	}
+	a.retainText = value
 }
 
 func (a *StreamAnalyzer) SetEncryptedConfig(minBytes, bytesPerToken int64) {
@@ -695,7 +728,7 @@ func (a *StreamAnalyzer) noteAggregateVisibleText(text string, now time.Time, ki
 		return 0
 	}
 	a.signals.SemanticOutput = true
-	if !a.visibleDelta {
+	if !a.visibleDelta && a.retainText {
 		a.visibleText.WriteString(text)
 	}
 	return int64(utf8.RuneCountInString(text))
@@ -838,7 +871,10 @@ func (a *StreamAnalyzer) addVisibleText(text string, now time.Time) {
 		a.signals.FirstVisible = true
 	}
 	a.lastVisibleAt = now
-	a.visibleText.WriteString(text)
+	a.visibleChunks++
+	if a.retainText {
+		a.visibleText.WriteString(text)
+	}
 	a.visibleRunes += int64(utf8.RuneCountInString(text))
 	a.signals.VisibleRunes = maxInt64(a.signals.VisibleRunes, a.visibleRunes)
 	a.signals.VisibleTokens = (a.signals.VisibleRunes + 3) / 4
@@ -925,11 +961,15 @@ func (a *StreamAnalyzer) snapshot(final bool) Signals {
 		if sig.VisibleFlushMS < 0 {
 			sig.VisibleFlushMS = 0
 		}
+		sig.VisibleSpanMS = durationMS(a.firstVisibleAt, a.lastVisibleAt)
+		sig.VisibleChunks = a.visibleChunks
 	}
 	sig.DurationMS = durationMS(a.startedAt, end)
 	sig.GenerationMS = generationWindowMS(sig.DurationMS, sig.FirstTokenMS, sig.ReasoningTokens)
 	sig.TPS = tps(sig.OutputTokens, sig.GenerationMS)
-	sig.VisibleText = a.visibleText.String()
+	if final && a.retainText {
+		sig.VisibleText = a.visibleText.String()
+	}
 	sig.ChunkCount = a.signals.ChunkCount
 	sig.ByteCount = a.signals.ByteCount
 	sig.EventCount = a.signals.EventCount
@@ -1023,13 +1063,23 @@ func qualityHasDumpBill(sig Signals) bool {
 	return qualityMeetsEncryptedFloor(sig) || sig.ReasoningTokens >= defaultQualityMinReasoning
 }
 
+// qualityVisibleStreaming reports evidence that the visible text arrived as a
+// real stream instead of a single buffered dump. Dump checks must not fire once
+// this evidence exists.
+func qualityVisibleStreaming(sig Signals) bool {
+	return sig.FirstVisible && sig.VisibleChunks >= 2 && sig.VisibleSpanMS >= 200
+}
+
 func qualityFastFlush(sig Signals, limitMS int64) bool {
-	return sig.FirstVisible && sig.VisibleFlushMS >= 0 && sig.VisibleFlushMS < limitMS
+	if !sig.FirstVisible || sig.VisibleChunks < 2 || qualityVisibleStreaming(sig) {
+		return false
+	}
+	return sig.VisibleSpanMS >= 0 && sig.VisibleSpanMS < limitMS
 }
 
 func qualityIsBurstDump(sig Signals, minOutput int64) bool {
 	_ = minOutput
-	if sig.HasReasoningDelta {
+	if sig.HasReasoningDelta || qualityVisibleStreaming(sig) {
 		return false
 	}
 	shortVisible := sig.VisibleTokens > 0 && sig.VisibleTokens < defaultQualityMaxVisible
@@ -1037,12 +1087,15 @@ func qualityIsBurstDump(sig Signals, minOutput int64) bool {
 	if sig.HoldExpired && shortVisible && heavyReasoning {
 		return true
 	}
-	return qualityFastFlush(sig, defaultQualityFastFlushMS) && qualityHasDumpBill(sig)
+	return shortVisible && qualityFastFlush(sig, defaultQualityFastFlushMS) && qualityHasDumpBill(sig)
 }
 
 func qualityIsCipherDrool(sig Signals, minOutput int64) bool {
 	if minOutput <= 0 {
 		minOutput = defaultQualityMinOutput
+	}
+	if qualityVisibleStreaming(sig) {
+		return false
 	}
 	if sig.HasReasoningDelta || sig.ReasoningTokens > 0 || sig.EncryptedBytes <= 0 {
 		return false
@@ -1055,7 +1108,7 @@ func qualityIsCipherDrool(sig Signals, minOutput int64) bool {
 
 func qualityIsFakeEncryptedDump(sig Signals, minOutput int64) bool {
 	_ = minOutput
-	if sig.HasReasoningDelta {
+	if sig.HasReasoningDelta || qualityVisibleStreaming(sig) {
 		return false
 	}
 	if !qualityFastFlush(sig, defaultQualityFakeFlushMS) {
@@ -1065,7 +1118,7 @@ func qualityIsFakeEncryptedDump(sig Signals, minOutput int64) bool {
 }
 
 func qualityIsFastReasoningRatioDump(sig Signals) bool {
-	if !sig.HasReasoningDelta {
+	if !sig.HasReasoningDelta || qualityVisibleStreaming(sig) {
 		return false
 	}
 	if !qualityFastFlush(sig, defaultQualityFakeFlushMS) {
@@ -1111,7 +1164,7 @@ func ClassifyQualityHold(sig Signals, minOutput int64) QualityVerdict {
 		if sig.Terminal {
 			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "encrypted reasoning met the floor", Signals: sig}
 		}
-		if sig.VisibleTokens >= minOutput && sig.FirstVisible && sig.VisibleFlushMS >= defaultQualityFakeFlushMS {
+		if sig.VisibleTokens >= minOutput && sig.FirstVisible && sig.VisibleSpanMS >= 500 {
 			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "encrypted reasoning with sustained visible output", Signals: sig}
 		}
 		return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "waiting for encrypted reasoning evidence", Signals: sig}
@@ -1147,6 +1200,15 @@ func ClassifyQualityHold(sig Signals, minOutput int64) QualityVerdict {
 	}
 	return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "waiting for enough output", Signals: sig}
 }
+func isDumpClass(class string) bool {
+	switch class {
+	case ClassBufferedBurst, ClassCipherDrool, ClassFakeEncryptedDump, ClassFastReasoningRatio:
+		return true
+	default:
+		return false
+	}
+}
+
 func isSemanticOnly(sig Signals) bool {
 	return sig.SemanticOutput && !sig.HasThinking && sig.VisibleTokens == 0
 }
@@ -1192,7 +1254,12 @@ func classifyFinal(sig Signals, cfg QualityConfig, reasoningRequired bool, minOu
 	if streaming {
 		hold := ClassifyQualityHold(sig, minOutput)
 		if hold.Action == QualityActionWithhold {
-			if hold.Class == ClassMissingThinking && !thinkingRequired {
+			switch {
+			case !reasoningRequired && isDumpClass(hold.Class):
+				hold.Action = QualityActionDeliver
+				hold.Class = ClassNone
+				hold.Reason = "non-reasoning request skipped dump detection"
+			case hold.Class == ClassMissingThinking && !thinkingRequired:
 				hold.Action = QualityActionDeliver
 				hold.Class = ClassNone
 				if cfg.ThinkingGuard {
@@ -1200,7 +1267,7 @@ func classifyFinal(sig Signals, cfg QualityConfig, reasoningRequired bool, minOu
 				} else {
 					hold.Reason = "thinking guard is disabled"
 				}
-			} else {
+			default:
 				return hold
 			}
 		}
@@ -1241,8 +1308,9 @@ func probeStreamUnparsed(sig Signals) bool {
 		!sig.SemanticOutput
 }
 
-func classifyProbeResult(sig Signals, cfg QualityConfig, expectedMatched, thinkingRequired bool) QualityVerdict {
-	sig.ReasoningRequired = thinkingRequired
+func classifyProbeResult(sig Signals, cfg QualityConfig, expectedMatched, reasoningRequired bool) QualityVerdict {
+	sig.ReasoningRequired = reasoningRequired
+	thinkingRequired := cfg.ThinkingGuard && reasoningRequired
 	if probeStreamUnparsed(sig) {
 		return QualityVerdict{Action: QualityActionWithhold, Class: ClassProbeError, Reason: "probe stream produced no parseable events", Signals: sig}
 	}
@@ -1259,8 +1327,22 @@ func classifyProbeResult(sig Signals, cfg QualityConfig, expectedMatched, thinki
 	if output < cfg.MinPassiveOutputTokens {
 		return QualityVerdict{Action: QualityActionWithhold, Class: ClassInsufficientOutput, Reason: "insufficient output tokens", Signals: sig}
 	}
-	if thinkingRequired && output >= thinkingGuardMinOutputTokens && sig.ReasoningTokens <= 0 {
-		return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "missing thinking", Signals: sig}
+	sig.EncryptedFloor = encryptedFloor(sig.ReasoningTokens, cfg)
+	if sig.EncryptedBytes > 0 && sig.EncryptedBytes >= sig.EncryptedFloor {
+		sig.HasThinking = true
+	}
+	hold := ClassifyQualityHold(sig, cfg.MinHoldOutputTokens)
+	if hold.Action == QualityActionWithhold {
+		switch {
+		case !reasoningRequired && isDumpClass(hold.Class):
+			// Non-reasoning probe models legitimately produce fast visible text.
+		case hold.Class == ClassMissingThinking:
+			if thinkingRequired && output >= thinkingGuardMinOutputTokens && sig.ReasoningTokens <= 0 {
+				return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "missing thinking", Signals: sig}
+			}
+		default:
+			return hold
+		}
 	}
 	class, speed, gen := classifyOutputSpeed(sig, cfg, cfg.FailClosed)
 	sig.GenerationMS = gen
@@ -1319,8 +1401,10 @@ func classifyNonStreamResult(sig Signals, cfg QualityConfig, reasoningRequired b
 	if sig.OutputTokens <= 0 {
 		sig.OutputTokens = sig.VisibleTokens
 	}
-	sig.GenerationMS = generationWindowMS(sig.DurationMS, sig.FirstTokenMS, sig.ReasoningTokens)
-	sig.TPS = tps(sig.OutputTokens, sig.GenerationMS)
+	// Non-streaming responses have no observable generation window. Deriving a
+	// TPS from parse latency produced false hard_tps verdicts for every request.
+	sig.GenerationMS = 0
+	sig.TPS = 0
 	if isEmptyStream(sig) {
 		return QualityVerdict{Action: QualityActionWithhold, Class: ClassEmptyStream, Reason: "upstream response completed without content", Signals: sig}
 	}
@@ -1332,15 +1416,6 @@ func classifyNonStreamResult(sig Signals, cfg QualityConfig, reasoningRequired b
 		if output >= minOutput {
 			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "no real reasoning evidence", Signals: sig}
 		}
-	}
-	class, speed, gen := classifyOutputSpeed(sig, cfg, false)
-	sig.GenerationMS = gen
-	sig.TPS = speed
-	if class != ClassNone {
-		return QualityVerdict{Action: QualityActionWithhold, Class: class, Reason: outputSpeedReason(class), Signals: sig}
-	}
-	if cfg.FailClosed && gen <= 0 && sig.OutputTokens >= minOutput {
-		return QualityVerdict{Action: QualityActionWithhold, Class: ClassInsufficientGeneration, Reason: "insufficient generation window", Signals: sig}
 	}
 	return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "within_threshold", Signals: sig}
 }
@@ -1412,6 +1487,9 @@ func disabledReasoningValue(value any) bool {
 		normalized := strings.ToLower(strings.TrimSpace(typed))
 		return normalized == "none" || normalized == "off" || normalized == "disabled" || normalized == "false"
 	case map[string]any:
+		if kind := strings.ToLower(strings.TrimSpace(asString(typed["type"]))); kind == "disabled" || kind == "none" || kind == "off" {
+			return true
+		}
 		if effort := strings.ToLower(strings.TrimSpace(asString(typed["effort"]))); effort == "none" || effort == "off" {
 			return true
 		}

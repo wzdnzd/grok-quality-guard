@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestSuccessfulVerdictResetsAllStrikes(t *testing.T) {
+func TestSuccessfulVerdictResetsCountersAndPreservesStrike(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, nil)
@@ -28,8 +28,8 @@ func TestSuccessfulVerdictResetsAllStrikes(t *testing.T) {
 	if !ok {
 		t.Fatal("account state missing")
 	}
-	if account.QualityStrikeMissingThinking || account.SoftStrikes != 0 || account.ErrorStrikes != 0 || account.ThinkingStrikes != 0 {
-		t.Fatalf("healthy observation did not reset strikes: %#v", account)
+	if !account.QualityStrikeMissingThinking || account.SoftStrikes != 0 || account.ErrorStrikes != 0 || account.ThinkingStrikes != 0 {
+		t.Fatalf("healthy observation did not preserve the missing-thinking strike: %#v", account)
 	}
 }
 

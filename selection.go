@@ -37,6 +37,7 @@ type routingSelectionRuntime struct {
 	preferredAuthID    string
 	preferredSuccessAt time.Time
 	bindings           map[string]routingSessionBinding
+	bindOps            uint64
 }
 
 type routingSessionBinding struct {
@@ -147,6 +148,29 @@ func (index *routingSelectionIndex) LayerForAuth(authID string) (string, bool) {
 
 func (index *routingSelectionIndex) Total() int {
 	return index.Load().Total()
+}
+
+// NeedsUpsert reports whether a state change can move the account between
+// selection layers. Observation-only updates keep the same layer and must not
+// copy the entire index.
+func (index *routingSelectionIndex) NeedsUpsert(account Account, state AccountState) bool {
+	current := index.Load()
+	if current == nil {
+		return true
+	}
+	oldKey, oldEligible := current.layerByAuth[account.ID]
+	stateValue := state.State
+	if stateValue == "" {
+		stateValue = StateUnknown
+	}
+	if !accountEligibleForSelection(account, stateValue) {
+		return oldEligible
+	}
+	key, _, ok := selectionLayerForState(stateValue, account.Priority)
+	if !ok {
+		return oldEligible
+	}
+	return !oldEligible || oldKey != key
 }
 
 func (index *routingSelectionIndex) Build(accounts []Account, states map[string]*AccountState) {
@@ -368,6 +392,9 @@ func (p *Plugin) refreshSelectionAccount(authID string) {
 	if !okState && account.AuthIndex != "" {
 		state, _ = p.stateAccount(account.AuthIndex)
 	}
+	if !index.NeedsUpsert(account, state) {
+		return
+	}
 	index.Upsert(account, state)
 }
 
@@ -481,7 +508,10 @@ func (runtime *routingSelectionRuntime) GetOrBind(sessionKey, proposedAuthID str
 	}
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
-	runtime.pruneBindingsLocked(now)
+	runtime.bindOps++
+	if runtime.bindOps%16 == 0 {
+		runtime.pruneBindingsLocked(now)
+	}
 	if binding, ok := runtime.bindings[sessionKey]; ok && now.Before(binding.ExpiresAt) {
 		return binding.AuthID
 	}

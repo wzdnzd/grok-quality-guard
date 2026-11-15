@@ -142,11 +142,12 @@ func (p *Plugin) ClearResinProxy(ctx context.Context, authID string) (ResinClear
 		return result, errMarshal
 	}
 	wantDelete := account != "" && !cfg.LocalOnly
-	commit, errCommit := p.commitResinProxyChange(authID, response.Name, encoded, func(state *State) bool {
+	commit, errCommit := p.commitResinProxyChange(authID, response.Name, encoded, func(state *State) (bool, bool) {
 		stateAccount := p.ensureStateAccount(state, authID)
 		stateAccount.Resin = ResinState{Managed: false, Generation: generation}
+		queued := false
 		if wantDelete {
-			queueResinLeaseDeleteAndRecord(state, authID, cfg, account)
+			queued = queueResinLeaseDeleteAndRecord(state, authID, cfg, account)
 		}
 		detail := "external proxy_url cleared"
 		if account != "" {
@@ -158,7 +159,7 @@ func (p *Plugin) ClearResinProxy(ctx context.Context, authID string) (ResinClear
 			}
 		}
 		p.recordEvent(state, authID, "", "resin_clear", "cleared", detail)
-		return wantDelete
+		return true, queued
 	})
 	if errCommit != nil {
 		result.Error = sanitizeError(errCommit)
@@ -176,7 +177,7 @@ type resinProxyCommit struct {
 // commitResinProxyChange saves the auth first because proxy_url is the routing
 // source of truth. State persistence and lease cleanup are secondary to that
 // local switch and must not turn a successful auth write into a failed rotation.
-func (p *Plugin) commitResinProxyChange(authID, authName string, encoded json.RawMessage, update func(*State) bool) (resinProxyCommit, error) {
+func (p *Plugin) commitResinProxyChange(authID, authName string, encoded json.RawMessage, update func(*State) (bool, bool)) (resinProxyCommit, error) {
 	commit := resinProxyCommit{}
 	if _, errSave := p.saveAuth(authName, encoded); errSave != nil {
 		return commit, errSave
@@ -186,9 +187,10 @@ func (p *Plugin) commitResinProxyChange(authID, authName string, encoded json.Ra
 		_ = p.recordInternalError(authID, fmt.Errorf("state store is not initialized"))
 		return commit, nil
 	}
-	if errUpdate := store.UpdateIfChanged(func(state *State) error {
-		commit.DeleteQueued = update(state)
-		return nil
+	if errUpdate := store.UpdateIfChanged(func(state *State) (bool, error) {
+		changed, deleteQueued := update(state)
+		commit.DeleteQueued = deleteQueued
+		return changed, nil
 	}); errUpdate != nil {
 		commit.DeleteQueued = false
 		_ = p.recordInternalError(authID, errUpdate)
@@ -306,14 +308,15 @@ func (p *Plugin) RotateResin(ctx context.Context, authID string) error {
 	if deleteQueued {
 		detail = fmt.Sprintf("旧租约：%s → 新租约：%s，旧租约删除已入队", oldLabel, newAccount)
 	}
-	_, errCommit := p.commitResinProxyChange(authID, response.Name, encoded, func(state *State) bool {
+	_, errCommit := p.commitResinProxyChange(authID, response.Name, encoded, func(state *State) (bool, bool) {
 		stateAccount := p.ensureStateAccount(state, authID)
 		stateAccount.Resin = ResinState{Managed: true, Account: newAccount, Generation: generation}
+		queued := false
 		if deleteQueued {
-			queueResinLeaseDeleteAndRecord(state, authID, cfg, previousAccount)
+			queued = queueResinLeaseDeleteAndRecord(state, authID, cfg, previousAccount)
 		}
 		p.recordEvent(state, authID, "", "resin_rotate", "rotated", detail)
-		return deleteQueued
+		return true, queued
 	})
 	if errCommit != nil {
 		return errCommit

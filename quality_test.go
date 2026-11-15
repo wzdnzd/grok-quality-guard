@@ -84,17 +84,26 @@ func TestTPSAndBurstClassification(t *testing.T) {
 		HasThinking:     true,
 		FirstVisible:    true,
 		VisibleFlushMS:  100,
+		VisibleSpanMS:   150,
+		VisibleChunks:   2,
 	}
-	verdict := classifyFinal(sig, config, false, 8, true)
+	verdict := classifyFinal(sig, config, true, 8, true)
 	if verdict.Class != ClassBufferedBurst {
 		t.Fatalf("class = %q, want buffered_burst (%#v)", verdict.Class, verdict.Signals)
 	}
 	hard := classifyFinal(Signals{
-		Terminal:     true,
-		FirstTokenMS: 100,
-		DurationMS:   3000,
-		OutputTokens: 4000,
-	}, config, false, 8, false)
+		Terminal:          true,
+		Streaming:         true,
+		FirstTokenMS:      100,
+		DurationMS:        3000,
+		OutputTokens:      4000,
+		VisibleTokens:     100,
+		HasThinking:       true,
+		HasReasoningDelta: true,
+		FirstVisible:      true,
+		VisibleSpanMS:     1500,
+		VisibleChunks:     10,
+	}, config, false, 8, true)
 	if hard.Class != ClassHardTPS {
 		t.Fatalf("class = %q, want hard_tps", hard.Class)
 	}
@@ -109,20 +118,23 @@ func TestDumpClassesHavePriority(t *testing.T) {
 		EncryptedBytes: 400,
 		EncryptedFloor: 256,
 	}
-	if got := classifyFinal(cipher, config, false, 8, true).Class; got != ClassCipherDrool {
+	if got := classifyFinal(cipher, config, true, 8, true).Class; got != ClassCipherDrool {
 		t.Fatalf("cipher class = %q, want cipher_drool", got)
 	}
 
 	fake := Signals{
-		Streaming:      true,
-		Terminal:       true,
-		FirstVisible:   true,
-		VisibleFlushMS: 1500,
-		VisibleTokens:  4,
-		EncryptedBytes: 4000,
-		EncryptedFloor: 4000,
+		Streaming:       true,
+		Terminal:        true,
+		FirstVisible:    true,
+		VisibleFlushMS:  1500,
+		VisibleSpanMS:   150,
+		VisibleChunks:   2,
+		VisibleTokens:   100,
+		ReasoningTokens: 100,
+		EncryptedBytes:  4000,
+		EncryptedFloor:  4000,
 	}
-	if got := classifyFinal(fake, config, false, 8, true).Class; got != ClassFakeEncryptedDump {
+	if got := classifyFinal(fake, config, true, 8, true).Class; got != ClassFakeEncryptedDump {
 		t.Fatalf("fake encrypted class = %q, want fake_encrypted_dump", got)
 	}
 
@@ -131,6 +143,8 @@ func TestDumpClassesHavePriority(t *testing.T) {
 		Terminal:          true,
 		FirstVisible:      true,
 		VisibleFlushMS:    800,
+		VisibleSpanMS:     150,
+		VisibleChunks:     2,
 		VisibleTokens:     400,
 		OutputTokens:      1000,
 		ReasoningTokens:   850,

@@ -16,6 +16,10 @@ const (
 )
 
 func (p *Plugin) selectionSessionKey(req rpcExecutorRequest, body []byte, sourceFormat string) string {
+	return p.selectionSessionKeyForModel(req, body, sourceFormat, executionModel(req, body))
+}
+
+func (p *Plugin) selectionSessionKeyForModel(req rpcExecutorRequest, body []byte, sourceFormat, model string) string {
 	seed := extractSelectionSessionSeed(req.Headers, body)
 	if seed == "" {
 		return ""
@@ -24,11 +28,10 @@ func (p *Plugin) selectionSessionKey(req rpcExecutorRequest, body []byte, source
 	if callerScope == "" {
 		callerScope = callerScopeFromHeaders(req.Headers)
 	}
-	model := strings.ToLower(strings.TrimSpace(executionModel(req, body)))
 	source := "grok-quality-guard:affinity:v1\x00" +
 		callerScope + "\x00" +
 		"xai\x00" +
-		model + "\x00" +
+		strings.ToLower(strings.TrimSpace(model)) + "\x00" +
 		strings.ToLower(strings.TrimSpace(sourceFormat)) + "\x00" +
 		seed
 	digest := sha256.Sum256([]byte(source))

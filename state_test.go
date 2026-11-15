@@ -132,7 +132,7 @@ func TestStateStoreUpdateIfChangedSkipsNoopWrites(t *testing.T) {
 	}
 	before := store.Snapshot().UpdatedAt
 	time.Sleep(2 * time.Millisecond)
-	if errUpdate := store.UpdateIfChanged(func(*State) error { return nil }); errUpdate != nil {
+	if errUpdate := store.UpdateIfChanged(func(*State) (bool, error) { return false, nil }); errUpdate != nil {
 		t.Fatal(errUpdate)
 	}
 	after := store.Snapshot().UpdatedAt

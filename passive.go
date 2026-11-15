@@ -38,12 +38,17 @@ func (p *Plugin) InterceptResponse(request []byte) []byte {
 	}
 	analyzer := NewStreamAnalyzer()
 	analyzer.SetStreaming(false)
+	analyzer.SetRetainText(false)
 	analyzer.ObserveJSON(req.Body)
 	p.pendingMu.Lock()
 	prunePendingLocked(p.pending, time.Now().UTC())
+	if existing := p.pending[req.RequestID]; existing != nil {
+		p.pendingMu.Unlock()
+		return raw
+	}
 	p.pending[req.RequestID] = &PendingObservation{
 		RequestID: req.RequestID,
-		Body:      append([]byte(nil), req.RequestBody...),
+		Body:      compactReasoningBody(req.RequestBody),
 		Analyzer:  analyzer,
 		StartedAt: time.Now(),
 		Completed: true,
@@ -74,17 +79,23 @@ func (p *Plugin) InterceptStreamChunk(request []byte) []byte {
 	prunePendingLocked(p.pending, time.Now().UTC())
 	pending := p.pending[req.RequestID]
 	if req.ChunkIndex == pluginapi.StreamChunkHeaderInitIndex {
+		if pending != nil && pending.Completed {
+			p.pendingMu.Unlock()
+			return raw
+		}
 		analyzer := NewStreamAnalyzer()
+		analyzer.SetRetainText(false)
+		body := req.OriginalRequest
+		if len(body) == 0 {
+			body = req.RequestBody
+		}
 		pending = &PendingObservation{
 			RequestID: req.RequestID,
-			Body:      append([]byte(nil), req.OriginalRequest...),
+			Body:      compactReasoningBody(body),
 			Analyzer:  analyzer,
 			StartedAt: time.Now(),
 			Source:    "stream",
 			Model:     firstNonEmpty(req.RequestedModel, req.Model),
-		}
-		if len(pending.Body) == 0 && len(req.RequestBody) > 0 {
-			pending.Body = append([]byte(nil), req.RequestBody...)
 		}
 		p.pending[req.RequestID] = pending
 		p.pendingMu.Unlock()
@@ -258,7 +269,33 @@ func jsonOK(data any) []byte {
 }
 
 const pendingObservationTTL = 10 * time.Minute
-const pendingObservationLimit = 4096
+const pendingObservationLimit = 1024
+
+// compactReasoningBody keeps only the request fields used by the passive
+// reasoning gate. Pending observations must not retain the full prompt.
+func compactReasoningBody(body []byte) []byte {
+	if len(body) == 0 {
+		return nil
+	}
+	var payload map[string]json.RawMessage
+	if errUnmarshal := json.Unmarshal(body, &payload); errUnmarshal != nil {
+		return nil
+	}
+	compact := make(map[string]json.RawMessage, 5)
+	for _, key := range []string{"model", "reasoning_effort", "reasoning", "output_config", "thinking"} {
+		if value, ok := payload[key]; ok && len(value) > 0 && string(value) != "null" {
+			compact[key] = value
+		}
+	}
+	if len(compact) == 0 {
+		return nil
+	}
+	encoded, errMarshal := json.Marshal(compact)
+	if errMarshal != nil {
+		return nil
+	}
+	return encoded
+}
 
 func prunePendingLocked(pending map[string]*PendingObservation, now time.Time) {
 	for requestID, observation := range pending {

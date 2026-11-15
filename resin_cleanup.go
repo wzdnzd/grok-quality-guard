@@ -71,9 +71,9 @@ func (p *Plugin) enqueueResinLeaseDelete(authID string, settings ResinSettings, 
 		return false, errors.New("state store is not initialized")
 	}
 	added := false
-	errUpdate := p.stateStore().UpdateIfChanged(func(state *State) error {
+	errUpdate := p.stateStore().UpdateIfChanged(func(state *State) (bool, error) {
 		added = queueResinLeaseDeleteAndRecord(state, authID, settings, account)
-		return nil
+		return added, nil
 	})
 	if errUpdate != nil {
 		return false, errUpdate
@@ -176,12 +176,12 @@ func (p *Plugin) processResinLeaseDelete(ctx context.Context, job ResinLeaseDele
 }
 
 func (p *Plugin) finishResinLeaseDelete(job ResinLeaseDelete) {
-	_ = p.stateStore().UpdateIfChanged(func(state *State) error {
+	_ = p.stateStore().UpdateIfChanged(func(state *State) (bool, error) {
 		removed := removeResinLeaseDelete(state, job)
 		if removed {
 			p.recordEvent(state, job.AuthID, "", "resin_lease_delete", "succeeded", "account="+job.Account)
 		}
-		return nil
+		return removed, nil
 	})
 }
 
@@ -190,7 +190,8 @@ func (p *Plugin) rescheduleResinLeaseDelete(job ResinLeaseDelete, errDelete erro
 	delay := resinLeaseDeleteBackoff(attempts)
 	nextAttemptAt := now.Add(delay)
 	reason := sanitizeError(errDelete)
-	_ = p.stateStore().UpdateIfChanged(func(state *State) error {
+	_ = p.stateStore().UpdateIfChanged(func(state *State) (bool, error) {
+		found := false
 		for index := range state.ResinLeaseDeletes {
 			candidate := &state.ResinLeaseDeletes[index]
 			if resinLeaseDeleteKey(candidate.AdminURL, candidate.PlatformID, candidate.Account) !=
@@ -202,9 +203,10 @@ func (p *Plugin) rescheduleResinLeaseDelete(job ResinLeaseDelete, errDelete erro
 			candidate.LastError = reason
 			p.recordEvent(state, candidate.AuthID, "", "resin_lease_delete", "retry_scheduled",
 				fmt.Sprintf("account=%s attempt=%d retry_in=%s error=%s", candidate.Account, attempts, delay.Round(time.Second), reason))
+			found = true
 			break
 		}
-		return nil
+		return found, nil
 	})
 }
 

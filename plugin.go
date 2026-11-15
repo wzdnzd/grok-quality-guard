@@ -31,7 +31,6 @@ type Account struct {
 }
 
 type PendingObservation struct {
-	AuthID    string
 	RequestID string
 	Body      []byte
 	Analyzer  *StreamAnalyzer
@@ -51,6 +50,8 @@ type Plugin struct {
 	stateBootstrapPath string
 	ctx                context.Context
 	cancel             context.CancelFunc
+	requestCtx         context.Context
+	requestCancel      context.CancelFunc
 	wg                 sync.WaitGroup
 	workersActive      bool
 	quiescing          bool
@@ -99,6 +100,7 @@ type Plugin struct {
 }
 
 func NewPlugin() *Plugin {
+	requestCtx, requestCancel := context.WithCancel(context.Background())
 	plugin := &Plugin{
 		cfg:                  DefaultConfig(),
 		policy:               PolicyFromConfig(DefaultConfig()),
@@ -111,6 +113,8 @@ func NewPlugin() *Plugin {
 		probing:              make(map[string]struct{}),
 		grokModels:           make(map[string]struct{}),
 		resinLeaseDeleteWake: make(chan struct{}, 1),
+		requestCtx:           requestCtx,
+		requestCancel:        requestCancel,
 	}
 	plugin.probeCond = sync.NewCond(&plugin.probeGate)
 	return plugin
@@ -148,6 +152,9 @@ func (p *Plugin) Configure(raw []byte) error {
 		oldPath = p.store.Path()
 	}
 	if p.store == nil || oldPath != activePath || p.stateBootstrapPath != bootstrapPath {
+		if p.store != nil {
+			_ = p.store.Flush()
+		}
 		p.store = NewStateStore(activePath)
 		if errLoad := p.store.Load(PolicyFromConfig(cfg), revision); errLoad != nil {
 			p.mu.Unlock()
@@ -176,6 +183,9 @@ func (p *Plugin) Configure(raw []byte) error {
 	if errApply := ApplyPolicy(&p.cfg, p.policy); errApply != nil {
 		p.mu.Unlock()
 		return errApply
+	}
+	if p.requestCtx == nil || p.requestCtx.Err() != nil {
+		p.requestCtx, p.requestCancel = context.WithCancel(context.Background())
 	}
 	p.quiescing = false
 	if p.cfg.Enabled {
@@ -258,6 +268,9 @@ func (p *Plugin) Quiesce() {
 	p.mu.Lock()
 	p.quiescing = true
 	p.stopWorkersLocked()
+	if p.requestCancel != nil {
+		p.requestCancel()
+	}
 	p.mu.Unlock()
 	p.cancelTasks()
 	p.closeAllModelStreams()
@@ -265,7 +278,11 @@ func (p *Plugin) Quiesce() {
 
 func (p *Plugin) Shutdown() {
 	p.mu.Lock()
+	p.quiescing = true
 	p.stopWorkersLocked()
+	if p.requestCancel != nil {
+		p.requestCancel()
+	}
 	p.mu.Unlock()
 	p.cancelTasks()
 	p.closeAllModelStreams()
@@ -586,16 +603,19 @@ func (p *Plugin) syncCatalogState(accounts []Account) error {
 	resinCfg := p.ResinConfig()
 	cleanupResinLeases := canDeleteResinLease(resinCfg)
 	leaseDeleteQueued := false
-	errSync := store.UpdateIfChanged(func(state *State) error {
+	errSync := store.UpdateIfChanged(func(state *State) (bool, error) {
+		changed := false
 		for authID, account := range state.Accounts {
 			if _, ok := live[authID]; ok {
-				if account != nil {
+				if account != nil && !account.CatalogMissingSince.IsZero() {
 					account.CatalogMissingSince = time.Time{}
+					changed = true
 				}
 				continue
 			}
 			if account == nil {
 				delete(state.Accounts, authID)
+				changed = true
 				continue
 			}
 			// A host catalog can be temporarily partial while CPA reloads auth
@@ -603,6 +623,7 @@ func (p *Plugin) syncCatalogState(accounts []Account) error {
 			if account.DisableKind != "" || account.AuthDisabledIntent != nil {
 				if account.CatalogMissingSince.IsZero() {
 					account.CatalogMissingSince = now
+					changed = true
 					continue
 				}
 				if now.Sub(account.CatalogMissingSince) < guardCatalogMissingRetention {
@@ -613,9 +634,11 @@ func (p *Plugin) syncCatalogState(accounts []Account) error {
 				leaseAccount := strings.TrimSpace(account.Resin.Account)
 				if leaseAccount != "" && queueResinLeaseDeleteAndRecord(state, authID, resinCfg, leaseAccount) {
 					leaseDeleteQueued = true
+					changed = true
 				}
 			}
 			delete(state.Accounts, authID)
+			changed = true
 		}
 		for _, account := range accounts {
 			existing := state.Accounts[account.ID]
@@ -626,24 +649,40 @@ func (p *Plugin) syncCatalogState(accounts []Account) error {
 					FirstSeenAt: now,
 				}
 				state.Accounts[account.ID] = existing
+				changed = true
 			}
-			existing.CatalogMissingSince = time.Time{}
+			if !existing.CatalogMissingSince.IsZero() {
+				existing.CatalogMissingSince = time.Time{}
+				changed = true
+			}
 			if account.Disabled {
 				if existing.DisableKind != "" {
-					existing.State = stateForDisableKind(existing.DisableKind)
-					if existing.DisableReason == "" {
+					expected := stateForDisableKind(existing.DisableKind)
+					if existing.State != expected {
+						existing.State = expected
+						changed = true
+					}
+					if existing.DisableReason == "" && existing.LastReason != "" {
 						existing.DisableReason = existing.LastReason
+						changed = true
 					}
 				} else {
-					existing.State = StateExternallyDisabled
-					existing.DisableReason = ""
+					if existing.State != StateExternallyDisabled {
+						existing.State = StateExternallyDisabled
+						changed = true
+					}
+					if existing.DisableReason != "" {
+						existing.DisableReason = ""
+						changed = true
+					}
 				}
 			}
 			if !account.Disabled && existing.State == StateExternallyDisabled {
 				existing.State = StateUnknown
+				changed = true
 			}
 		}
-		return nil
+		return changed, nil
 	})
 	if errSync == nil && leaseDeleteQueued {
 		p.wakeResinLeaseDeleteLoop()
@@ -778,13 +817,11 @@ func (p *Plugin) recordEvent(state *State, authID, class, action, result, detail
 func (p *Plugin) isProbeAuth(authID string) bool {
 	p.probeSkipMu.Lock()
 	defer p.probeSkipMu.Unlock()
-	now := time.Now()
-	for key, expiry := range p.probeSkip {
-		if now.After(expiry) {
-			delete(p.probeSkip, key)
-		}
+	expiry, ok := p.probeSkip[authID]
+	if ok && time.Now().After(expiry) {
+		delete(p.probeSkip, authID)
+		return false
 	}
-	_, ok := p.probeSkip[authID]
 	return ok
 }
 

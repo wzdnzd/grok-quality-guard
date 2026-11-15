@@ -2264,7 +2264,7 @@
       insufficient_output_tokens: '输出不足', insufficient_generation_window: '生成窗口不足',
       expected_marker_missing: '探测标记缺失', probe_error: '探测错误', proxy_error: '代理错误',
       ignored: '非质量错误', manual: '手动操作', credential_invalid: '凭据失效',
-      quota_exhausted: '额度耗尽'
+      quota_exhausted: '额度耗尽', rate_limited: '请求限速'
     };
     const REASON_DETAIL_LABELS = {
       'expected marker missing': '探测标记缺失',
@@ -2317,7 +2317,7 @@
     const ACTION_LABELS = {
       observe: '被动观测', probe: '主动探测', guard_disable: '自动处置', external_disable: '外部禁用',
       restore: '恢复账号', resin_bind: '绑定租约', resin_rotate: '轮换租约', resin_clear: '清除代理', resin_lease_delete: '清理旧租约',
-      resin_config_save: '保存 Resin 配置', transparent_attempt: '透明重试', internal_error: '内部错误',
+      resin_config_save: '保存 Resin 配置', transparent_attempt: '透明重试', transparent_overflow: '缓冲溢出', internal_error: '内部错误',
       cross_verify_schedule: '调度交叉验证', 'quality.cross_verify': '交叉验证'
     };
     const RESULT_LABELS = {
@@ -2325,6 +2325,7 @@
       external_left_disabled: '保持外部禁用', bound: '已绑定', rotated: '已轮换', cleared: '已清除', local_mode: '本地模式',
       validated: '已验证', cooldown: '已冷却', permanent: '永久禁用', error: '错误', ignored: '已忽略',
       quota_exhausted: '额度耗尽', credential_invalid: '凭据失效', actioned: '已处置',
+      rate_limited: '请求限速', delivered: '已放行',
       pending: '累计中', threshold_reached: '达到阈值', scheduled: '已调度', queued: '已排队', succeeded: '已成功', retry_scheduled: '等待重试'
     };
     const esc = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));

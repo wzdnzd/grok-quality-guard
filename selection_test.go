@@ -40,11 +40,11 @@ func selectionAuthRaw(t *testing.T, entries []pluginapi.HostAuthFileEntry) map[s
 
 func setSelectionStates(t *testing.T, plugin *Plugin, states map[string]string) {
 	t.Helper()
-	if errUpdate := plugin.stateStore().UpdateIfChanged(func(state *State) error {
+	if errUpdate := plugin.stateStore().UpdateIfChanged(func(state *State) (bool, error) {
 		for authID, value := range states {
 			plugin.ensureStateAccount(state, authID).State = value
 		}
-		return nil
+		return true, nil
 	}); errUpdate != nil {
 		t.Fatal(errUpdate)
 	}

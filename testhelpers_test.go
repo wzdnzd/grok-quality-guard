@@ -31,6 +31,7 @@ type mockHostCall struct {
 	streamByID     map[string]string
 	modelResponses map[string]pluginapi.HostModelExecutionResponse
 	emitted        map[string][][]byte
+	emitErr        error
 	closes         map[string]*pluginabi.Error
 	modelCalls     []pluginapi.HostModelExecutionRequest
 	callbacks      []string
@@ -92,6 +93,12 @@ func (m *mockHostCall) scriptStreamStatusWithoutID(authID string, status int, re
 	m.streamStatus[authID] = status
 	m.streamNoID[authID] = true
 	m.streams[authID] = append([]pluginapi.HostModelStreamReadResponse(nil), reads...)
+}
+
+func (m *mockHostCall) scriptStreamEmitError(errValue error) {
+	m.mu.Lock()
+	m.emitErr = errValue
+	m.mu.Unlock()
 }
 
 func (m *mockHostCall) scriptModelResponse(authID string, response pluginapi.HostModelExecutionResponse) {
@@ -232,6 +239,11 @@ func (m *mockHostCall) call(method string, payload any) (json.RawMessage, error)
 			return nil, err
 		}
 		m.mu.Lock()
+		if m.emitErr != nil {
+			errEmit := m.emitErr
+			m.mu.Unlock()
+			return nil, errEmit
+		}
 		m.emitted[req.StreamID] = append(m.emitted[req.StreamID], append([]byte(nil), req.Payload...))
 		m.mu.Unlock()
 		return marshalTestResult(map[string]any{})

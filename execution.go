@@ -55,7 +55,10 @@ type transparentStreamAttempt struct {
 	Buffered  [][]byte
 	Emitted   bool
 	Available bool
+	Aborted   bool
 }
+
+var errTransparentAttemptAborted = fmt.Errorf("transparent attempt aborted")
 
 type streamReadEvent struct {
 	Response pluginapi.HostModelStreamReadResponse
@@ -139,8 +142,29 @@ func (p *Plugin) ExecuteStream(request []byte) ([]byte, error) {
 		}
 		return okEnvelope(executorStreamResponse{Headers: result.Headers, Chunks: result.Chunks})
 	}
-	go p.runTransparentStreamBridge(context.Background(), req, streamID)
+	p.startTransparentStreamBridge(req, streamID)
 	return okEnvelope(executorStreamResponse{Headers: sseHeaders()})
+}
+
+// startTransparentStreamBridge ties the request-lifetime goroutine to the
+// plugin lifecycle so Quiesce/Shutdown can cancel and wait for it.
+func (p *Plugin) startTransparentStreamBridge(req rpcExecutorRequest, streamID string) {
+	p.mu.RLock()
+	if p.quiescing {
+		p.mu.RUnlock()
+		p.closePluginStream(streamID, "plugin_shutting_down", "plugin is shutting down", http.StatusServiceUnavailable)
+		return
+	}
+	ctx := p.requestCtx
+	p.taskWG.Add(1)
+	p.mu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		defer p.taskWG.Done()
+		p.runTransparentStreamBridge(ctx, req, streamID)
+	}()
 }
 
 func (p *Plugin) transparentExecute(ctx context.Context, req rpcExecutorRequest) (transparentResult, error) {
@@ -154,9 +178,11 @@ func (p *Plugin) transparentExecute(ctx context.Context, req rpcExecutorRequest)
 	if errRequest != nil {
 		return transparentResult{}, errRequest
 	}
-	body = ensureTransparentReasoningEvidence(body, sourceFormat, executionModel(req, body))
+	requestModel := executionModel(req, body)
+	reasoningNeeded := reasoningRequiredForModel(requestModel, body)
+	body = ensureTransparentReasoningEvidence(body, sourceFormat, reasoningNeeded)
 	replayable := safeReplayRequest(body, sourceFormat, firstNonEmpty(req.Model, req.Alt))
-	selection, errSelection := p.newTransparentSelection(req, body, sourceFormat)
+	selection, errSelection := p.newTransparentSelectionForModel(req, body, sourceFormat, requestModel)
 	if errSelection != nil {
 		return transparentResult{}, errSelection
 	}
@@ -172,20 +198,30 @@ candidateLoop:
 		attemptID := attempt.Account.ID
 		source := attempt.Source
 		rotated := false
+		account := attempt.Account
+		raw := attempt.Raw
 		for {
 			if attempts >= maxAttempts {
 				attempt.Release()
 				break candidateLoop
 			}
-			account, raw, ok := p.executableAuth(ctx, attemptID)
-			if !ok {
-				attempt.Release()
-				p.refreshSelectionAccount(attemptID)
-				break
+			if raw == nil {
+				fetchedAccount, fetchedRaw, ok := p.executableAuth(ctx, attemptID)
+				if !ok {
+					attempt.Release()
+					p.refreshSelectionAccount(attemptID)
+					break
+				}
+				account, raw = fetchedAccount, fetchedRaw
 			}
 			attempts++
-			execution := buildHostExecution(req, body, sourceFormat, account.ID, authRawString(raw, "proxy_url"), false)
-			result, verdict, errAttempt := p.executeTransparentOnce(ctx, execution, req.HostCallbackID, body, policy.Quality)
+			execution := buildHostExecutionWithModel(req, body, sourceFormat, requestModel, account.ID, authRawString(raw, "proxy_url"), false)
+			raw = nil
+			result, verdict, errAttempt := p.executeTransparentOnce(ctx, execution, req.HostCallbackID, policy.Quality, reasoningNeeded)
+			if errAttempt == errTransparentAttemptAborted {
+				attempt.Release()
+				return transparentResult{}, errAttempt
+			}
 			if errAttempt == nil {
 				selection.MarkSuccess(account.ID, source)
 				attempt.Release()
@@ -226,9 +262,11 @@ func (p *Plugin) transparentExecuteBufferedStream(ctx context.Context, req rpcEx
 	if errRequest != nil {
 		return transparentResult{}, errRequest
 	}
-	body = ensureTransparentReasoningEvidence(body, sourceFormat, executionModel(req, body))
+	requestModel := executionModel(req, body)
+	reasoningNeeded := reasoningRequiredForModel(requestModel, body)
+	body = ensureTransparentReasoningEvidence(body, sourceFormat, reasoningNeeded)
 	replayable := safeReplayRequest(body, sourceFormat, firstNonEmpty(req.Model, req.Alt))
-	selection, errSelection := p.newTransparentSelection(req, body, sourceFormat)
+	selection, errSelection := p.newTransparentSelectionForModel(req, body, sourceFormat, requestModel)
 	if errSelection != nil {
 		return transparentResult{}, errSelection
 	}
@@ -244,20 +282,30 @@ candidateLoop:
 		attemptID := attempt.Account.ID
 		source := attempt.Source
 		rotated := false
+		account := attempt.Account
+		raw := attempt.Raw
 		for {
 			if attempts >= maxAttempts {
 				attempt.Release()
 				break candidateLoop
 			}
-			account, raw, ok := p.executableAuth(ctx, attemptID)
-			if !ok {
-				attempt.Release()
-				p.refreshSelectionAccount(attemptID)
-				break
+			if raw == nil {
+				fetchedAccount, fetchedRaw, ok := p.executableAuth(ctx, attemptID)
+				if !ok {
+					attempt.Release()
+					p.refreshSelectionAccount(attemptID)
+					break
+				}
+				account, raw = fetchedAccount, fetchedRaw
 			}
 			attempts++
-			execution := buildHostExecution(req, body, sourceFormat, account.ID, authRawString(raw, "proxy_url"), true)
-			result, verdict, errAttempt := p.executeTransparentBufferedAttempt(ctx, execution, req.HostCallbackID, body, policy.Quality)
+			execution := buildHostExecutionWithModel(req, body, sourceFormat, requestModel, account.ID, authRawString(raw, "proxy_url"), true)
+			raw = nil
+			result, verdict, errAttempt := p.executeTransparentBufferedAttempt(ctx, execution, req.HostCallbackID, policy.Quality, reasoningNeeded)
+			if errAttempt == errTransparentAttemptAborted {
+				attempt.Release()
+				return transparentResult{}, errAttempt
+			}
 			if errAttempt == nil {
 				selection.MarkSuccess(account.ID, source)
 				attempt.Release()
@@ -287,11 +335,17 @@ candidateLoop:
 	return transparentResult{}, fmt.Errorf("no healthy Grok account produced a valid response")
 }
 
-func (p *Plugin) executeTransparentOnce(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, requestBody []byte, cfg QualityConfig) (transparentResult, QualityVerdict, error) {
+func (p *Plugin) executeTransparentOnce(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig, reasoningNeeded bool) (transparentResult, QualityVerdict, error) {
 	execution.Stream = false
+	if ctx.Err() != nil {
+		return transparentResult{}, QualityVerdict{}, errTransparentAttemptAborted
+	}
 	startedAt := time.Now()
 	response, errExecute := p.executeModel(ctx, execution, callbackID)
 	if errExecute != nil {
+		if ctx.Err() != nil {
+			return transparentResult{}, QualityVerdict{}, errTransparentAttemptAborted
+		}
 		class := classifyTransportError(errExecute)
 		return transparentResult{}, QualityVerdict{Class: class, Reason: sanitizeError(errExecute)}, errExecute
 	}
@@ -301,13 +355,12 @@ func (p *Plugin) executeTransparentOnce(ctx context.Context, execution pluginapi
 	}
 	analyzer := NewStreamAnalyzerWithProtocolAt(execution.ExitProtocol, startedAt)
 	analyzer.SetStreaming(false)
+	analyzer.SetRetainText(false)
 	analyzer.SetEncryptedConfig(cfg.MinEncryptedBytes, cfg.EncryptedBytesPerReasoningToken)
 	analyzer.ObserveJSON(response.Body)
 	sig := analyzer.Finalize(true)
 	sig.DurationMS = time.Since(startedAt).Milliseconds()
-	sig.GenerationMS = generationWindowMS(sig.DurationMS, sig.FirstTokenMS, sig.ReasoningTokens)
-	sig.TPS = tps(sig.OutputTokens, sig.GenerationMS)
-	verdict := classifyNonStreamResult(sig, cfg, reasoningRequiredForModel(execution.Model, requestBody), cfg.MinHoldOutputTokens)
+	verdict := classifyNonStreamResult(sig, cfg, reasoningNeeded, cfg.MinHoldOutputTokens)
 	result := transparentResult{Payload: response.Body, Headers: response.Headers, Available: true}
 	if verdict.Class == ClassNone {
 		_ = p.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
@@ -316,7 +369,7 @@ func (p *Plugin) executeTransparentOnce(ctx context.Context, execution pluginapi
 	return result, verdict, fmt.Errorf("quality gate rejected response: %s", verdict.Class)
 }
 
-func (p *Plugin) executeTransparentBufferedAttempt(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, requestBody []byte, cfg QualityConfig) (transparentResult, QualityVerdict, error) {
+func (p *Plugin) executeTransparentBufferedAttempt(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig, reasoningNeeded bool) (transparentResult, QualityVerdict, error) {
 	// The host returns the stream only after the first chunk is readable, so the
 	// TPS clock must start before the call to include upstream TTFT.
 	attemptStartedAt := time.Now()
@@ -325,23 +378,36 @@ func (p *Plugin) executeTransparentBufferedAttempt(ctx context.Context, executio
 		class := classifyTransportError(errExecute)
 		return transparentResult{}, QualityVerdict{Class: class, Reason: sanitizeError(errExecute)}, errExecute
 	}
-	defer p.closeModelStream(stream.StreamID)
+	var reader *modelStreamReader
+	defer func() {
+		_ = p.closeModelStream(stream.StreamID)
+		if reader != nil {
+			reader.Close()
+		}
+	}()
 	if stream.StatusCode < 200 || stream.StatusCode >= 300 {
 		class, reason := classifyUpstreamStatus(stream.StatusCode, p.readModelStreamErrorBody(ctx, stream.StreamID))
 		return transparentResult{}, QualityVerdict{Class: class, Reason: reason}, fmt.Errorf("%s", reason)
 	}
 	analyzer := NewStreamAnalyzerWithProtocolAt(execution.ExitProtocol, attemptStartedAt)
+	analyzer.SetRetainText(false)
+	analyzer.SetEncryptedConfig(cfg.MinEncryptedBytes, cfg.EncryptedBytesPerReasoningToken)
 	outputNormalizer := &sseOutputNormalizer{}
 	chunks := make([]pluginapi.ExecutorStreamChunk, 0)
 	var bufferBytes int64
+	holdOverflow := false
+	reader = p.openModelStreamReader(ctx, stream.StreamID)
 	for {
 		select {
 		case <-ctx.Done():
-			return transparentResult{}, QualityVerdict{Class: ClassProbeError, Reason: sanitizeError(ctx.Err())}, ctx.Err()
+			return transparentResult{}, QualityVerdict{}, errTransparentAttemptAborted
 		default:
 		}
-		read, errRead := p.readModelStreamContext(ctx, stream.StreamID)
+		read, errRead := reader.Next()
 		if errRead != nil {
+			if ctx.Err() != nil {
+				return transparentResult{}, QualityVerdict{}, errTransparentAttemptAborted
+			}
 			class := classifyTransportError(errRead)
 			return transparentResult{}, QualityVerdict{Class: class, Reason: sanitizeError(errRead)}, errRead
 		}
@@ -351,9 +417,9 @@ func (p *Plugin) executeTransparentBufferedAttempt(ctx context.Context, executio
 			for _, payload := range outputNormalizer.Feed(read.Payload) {
 				chunks = append(chunks, pluginapi.ExecutorStreamChunk{Payload: payload})
 			}
-			if bufferBytes > cfg.HoldMaxBufferBytes {
-				reason := fmt.Sprintf("transparent hold buffer exceeded %d bytes", cfg.HoldMaxBufferBytes)
-				return transparentResult{}, QualityVerdict{Action: QualityActionWithhold, Class: ClassProbeError, Reason: reason}, fmt.Errorf("%s", reason)
+			if bufferBytes > cfg.HoldMaxBufferBytes && !holdOverflow {
+				holdOverflow = true
+				p.recordTransparentOverflow(execution.AuthID, cfg.HoldMaxBufferBytes)
 			}
 		}
 		if read.Error != "" {
@@ -369,7 +435,10 @@ func (p *Plugin) executeTransparentBufferedAttempt(ctx context.Context, executio
 		chunks = append(chunks, pluginapi.ExecutorStreamChunk{Payload: payload})
 	}
 	sig := analyzer.Finalize(true)
-	verdict := classifyFinal(sig, cfg, reasoningRequiredForModel(execution.Model, requestBody), cfg.MinHoldOutputTokens, true)
+	verdict := classifyFinal(sig, cfg, reasoningNeeded, cfg.MinHoldOutputTokens, true)
+	if holdOverflow {
+		verdict = QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "hold buffer overflow; delivered", Signals: sig}
+	}
 	result := transparentResult{Headers: stream.Headers, Chunks: chunks, Available: true}
 	if verdict.Class == ClassNone {
 		_ = p.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
@@ -399,9 +468,11 @@ func (p *Plugin) runTransparentStreamBridge(ctx context.Context, req rpcExecutor
 		p.closePluginStream(streamID, "invalid_request", "request body is empty", http.StatusBadRequest)
 		return
 	}
-	body = ensureTransparentReasoningEvidence(body, sourceFormat, executionModel(req, body))
+	requestModel := executionModel(req, body)
+	reasoningNeeded := reasoningRequiredForModel(requestModel, body)
+	body = ensureTransparentReasoningEvidence(body, sourceFormat, reasoningNeeded)
 	replayable := safeReplayRequest(body, sourceFormat, firstNonEmpty(req.Model, req.Alt))
-	selection, errSelection := p.newTransparentSelection(req, body, sourceFormat)
+	selection, errSelection := p.newTransparentSelectionForModel(req, body, sourceFormat, requestModel)
 	if errSelection != nil {
 		p.closePluginStream(streamID, "quality_degraded", "no healthy Grok account produced a valid response", http.StatusServiceUnavailable)
 		return
@@ -418,20 +489,31 @@ candidateLoop:
 		attemptID := attempt.Account.ID
 		source := attempt.Source
 		rotated := false
+		account := attempt.Account
+		raw := attempt.Raw
 		for {
 			if attempts >= maxAttempts {
 				attempt.Release()
 				break candidateLoop
 			}
-			account, raw, ok := p.executableAuth(ctx, attemptID)
-			if !ok {
-				attempt.Release()
-				p.refreshSelectionAccount(attemptID)
-				break
+			if raw == nil {
+				fetchedAccount, fetchedRaw, ok := p.executableAuth(ctx, attemptID)
+				if !ok {
+					attempt.Release()
+					p.refreshSelectionAccount(attemptID)
+					break
+				}
+				account, raw = fetchedAccount, fetchedRaw
 			}
 			attempts++
-			execution := buildHostExecution(req, body, sourceFormat, account.ID, authRawString(raw, "proxy_url"), true)
-			outcome := p.executeTransparentStreamAttempt(ctx, execution, req.HostCallbackID, body, policy.Quality, streamID)
+			execution := buildHostExecutionWithModel(req, body, sourceFormat, requestModel, account.ID, authRawString(raw, "proxy_url"), true)
+			raw = nil
+			outcome := p.executeTransparentStreamAttempt(ctx, execution, req.HostCallbackID, policy.Quality, streamID, reasoningNeeded)
+			if outcome.Aborted {
+				attempt.Release()
+				p.closePluginStream(streamID, "", "", 0)
+				return
+			}
 			if outcome.Emitted {
 				if outcome.Err != nil {
 					selection.MarkFailure(account.ID, source, outcome.Class)
@@ -488,7 +570,7 @@ candidateLoop:
 	p.closePluginStream(streamID, "quality_degraded", "no healthy Grok account produced a valid response", http.StatusServiceUnavailable)
 }
 
-func (p *Plugin) executeTransparentStreamAttempt(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, requestBody []byte, cfg QualityConfig, streamID string) transparentStreamAttempt {
+func (p *Plugin) executeTransparentStreamAttempt(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig, streamID string, reasoningNeeded bool) transparentStreamAttempt {
 	// The host returns the stream only after the first chunk is readable, so the
 	// TPS clock must start before the call to include upstream TTFT.
 	attemptStartedAt := time.Now()
@@ -505,6 +587,7 @@ func (p *Plugin) executeTransparentStreamAttempt(ctx context.Context, execution 
 		return transparentStreamAttempt{Class: class, Verdict: QualityVerdict{Class: class, Reason: reason}, Err: fmt.Errorf("%s", reason)}
 	}
 	analyzer := NewStreamAnalyzerWithProtocolAt(execution.ExitProtocol, attemptStartedAt)
+	analyzer.SetRetainText(false)
 	analyzer.SetEncryptedConfig(cfg.MinEncryptedBytes, cfg.EncryptedBytesPerReasoningToken)
 	readEvents := make(chan streamReadEvent, 1)
 	readDone := make(chan struct{})
@@ -538,6 +621,7 @@ func (p *Plugin) executeTransparentStreamAttempt(ctx context.Context, execution 
 	defer holdTimer.Stop()
 	holdExpired := false
 	emitted := false
+	overflowed := false
 	buffer := make([][]byte, 0)
 	var bufferBytes int64
 	outputNormalizer := &sseOutputNormalizer{}
@@ -550,20 +634,54 @@ func (p *Plugin) executeTransparentStreamAttempt(ctx context.Context, execution 
 			bufferBytes += int64(len(payload))
 		}
 	}
+	emitBuffered := func() error {
+		if len(buffer) == 0 {
+			emitted = true
+			return nil
+		}
+		if errEmit := p.emitPluginChunks(streamID, buffer); errEmit != nil {
+			return errEmit
+		}
+		emitted = true
+		buffer = nil
+		bufferBytes = 0
+		return nil
+	}
+	abort := func(errValue error) transparentStreamAttempt {
+		return transparentStreamAttempt{Err: errValue, Aborted: true, Emitted: emitted}
+	}
 	finish := func() transparentStreamAttempt {
 		appendOutput(outputNormalizer.Flush())
 		if emitted && len(buffer) > 0 {
 			if errEmit := p.emitPluginChunks(streamID, buffer); errEmit != nil {
-				return transparentStreamAttempt{Class: ClassProbeError, Verdict: QualityVerdict{Class: ClassProbeError, Reason: sanitizeError(errEmit)}, Err: errEmit, Emitted: true}
+				return abort(errEmit)
 			}
 			buffer = nil
 			bufferBytes = 0
 		}
 		return p.finishTransparentStreamAttempt(
-			ctx, execution, callbackID, requestBody, cfg, streamID, analyzer, buffer, emitted, holdExpired,
+			ctx, execution, callbackID, cfg, streamID, analyzer, buffer, emitted, holdExpired, overflowed, reasoningNeeded,
 		)
 	}
-	reasoningNeeded := reasoningRequiredForModel(execution.Model, requestBody)
+	var earlyTimer *time.Timer
+	var earlyC <-chan time.Time
+	earlyArmed := false
+	defer func() {
+		if earlyTimer != nil {
+			earlyTimer.Stop()
+		}
+	}()
+	armEarly := func() {
+		if reasoningNeeded || emitted || earlyArmed {
+			return
+		}
+		if !analyzer.Preview().FirstVisible {
+			return
+		}
+		earlyTimer = time.NewTimer(200 * time.Millisecond)
+		earlyC = earlyTimer.C
+		earlyArmed = true
+	}
 
 	for {
 		var timerC <-chan time.Time
@@ -572,7 +690,15 @@ func (p *Plugin) executeTransparentStreamAttempt(ctx context.Context, execution 
 		}
 		select {
 		case <-ctx.Done():
-			return transparentStreamAttempt{Class: ClassProbeError, Verdict: QualityVerdict{Class: ClassProbeError, Reason: sanitizeError(ctx.Err())}, Err: ctx.Err(), Emitted: emitted}
+			return abort(ctx.Err())
+		case <-earlyC:
+			earlyC = nil
+			earlyArmed = false
+			if !emitted {
+				if errEmit := emitBuffered(); errEmit != nil {
+					return abort(errEmit)
+				}
+			}
 		case <-timerC:
 			holdExpired = true
 			preview := analyzer.Preview()
@@ -583,12 +709,9 @@ func (p *Plugin) executeTransparentStreamAttempt(ctx context.Context, execution 
 				return transparentStreamAttempt{Class: verdict.Class, Verdict: verdict, Err: fmt.Errorf("quality gate rejected stream: %s", verdict.Class), Buffered: buffer, Available: true}
 			}
 			if verdict.Action == QualityActionDeliver {
-				if errEmit := p.emitPluginChunks(streamID, buffer); errEmit != nil {
-					return transparentStreamAttempt{Class: ClassProbeError, Verdict: QualityVerdict{Class: ClassProbeError, Reason: sanitizeError(errEmit)}, Err: errEmit, Available: true}
+				if errEmit := emitBuffered(); errEmit != nil {
+					return abort(errEmit)
 				}
-				emitted = true
-				buffer = nil
-				bufferBytes = 0
 			}
 		case event, ok := <-readEvents:
 			if !ok {
@@ -607,13 +730,16 @@ func (p *Plugin) executeTransparentStreamAttempt(ctx context.Context, execution 
 				framedPayloads := outputNormalizer.Feed(payload)
 				if emitted {
 					if errEmit := p.emitPluginChunks(streamID, framedPayloads); errEmit != nil {
-						return transparentStreamAttempt{Class: ClassProbeError, Verdict: QualityVerdict{Class: ClassProbeError, Reason: sanitizeError(errEmit)}, Err: errEmit, Emitted: true}
+						return abort(errEmit)
 					}
 				} else {
 					appendOutput(framedPayloads)
 					if bufferBytes > cfg.HoldMaxBufferBytes {
-						reason := fmt.Sprintf("transparent hold buffer exceeded %d bytes", cfg.HoldMaxBufferBytes)
-						return transparentStreamAttempt{Class: ClassProbeError, Verdict: QualityVerdict{Action: QualityActionWithhold, Class: ClassProbeError, Reason: reason}, Err: fmt.Errorf("%s", reason), Buffered: buffer, Available: true}
+						if errEmit := emitBuffered(); errEmit != nil {
+							return abort(errEmit)
+						}
+						overflowed = true
+						p.recordTransparentOverflow(execution.AuthID, cfg.HoldMaxBufferBytes)
 					}
 				}
 				analyzer.ObserveChunk(payload)
@@ -637,6 +763,7 @@ func (p *Plugin) executeTransparentStreamAttempt(ctx context.Context, execution 
 				continue
 			}
 			if !reasoningNeeded {
+				armEarly()
 				continue
 			}
 			preview := analyzer.Preview()
@@ -647,13 +774,9 @@ func (p *Plugin) executeTransparentStreamAttempt(ctx context.Context, execution 
 				return transparentStreamAttempt{Class: holdVerdict.Class, Verdict: holdVerdict, Err: fmt.Errorf("quality gate rejected stream: %s", holdVerdict.Class), Buffered: buffer, Available: true}
 			}
 			if holdVerdict.Action == QualityActionDeliver {
-				if errEmit := p.emitPluginChunks(streamID, buffer); errEmit != nil {
-					return transparentStreamAttempt{Class: ClassProbeError, Verdict: QualityVerdict{Class: ClassProbeError, Reason: sanitizeError(errEmit)}, Err: errEmit, Available: true}
+				if errEmit := emitBuffered(); errEmit != nil {
+					return abort(errEmit)
 				}
-				emitted = true
-				buffer = nil
-				bufferBytes = 0
-				continue
 			}
 		}
 	}
@@ -663,24 +786,35 @@ func (p *Plugin) finishTransparentStreamAttempt(
 	ctx context.Context,
 	execution pluginapi.HostModelExecutionRequest,
 	callbackID string,
-	requestBody []byte,
 	cfg QualityConfig,
 	streamID string,
 	analyzer *StreamAnalyzer,
 	buffer [][]byte,
 	emitted bool,
 	holdExpired bool,
+	holdOverflow bool,
+	reasoningNeeded bool,
 ) transparentStreamAttempt {
 	sig := analyzer.Finalize(true)
 	sig.HoldExpired = holdExpired
-	verdict := classifyFinal(sig, cfg, reasoningRequiredForModel(execution.Model, requestBody), cfg.MinHoldOutputTokens, true)
+	if holdOverflow {
+		verdict := QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "hold buffer overflow; delivered", Signals: sig}
+		if !emitted && len(buffer) > 0 {
+			if errEmit := p.emitPluginChunks(streamID, buffer); errEmit != nil {
+				return transparentStreamAttempt{Err: errEmit, Aborted: true}
+			}
+		}
+		_ = p.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
+		return transparentStreamAttempt{Class: ClassNone, Verdict: verdict, Emitted: true}
+	}
+	verdict := classifyFinal(sig, cfg, reasoningNeeded, cfg.MinHoldOutputTokens, true)
 	if emitted {
 		_ = p.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
 		return transparentStreamAttempt{Class: verdict.Class, Verdict: verdict, Emitted: true}
 	}
 	if verdict.Class == ClassNone {
 		if errEmit := p.emitPluginChunks(streamID, buffer); errEmit != nil {
-			return transparentStreamAttempt{Class: ClassProbeError, Verdict: QualityVerdict{Class: ClassProbeError, Reason: sanitizeError(errEmit)}, Err: errEmit, Available: true}
+			return transparentStreamAttempt{Err: errEmit, Aborted: true, Available: true}
 		}
 		_ = p.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
 		return transparentStreamAttempt{Emitted: true}
@@ -737,7 +871,7 @@ func executionModel(req rpcExecutorRequest, body []byte) string {
 // boundary. Codex and Responses clients may omit encrypted reasoning from the
 // include list, which makes a healthy stream indistinguishable from a degraded
 // one. Add the include before the quality gate observes the upstream stream.
-func ensureTransparentReasoningEvidence(body []byte, sourceFormat, model string) []byte {
+func ensureTransparentReasoningEvidence(body []byte, sourceFormat string, reasoningRequired bool) []byte {
 	if len(body) == 0 {
 		return body
 	}
@@ -745,7 +879,7 @@ func ensureTransparentReasoningEvidence(body []byte, sourceFormat, model string)
 	if !strings.Contains(format, "codex") && !strings.Contains(format, "response") {
 		return body
 	}
-	if !reasoningRequiredForModel(model, body) {
+	if !reasoningRequired {
 		return body
 	}
 	var payload map[string]json.RawMessage
@@ -782,7 +916,10 @@ func ensureTransparentReasoningEvidence(body []byte, sourceFormat, model string)
 }
 
 func buildHostExecution(req rpcExecutorRequest, body []byte, sourceFormat, authID, proxyURL string, stream bool) pluginapi.HostModelExecutionRequest {
-	model := executionModel(req, body)
+	return buildHostExecutionWithModel(req, body, sourceFormat, executionModel(req, body), authID, proxyURL, stream)
+}
+
+func buildHostExecutionWithModel(req rpcExecutorRequest, body []byte, sourceFormat, model, authID, proxyURL string, stream bool) pluginapi.HostModelExecutionRequest {
 	return pluginapi.HostModelExecutionRequest{
 		EntryProtocol:  sourceFormat,
 		ExitProtocol:   firstNonEmpty(req.Format, sourceFormat),
@@ -842,6 +979,19 @@ func isTransparentCandidateState(state string) bool {
 	}
 }
 
+func (p *Plugin) recordTransparentOverflow(authID string, limit int64) {
+	if p == nil || p.stateStore() == nil {
+		return
+	}
+	_ = p.stateStore().AppendEvent(Event{
+		Time:   time.Now().UTC(),
+		AuthID: authID,
+		Action: "transparent_overflow",
+		Result: "delivered",
+		Detail: fmt.Sprintf("hold buffer exceeded %d bytes; quality gate bypassed", limit),
+	})
+}
+
 func (p *Plugin) recordAttemptError(authID, class string, errValue error) error {
 	if p.stateStore() == nil {
 		return errValue
@@ -898,6 +1048,7 @@ func (p *Plugin) rotateAfterFailure(ctx context.Context, authID, class string) (
 }
 
 const maxUpstreamErrorBodyBytes = 64 << 10
+const maxUpstreamErrorClassifyBytes = 4 << 10
 
 func classifyProbeStatus(status int) string {
 	class, _ := classifyUpstreamStatus(status, nil)
@@ -913,14 +1064,26 @@ func classifyUpstreamStatus(status int, body []byte) (string, string) {
 	case http.StatusPaymentRequired:
 		return ClassQuotaExhausted, "upstream status 402 (quota exhausted)"
 	}
+	if len(body) > maxUpstreamErrorClassifyBytes {
+		body = body[:maxUpstreamErrorClassifyBytes]
+	}
 	text := strings.ToLower(string(body))
-	if status == http.StatusForbidden || status == http.StatusTooManyRequests {
+	switch status {
+	case http.StatusForbidden:
 		if isQuotaExhaustionText(text) {
-			return ClassQuotaExhausted, fmt.Sprintf("upstream status %d (quota exhausted)", status)
+			return ClassQuotaExhausted, "upstream status 403 (quota exhausted)"
 		}
-		if status == http.StatusForbidden && isCredentialRejectionText(text) {
+		// A WAF/CDN HTML page often contains the word authentication. Only a
+		// structured JSON error with a strong credential phrase is actionable.
+		if json.Valid(body) && isCredentialRejectionText(text) {
 			return ClassCredentialInvalid, "upstream status 403 (credential rejected)"
 		}
+		return ClassIgnored, "upstream status 403"
+	case http.StatusTooManyRequests:
+		if isQuotaExhaustionText(text) {
+			return ClassQuotaExhausted, "upstream status 429 (quota exhausted)"
+		}
+		return ClassRateLimited, "upstream status 429 (rate limited)"
 	}
 	return ClassIgnored, fmt.Sprintf("upstream status %d", status)
 }
@@ -929,12 +1092,12 @@ func isQuotaExhaustionText(text string) bool {
 	for _, marker := range []string{
 		"subscription:free-usage-exhausted",
 		"used all the included free usage",
+		"included free usage",
 		"usage limit reached",
 		"usage balance exhausted",
 		"run out of credits",
 		"out of credits",
 		"spending-limit",
-		"quota",
 		"tokens (actual/limit)",
 	} {
 		if strings.Contains(text, marker) {
@@ -945,7 +1108,14 @@ func isQuotaExhaustionText(text string) bool {
 }
 
 func isCredentialRejectionText(text string) bool {
-	for _, marker := range []string{"authentication", "unauthorized", "invalid token", "token expired"} {
+	for _, marker := range []string{
+		"invalid token",
+		"token expired",
+		"invalid api key",
+		"incorrect api key",
+		"credential rejected",
+		"authentication failed",
+	} {
 		if strings.Contains(text, marker) {
 			return true
 		}

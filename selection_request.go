@@ -57,6 +57,10 @@ func (attempt *transparentCandidateAttempt) Release() {
 }
 
 func (p *Plugin) newTransparentSelection(req rpcExecutorRequest, body []byte, sourceFormat string) (*transparentSelection, error) {
+	return p.newTransparentSelectionForModel(req, body, sourceFormat, executionModel(req, body))
+}
+
+func (p *Plugin) newTransparentSelectionForModel(req rpcExecutorRequest, body []byte, sourceFormat, model string) (*transparentSelection, error) {
 	if errEnsure := p.ensureSelectionIndex(); errEnsure != nil {
 		return nil, errEnsure
 	}
@@ -84,7 +88,7 @@ func (p *Plugin) newTransparentSelection(req rpcExecutorRequest, body []byte, so
 		}
 	}
 	if selection.routing.SessionAffinity {
-		selection.sessionKey = p.selectionSessionKey(req, body, sourceFormat)
+		selection.sessionKey = p.selectionSessionKeyForModel(req, body, sourceFormat, model)
 		if selection.sessionKey != "" {
 			if authID, ok := p.selectionRuntime.LookupBinding(selection.sessionKey, time.Now().UTC()); ok {
 				selection.sessionAuthID = authID
@@ -389,7 +393,7 @@ func (selection *transparentSelection) MarkFailure(authID, _ string, class strin
 
 func isTransparentSelectionHardFailure(class string) bool {
 	switch class {
-	case "", ClassIgnored, ClassProbeError, ClassProxyError:
+	case "", ClassIgnored, ClassRateLimited, ClassProbeError, ClassProxyError:
 		return false
 	default:
 		return true

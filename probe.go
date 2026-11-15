@@ -89,8 +89,20 @@ func (s *probeScheduler) scanAndDispatch() {
 	if store == nil {
 		return
 	}
-	state := store.Snapshot()
-	s.enqueueDue(accounts, state, policy, time.Now().UTC())
+	ids := make([]string, len(accounts))
+	for index, account := range accounts {
+		ids[index] = account.ID
+	}
+	values := store.AccountStatesForIDs(ids)
+	states := make(map[string]*AccountState, len(accounts))
+	for index, account := range accounts {
+		if values[index].AuthID == "" {
+			continue
+		}
+		value := values[index]
+		states[account.ID] = &value
+	}
+	s.enqueueDue(accounts, State{Accounts: states}, policy, time.Now().UTC())
 	s.dispatch()
 }
 
@@ -131,7 +143,8 @@ func (s *probeScheduler) dispatch() {
 	limit := s.plugin.probeConcurrency()
 	for s.active < limit && len(s.queue) > 0 {
 		authID := s.queue[0]
-		s.queue = s.queue[1:]
+		copy(s.queue, s.queue[1:])
+		s.queue = s.queue[:len(s.queue)-1]
 		s.active++
 		s.wg.Add(1)
 		go func() {
@@ -198,9 +211,8 @@ func (p *Plugin) probeDue(authID string, force bool) (bool, error) {
 	if store == nil {
 		return true, nil
 	}
-	state := store.Snapshot()
-	account, okState := state.Accounts[authID]
-	return probeDueForAccount(account, okState, authID, policy, time.Now().UTC()), nil
+	account, okState := store.AccountSnapshot(authID)
+	return probeDueForAccount(&account, okState, authID, policy, time.Now().UTC()), nil
 }
 
 func probeDueForAccount(account *AccountState, okState bool, authID string, policy Policy, now time.Time) bool {
@@ -327,7 +339,13 @@ func (p *Plugin) ProbeAccount(ctx context.Context, authID string, force bool, ca
 		class, reason := classifyTransportFailure(errStream)
 		return p.handleProbeFailure(authID, raw, response, reEnabled, QualityVerdict{Class: class, Reason: reason}, errStream)
 	}
-	defer p.closeModelStream(stream.StreamID)
+	var reader *modelStreamReader
+	defer func() {
+		_ = p.closeModelStream(stream.StreamID)
+		if reader != nil {
+			reader.Close()
+		}
+	}()
 	if stream.StatusCode < 200 || stream.StatusCode >= 300 {
 		errorBody := p.readModelStreamErrorBody(probeCtx, stream.StreamID)
 		class, reason := classifyUpstreamStatus(stream.StatusCode, errorBody)
@@ -337,13 +355,14 @@ func (p *Plugin) ProbeAccount(ctx context.Context, authID string, force bool, ca
 	analyzer.SetEncryptedConfig(qualityCfg.MinEncryptedBytes, qualityCfg.EncryptedBytesPerReasoningToken)
 	var bufferBytes int64
 	var terminal bool
+	reader = p.openModelStreamReader(probeCtx, stream.StreamID)
 	for {
 		select {
 		case <-probeCtx.Done():
 			return p.handleProbeFailure(authID, raw, response, reEnabled, QualityVerdict{Class: ClassProbeError, Reason: "probe context ended"}, probeCtx.Err())
 		default:
 		}
-		read, errRead := p.readModelStreamContext(probeCtx, stream.StreamID)
+		read, errRead := reader.Next()
 		if errRead != nil {
 			class, reason := classifyTransportFailure(errRead)
 			return p.handleProbeFailure(authID, raw, response, reEnabled, QualityVerdict{Class: class, Reason: reason}, errRead)
@@ -367,12 +386,11 @@ func (p *Plugin) ProbeAccount(ctx context.Context, authID string, force bool, ca
 	}
 	sig := analyzer.Finalize(terminal)
 	sig.DurationMS = time.Since(probeStartedAt).Milliseconds()
-	sig.GenerationMS = generationWindowMS(sig.DurationMS, sig.FirstTokenMS, sig.ReasoningTokens)
-	sig.TPS = tps(sig.OutputTokens, sig.GenerationMS)
 	markerOK := matchProbeMarker(sig.VisibleText, probeMarker)
-	verdict := classifyProbeResult(sig, qualityCfg, markerOK, qualityCfg.ThinkingGuard)
+	probeReasoningRequired := reasoningRequiredForModel(probeCfg.Model, body)
+	verdict := classifyProbeResult(sig, qualityCfg, markerOK, probeReasoningRequired)
 	if verdict.Class == ClassNone {
-		if errSuccess := p.markProbeSuccess(authID, sig); errSuccess != nil {
+		if errSuccess := p.markProbeSuccess(authID, verdict.Signals); errSuccess != nil {
 			return errSuccess
 		}
 		return nil
@@ -400,7 +418,6 @@ func (p *Plugin) markProbeSuccess(authID string, sig Signals) error {
 		account.DisableReason = ""
 		account.PreviousDisabled = false
 		account.AuthDisabledIntent = nil
-		account.QualityStrikeMissingThinking = false
 		account.SoftStrikes = 0
 		account.ErrorStrikes = 0
 		account.ThinkingStrikes = 0

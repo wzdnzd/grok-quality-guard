@@ -49,7 +49,7 @@ func isGrokModel(model string, prefixes []string) bool {
 			return true
 		}
 	}
-	return strings.Contains(normalized, "grok")
+	return false
 }
 
 func (p *Plugin) isGrokRouteModel(model string) bool {

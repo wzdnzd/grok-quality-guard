@@ -323,7 +323,7 @@ func TestTransparentNonReasoningEmptyStreamRejected(t *testing.T) {
 	}
 }
 
-func TestTransparentStreamBufferOverflowRejectedBeforeEmit(t *testing.T) {
+func TestTransparentStreamBufferOverflowDeliversAndRecords(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	host := newMockHostCall(entries, auths)
 	host.scriptStream("auth-1",
@@ -336,12 +336,14 @@ func TestTransparentStreamBufferOverflowRejectedBeforeEmit(t *testing.T) {
 	})
 	plugin.runTransparentStreamBridge(context.Background(), nonReasoningStreamRequestForTest(), "plugin-stream-buffer-overflow")
 
-	if len(host.emitted["plugin-stream-buffer-overflow"]) != 0 {
-		t.Fatalf("buffer overflow emitted content: %s", host.emitted["plugin-stream-buffer-overflow"])
+	if len(host.emitted["plugin-stream-buffer-overflow"]) == 0 {
+		t.Fatal("buffer overflow did not deliver the buffered content")
 	}
-	detail := host.closes["plugin-stream-buffer-overflow"]
-	if detail == nil || detail.Code != "quality_degraded" || detail.HTTPStatus != http.StatusServiceUnavailable {
-		t.Fatalf("unexpected close detail: %#v", detail)
+	if detail := host.closes["plugin-stream-buffer-overflow"]; detail != nil {
+		t.Fatalf("buffer overflow closed with error: %#v", detail)
+	}
+	if len(host.modelCalls) != 1 {
+		t.Fatalf("buffer overflow used %d attempts, want 1", len(host.modelCalls))
 	}
 }
 
@@ -717,7 +719,7 @@ func TestRouteModelHomeMetadataDoesNotBypassGate(t *testing.T) {
 
 func TestEnsureTransparentReasoningEvidenceInclude(t *testing.T) {
 	body := []byte(`{"model":"grok-4.7","stream":true,"input":"hi","reasoning":{"effort":"xhigh"}}`)
-	updated := ensureTransparentReasoningEvidence(body, "codex", "grok-4.7")
+	updated := ensureTransparentReasoningEvidence(body, "codex", reasoningRequiredForModel("grok-4.7", body))
 	var payload map[string]any
 	if errUnmarshal := json.Unmarshal(updated, &payload); errUnmarshal != nil {
 		t.Fatal(errUnmarshal)
@@ -728,7 +730,7 @@ func TestEnsureTransparentReasoningEvidenceInclude(t *testing.T) {
 	}
 
 	withOther := []byte(`{"model":"grok-4.7","input":"hi","include":["no_inline_citations"],"seed":9007199254740993}`)
-	updatedOther := ensureTransparentReasoningEvidence(withOther, "codex", "grok-4.7")
+	updatedOther := ensureTransparentReasoningEvidence(withOther, "codex", reasoningRequiredForModel("grok-4.7", withOther))
 	if !strings.Contains(string(updatedOther), `"seed":9007199254740993`) {
 		t.Fatalf("large integer was altered while adding include: %s", updatedOther)
 	}
@@ -741,17 +743,17 @@ func TestEnsureTransparentReasoningEvidenceInclude(t *testing.T) {
 	}
 
 	existing := []byte(`{"model":"grok-4.7","input":"hi","include":["no_inline_citations","reasoning.encrypted_content"]}`)
-	if got := ensureTransparentReasoningEvidence(existing, "openai-response", "grok-4.7"); string(got) != string(existing) {
+	if got := ensureTransparentReasoningEvidence(existing, "openai-response", reasoningRequiredForModel("grok-4.7", existing)); string(got) != string(existing) {
 		t.Fatalf("existing reasoning include was rewritten: %s", got)
 	}
 
 	disabled := []byte(`{"model":"grok-4.7","input":"hi","reasoning":{"effort":"none"}}`)
-	if got := ensureTransparentReasoningEvidence(disabled, "codex", "grok-4.7"); string(got) != string(disabled) {
+	if got := ensureTransparentReasoningEvidence(disabled, "codex", reasoningRequiredForModel("grok-4.7", disabled)); string(got) != string(disabled) {
 		t.Fatalf("reasoning-disabled request was rewritten: %s", got)
 	}
 
 	chat := []byte(`{"model":"grok-4.7","messages":[{"role":"user","content":"hi"}]}`)
-	if got := ensureTransparentReasoningEvidence(chat, "openai", "grok-4.7"); string(got) != string(chat) {
+	if got := ensureTransparentReasoningEvidence(chat, "openai", reasoningRequiredForModel("grok-4.7", chat)); string(got) != string(chat) {
 		t.Fatalf("chat request was rewritten: %s", got)
 	}
 }

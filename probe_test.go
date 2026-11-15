@@ -59,7 +59,7 @@ func TestProbeFailureAfterStrikePermanentlyDisablesWithoutDeadlock(t *testing.T)
 	assertNoGuardMetadata(t, saved)
 }
 
-func TestProbeSuccessReenablesCooldownAndClearsStrikes(t *testing.T) {
+func TestProbeSuccessReenablesCooldownAndPreservesStrike(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "alice@example.com", map[string]any{
 		"disabled": true,
 	})
@@ -89,7 +89,7 @@ func TestProbeSuccessReenablesCooldownAndClearsStrikes(t *testing.T) {
 		t.Fatal(errProbe)
 	}
 	account, _ := plugin.stateAccount("auth-1")
-	if account.State != StateHealthy || account.QualityStrikeMissingThinking || account.SoftStrikes != 0 || account.ErrorStrikes != 0 || account.ThinkingStrikes != 0 {
+	if account.State != StateHealthy || !account.QualityStrikeMissingThinking || account.SoftStrikes != 0 || account.ErrorStrikes != 0 || account.ThinkingStrikes != 0 {
 		t.Fatalf("unexpected state after successful probe: %#v", account)
 	}
 	if account.DisableReason != "" {

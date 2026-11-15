@@ -24,7 +24,9 @@ func TestClassifyUpstreamStatusCredentialAndQuota(t *testing.T) {
 		{name: "payment required", status: http.StatusPaymentRequired, want: ClassQuotaExhausted},
 		{name: "free quota exhausted", status: http.StatusTooManyRequests, body: `{"code":"subscription:free-usage-exhausted","error":"tokens (actual/limit): 10/10"}`, want: ClassQuotaExhausted},
 		{name: "model quota exhausted", status: http.StatusForbidden, body: `{"error":"You've used all the included free usage for model grok-4.7"}`, want: ClassQuotaExhausted},
-		{name: "generic rate limit", status: http.StatusTooManyRequests, body: `{"error":"rate limit exceeded; retry later"}`, want: ClassIgnored},
+		{name: "generic rate limit", status: http.StatusTooManyRequests, body: `{"error":"rate limit exceeded; retry later"}`, want: ClassRateLimited},
+		{name: "rpm quota limit", status: http.StatusTooManyRequests, body: `{"error":"requests per minute quota reached"}`, want: ClassRateLimited},
+		{name: "cloudflare html", status: http.StatusForbidden, body: `<html>authentication required</html>`, want: ClassIgnored},
 		{name: "forbidden credential", status: http.StatusForbidden, body: `{"error":"invalid token"}`, want: ClassCredentialInvalid},
 	}
 	for _, test := range tests {

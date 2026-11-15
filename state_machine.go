@@ -63,7 +63,7 @@ func (p *Plugin) applyVerdictLocked(
 	backoff := nextProbeBackoff(policy.Probe, previousState)
 	outcome := verdictResult{}
 
-	errUpdate := store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {
+	errUpdate := store.RecordObservation(authID, func(account *AccountState) (*Event, error) {
 		if priorMissingStrike {
 			account.QualityStrikeMissingThinking = true
 		}
@@ -111,7 +111,6 @@ func (p *Plugin) applyVerdictLocked(
 			account.SoftStrikes = 0
 			account.ErrorStrikes = 0
 			account.ThinkingStrikes = 0
-			account.QualityStrikeMissingThinking = false
 			if !preserveIsolation() {
 				account.State = StateHealthy
 			}
@@ -145,6 +144,20 @@ func (p *Plugin) applyVerdictLocked(
 				if !preserveIsolation() {
 					account.State = StateSuspect
 				}
+			}
+
+		case ClassRateLimited:
+			account.SoftStrikes = 0
+			account.ErrorStrikes = 0
+			account.ThinkingStrikes = 0
+			account.ProbeBackoffUntil = now.Add(backoff)
+			eventResult = "rate_limited"
+			eventDetail = source + " · upstream rate limit, not a quality failure"
+			if verdict.Reason != "" {
+				eventDetail += " · " + verdict.Reason
+			}
+			if !preserveIsolation() {
+				account.State = StateSuspect
 			}
 
 		case ClassProbeError, ClassProxyError:
@@ -247,6 +260,11 @@ func (p *Plugin) applyVerdictLocked(
 	})
 	if errUpdate != nil {
 		return outcome, errUpdate
+	}
+	if outcome.Actioned || outcome.CrossVerify || isAccountStatusClass(verdict.Class) {
+		if errFlush := store.Flush(); errFlush != nil {
+			return outcome, errFlush
+		}
 	}
 
 	if isAccountStatusClass(verdict.Class) {
@@ -583,6 +601,7 @@ func (p *Plugin) ManualRestore(ctx context.Context, authID string) error {
 	if authDisabled(raw) && !guardOwned {
 		if errUpdate := p.stateStore().UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 			resetGuardDisableState(account)
+			account.QualityStrikeMissingThinking = false
 			return newEvent(authID, "", "restore", "external_left_disabled", "manual"), nil
 		}); errUpdate != nil {
 			return errUpdate
@@ -605,6 +624,7 @@ func (p *Plugin) ManualRestore(ctx context.Context, authID string) error {
 	}
 	return store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 		resetGuardDisableState(account)
+		account.QualityStrikeMissingThinking = false
 		return newEvent(authID, "", "restore", "restored", "manual"), nil
 	})
 }
@@ -621,7 +641,6 @@ func resetGuardDisableState(account *AccountState) {
 	account.DisableReason = ""
 	account.PreviousDisabled = false
 	account.AuthDisabledIntent = nil
-	account.QualityStrikeMissingThinking = false
 	account.SoftStrikes = 0
 	account.ErrorStrikes = 0
 	account.ThinkingStrikes = 0
