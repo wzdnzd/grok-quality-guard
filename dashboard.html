@@ -1992,7 +1992,11 @@
                         type="number" min="1"><span class="hint">探测或代理错误累计达到次数后处置</span></div>
                     <div class="field"><label for="p_consecutive_missing_thinking">连续缺少思考次数</label><input
                         id="p_consecutive_missing_thinking" type="number" min="1"><span
-                        class="hint">连续检测到缺少真实思考的响应达到该次数后触发处置或交叉验证；默认 1</span></div>
+                        class="hint">连续检测到缺少真实思考的响应达到该次数后触发处置或交叉验证；默认：1</span></div>
+                    <div class="field"><label for="p_strike_decay_after">缺思考惩罚标记降级时间窗口</label><input
+                        id="p_strike_decay_after" type="number" min="0"><span class="hint">单位：小时，默认：48；0 表示关闭自动降级</span></div>
+                    <div class="field"><label for="p_strike_decay_min_healthy">自动降级连续健康样本</label><input
+                        id="p_strike_decay_min_healthy" type="number" min="0"><span class="hint">窗口内至少积累的连续健康观测/探测次数，默认：10</span></div>
                     <div class="field"><label for="p_min_generation_ms">最小生成窗口</label><input id="p_min_generation_ms"
                         type="number" min="1"><span class="hint">单位：毫秒</span></div>
                     <label class="check-card"><input id="p_thinking_guard" type="checkbox"><span
@@ -2024,10 +2028,10 @@
                     </svg>透明鉴权选择与会话亲和</h3>
                   <div class="field-grid">
                     <div class="field"><label for="p_selection_strategy">层内选择策略</label><select id="p_selection_strategy">
-                        <option value="round_robin">Round Robin</option>
-                        <option value="random">Random</option>
-                        <option value="fill_first">Fill First</option>
-                      </select><span class="hint">仅在同一个质量/Priority 层内生效</span></div>
+                        <option value="round_robin">轮询分配</option>
+                        <option value="random">随机分配</option>
+                        <option value="fill_first">顺序优先</option>
+                      </select><span class="hint">仅在同一个质量/优先级层内生效</span></div>
                     <label class="check-card"><input id="p_prefer_last_success" type="checkbox"><span
                         class="check-copy"><span class="check-title">优先复用上次成功账号</span><span class="check-desc">仅在该账号健康且空闲时优先使用；并发时自动分散</span></span></label>
                     <label class="check-card"><input id="p_session_affinity" type="checkbox"><span
@@ -2317,7 +2321,7 @@
     const ACTION_LABELS = {
       observe: '被动观测', probe: '主动探测', guard_disable: '自动处置', external_disable: '外部禁用',
       restore: '恢复账号', resin_bind: '绑定租约', resin_rotate: '轮换租约', resin_clear: '清除代理', resin_lease_delete: '清理旧租约',
-      resin_config_save: '保存 Resin 配置', transparent_attempt: '透明重试', transparent_overflow: '缓冲溢出', internal_error: '内部错误',
+      resin_config_save: '保存 Resin 配置', transparent_attempt: '透明重试', transparent_overflow: '缓冲溢出', strike_decay: '惩罚标记降级', internal_error: '内部错误',
       cross_verify_schedule: '调度交叉验证', 'quality.cross_verify': '交叉验证'
     };
     const RESULT_LABELS = {
@@ -2325,7 +2329,7 @@
       external_left_disabled: '保持外部禁用', bound: '已绑定', rotated: '已轮换', cleared: '已清除', local_mode: '本地模式',
       validated: '已验证', cooldown: '已冷却', permanent: '永久禁用', error: '错误', ignored: '已忽略',
       quota_exhausted: '额度耗尽', credential_invalid: '凭据失效', actioned: '已处置',
-      rate_limited: '请求限速', delivered: '已放行',
+      rate_limited: '请求限速', delivered: '已放行', expired: '已过期',
       pending: '累计中', threshold_reached: '达到阈值', scheduled: '已调度', queued: '已排队', succeeded: '已成功', retry_scheduled: '等待重试'
     };
     const esc = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -2784,6 +2788,7 @@
         summaryItem('连续阈值', esc('软 ' + num(quality.consecutive_soft || 2) + ' / 错误 ' + num(quality.consecutive_errors || 2) + ' / 缺思考 ' + num(quality.consecutive_missing_thinking || 1))),
         summaryItem('自动处置', esc(autoActionLabel(policy.auto_action))),
         summaryItem('缺少思考冷却', esc(quality.missing_thinking_cooldown || '-')),
+    summaryItem('惩罚标记降级', esc(String(quality.strike_decay_after ?? 48) + 'h / ' + String(quality.strike_decay_min_healthy ?? 10) + ' 次健康')),
         summaryItem('思考检测 / 交叉验证', esc((quality.thinking_guard !== false ? '开启' : '关闭') + ' / ' + ((quality.soft_cross_verify || quality.thinking_cross_verify) ? '部分开启' : '关闭'))),
         summaryItem('探测模型', esc(policy.probe && policy.probe.model || '-')),
         summaryItem('任务并发 / 队列', esc(num(policy.probe && policy.probe.concurrency || 1) + '-' + num(policy.probe && policy.probe.queue_size || 10000))),
@@ -3040,6 +3045,8 @@
       setValue('p_consecutive_soft', quality.consecutive_soft || 2);
       setValue('p_consecutive_errors', quality.consecutive_errors || 2);
       setValue('p_consecutive_missing_thinking', quality.consecutive_missing_thinking || 1);
+      setValue('p_strike_decay_after', quality.strike_decay_after ?? 48);
+      setValue('p_strike_decay_min_healthy', quality.strike_decay_min_healthy ?? 10);
       setChecked('p_thinking_guard', quality.thinking_guard !== false);
       setChecked('p_soft_cross_verify', quality.soft_cross_verify === true);
       setChecked('p_thinking_cross_verify', quality.thinking_cross_verify === true);
@@ -3086,6 +3093,8 @@
       policy.quality.consecutive_soft = numberValue('p_consecutive_soft', 2);
       policy.quality.consecutive_errors = numberValue('p_consecutive_errors', 2);
       policy.quality.consecutive_missing_thinking = numberValue('p_consecutive_missing_thinking', 1);
+      policy.quality.strike_decay_after = numberValue('p_strike_decay_after', 48);
+      policy.quality.strike_decay_min_healthy = numberValue('p_strike_decay_min_healthy', 10);
       policy.quality.thinking_guard = document.getElementById('p_thinking_guard').checked;
       policy.quality.soft_cross_verify = document.getElementById('p_soft_cross_verify').checked;
       policy.quality.thinking_cross_verify = document.getElementById('p_thinking_cross_verify').checked;
@@ -3273,7 +3282,7 @@
       else if (resin.local_only && resin.enabled && account.proxy) actionButtons.push('<button class="btn" type="button" data-resin-action="resin.rotate" data-auth="' + esc(account.auth_id) + '">' + icon('rotate') + '本地轮换</button>');
       if (account.proxy) actionButtons.push('<button class="btn btn-danger" type="button" data-resin-action="resin.clear" data-auth="' + esc(account.auth_id) + '">' + icon('x') + '清除代理</button>');
       document.getElementById('drawerBody').innerHTML = [
-                '<div style="display:flex;gap:6px;flex-wrap:wrap">' + badge(stateLabel(account.state), stateTone(account.state)) + resinStatus + (account.strike_missing_thinking ? badge('思考命中', 'warn') : '') + ignoredAttempt + '</div>',
+                '<div style="display:flex;gap:6px;flex-wrap:wrap">' + badge(stateLabel(account.state), stateTone(account.state)) + resinStatus + (account.strike_missing_thinking ? badge('缺思考标记', 'warn') : '') + ignoredAttempt + '</div>',
         '<div class="drawer-section"><div class="detail-grid">',
         '<div class="detail-cell"><div class="detail-label">最近尝试</div><div class="detail-value">' + esc(attemptLabel(account.last_attempt)) + '</div></div>',
         '<div class="detail-cell"><div class="detail-label">最近质量判定</div><div class="detail-value">' + esc(reasonLabel(account.last_reason)) + '</div></div>',

@@ -79,11 +79,12 @@ func (p *Plugin) RouteModel(request []byte) ([]byte, error) {
 	if isProbeHeader(req.Headers) {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false, Reason: "internal_probe_request"})
 	}
-	requestedModel := firstNonEmpty(req.RequestedModel, asString(req.Metadata["model"]), modelFromRequestBody(req.Body))
+	payload := decodeRequestPayload(req.Body)
+	requestedModel := firstNonEmpty(req.RequestedModel, asString(req.Metadata["model"]), asString(payload["model"]))
 	if !p.isGrokRouteModel(requestedModel) {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false, Reason: "not_grok_model"})
 	}
-	if strings.Contains(strings.ToLower(strings.TrimSpace(req.Query.Get("alt"))), "compact") || isResponsesCompactionRequest(req.Body) {
+	if strings.Contains(strings.ToLower(strings.TrimSpace(req.Query.Get("alt"))), "compact") || isResponsesCompactionPayload(payload) {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false, Reason: "responses_compaction"})
 	}
 	// Keep no-auth requests on the host path so logs retain xAI provider attribution
@@ -174,15 +175,16 @@ func (p *Plugin) transparentExecute(ctx context.Context, req rpcExecutorRequest)
 	if !policy.TransparentGuard {
 		return transparentResult{}, fmt.Errorf("transparent guard is disabled")
 	}
-	body, sourceFormat, errRequest := executorRequestInput(req)
-	if errRequest != nil {
-		return transparentResult{}, errRequest
+	facts, errFacts := p.prepareTransparentRequest(req)
+	if errFacts != nil {
+		return transparentResult{}, errFacts
 	}
-	requestModel := executionModel(req, body)
-	reasoningNeeded := reasoningRequiredForModel(requestModel, body)
-	body = ensureTransparentReasoningEvidence(body, sourceFormat, reasoningNeeded)
-	replayable := safeReplayRequest(body, sourceFormat, firstNonEmpty(req.Model, req.Alt))
-	selection, errSelection := p.newTransparentSelectionForModel(req, body, sourceFormat, requestModel)
+	body := facts.Body
+	sourceFormat := facts.SourceFormat
+	requestModel := facts.Model
+	reasoningNeeded := facts.ReasoningRequired
+	replayable := facts.Replayable
+	selection, errSelection := p.newTransparentSelectionForFacts(req, facts)
 	if errSelection != nil {
 		return transparentResult{}, errSelection
 	}
@@ -258,15 +260,16 @@ func (p *Plugin) transparentExecuteBufferedStream(ctx context.Context, req rpcEx
 	if !policy.TransparentGuard {
 		return transparentResult{}, fmt.Errorf("transparent guard is disabled")
 	}
-	body, sourceFormat, errRequest := executorRequestInput(req)
-	if errRequest != nil {
-		return transparentResult{}, errRequest
+	facts, errFacts := p.prepareTransparentRequest(req)
+	if errFacts != nil {
+		return transparentResult{}, errFacts
 	}
-	requestModel := executionModel(req, body)
-	reasoningNeeded := reasoningRequiredForModel(requestModel, body)
-	body = ensureTransparentReasoningEvidence(body, sourceFormat, reasoningNeeded)
-	replayable := safeReplayRequest(body, sourceFormat, firstNonEmpty(req.Model, req.Alt))
-	selection, errSelection := p.newTransparentSelectionForModel(req, body, sourceFormat, requestModel)
+	body := facts.Body
+	sourceFormat := facts.SourceFormat
+	requestModel := facts.Model
+	reasoningNeeded := facts.ReasoningRequired
+	replayable := facts.Replayable
+	selection, errSelection := p.newTransparentSelectionForFacts(req, facts)
 	if errSelection != nil {
 		return transparentResult{}, errSelection
 	}
@@ -375,6 +378,9 @@ func (p *Plugin) executeTransparentBufferedAttempt(ctx context.Context, executio
 	attemptStartedAt := time.Now()
 	stream, errExecute := p.executeModelStream(ctx, execution, callbackID)
 	if errExecute != nil {
+		if ctx.Err() != nil {
+			return transparentResult{}, QualityVerdict{}, errTransparentAttemptAborted
+		}
 		class := classifyTransportError(errExecute)
 		return transparentResult{}, QualityVerdict{Class: class, Reason: sanitizeError(errExecute)}, errExecute
 	}
@@ -423,6 +429,9 @@ func (p *Plugin) executeTransparentBufferedAttempt(ctx context.Context, executio
 			}
 		}
 		if read.Error != "" {
+			if ctx.Err() != nil {
+				return transparentResult{}, QualityVerdict{}, errTransparentAttemptAborted
+			}
 			errRead := fmt.Errorf("%s", read.Error)
 			class := classifyTransportError(errRead)
 			return transparentResult{}, QualityVerdict{Class: class, Reason: sanitizeError(errRead)}, errRead
@@ -436,10 +445,12 @@ func (p *Plugin) executeTransparentBufferedAttempt(ctx context.Context, executio
 	}
 	sig := analyzer.Finalize(true)
 	verdict := classifyFinal(sig, cfg, reasoningNeeded, cfg.MinHoldOutputTokens, true)
-	if holdOverflow {
-		verdict = QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "hold buffer overflow; delivered", Signals: sig}
-	}
 	result := transparentResult{Headers: stream.Headers, Chunks: chunks, Available: true}
+	if holdOverflow {
+		// The buffer limit bypassed the hold gate. Deliver the response but do
+		// not turn an unverified sample into a healthy account observation.
+		return result, QualityVerdict{}, nil
+	}
 	if verdict.Class == ClassNone {
 		_ = p.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
 		return result, verdict, nil
@@ -463,16 +474,17 @@ func (p *Plugin) runTransparentStreamBridge(ctx context.Context, req rpcExecutor
 		p.closePluginStream(streamID, "transparent_guard_disabled", "transparent guard is disabled", http.StatusServiceUnavailable)
 		return
 	}
-	body, sourceFormat, errRequest := executorRequestInput(req)
-	if errRequest != nil {
+	facts, errFacts := p.prepareTransparentRequest(req)
+	if errFacts != nil {
 		p.closePluginStream(streamID, "invalid_request", "request body is empty", http.StatusBadRequest)
 		return
 	}
-	requestModel := executionModel(req, body)
-	reasoningNeeded := reasoningRequiredForModel(requestModel, body)
-	body = ensureTransparentReasoningEvidence(body, sourceFormat, reasoningNeeded)
-	replayable := safeReplayRequest(body, sourceFormat, firstNonEmpty(req.Model, req.Alt))
-	selection, errSelection := p.newTransparentSelectionForModel(req, body, sourceFormat, requestModel)
+	body := facts.Body
+	sourceFormat := facts.SourceFormat
+	requestModel := facts.Model
+	reasoningNeeded := facts.ReasoningRequired
+	replayable := facts.Replayable
+	selection, errSelection := p.newTransparentSelectionForFacts(req, facts)
 	if errSelection != nil {
 		p.closePluginStream(streamID, "quality_degraded", "no healthy Grok account produced a valid response", http.StatusServiceUnavailable)
 		return
@@ -576,6 +588,9 @@ func (p *Plugin) executeTransparentStreamAttempt(ctx context.Context, execution 
 	attemptStartedAt := time.Now()
 	stream, errExecute := p.executeModelStream(ctx, execution, callbackID)
 	if errExecute != nil {
+		if ctx.Err() != nil {
+			return transparentStreamAttempt{Err: ctx.Err(), Aborted: true}
+		}
 		class := classifyTransportError(errExecute)
 		return transparentStreamAttempt{Class: class, Verdict: QualityVerdict{Class: class, Reason: sanitizeError(errExecute)}, Err: errExecute}
 	}
@@ -798,14 +813,12 @@ func (p *Plugin) finishTransparentStreamAttempt(
 	sig := analyzer.Finalize(true)
 	sig.HoldExpired = holdExpired
 	if holdOverflow {
-		verdict := QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "hold buffer overflow; delivered", Signals: sig}
 		if !emitted && len(buffer) > 0 {
 			if errEmit := p.emitPluginChunks(streamID, buffer); errEmit != nil {
 				return transparentStreamAttempt{Err: errEmit, Aborted: true}
 			}
 		}
-		_ = p.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
-		return transparentStreamAttempt{Class: ClassNone, Verdict: verdict, Emitted: true}
+		return transparentStreamAttempt{Class: ClassNone, Emitted: true}
 	}
 	verdict := classifyFinal(sig, cfg, reasoningNeeded, cfg.MinHoldOutputTokens, true)
 	if emitted {
@@ -1098,7 +1111,6 @@ func isQuotaExhaustionText(text string) bool {
 		"run out of credits",
 		"out of credits",
 		"spending-limit",
-		"tokens (actual/limit)",
 	} {
 		if strings.Contains(text, marker) {
 			return true
@@ -1211,62 +1223,7 @@ func sseHeaders() http.Header {
 }
 
 func safeReplayRequest(body []byte, sourceFormat, _ string) bool {
-	if len(body) == 0 {
-		return false
-	}
-	var payload map[string]any
-	if errUnmarshal := json.Unmarshal(body, &payload); errUnmarshal != nil {
-		return false
-	}
-	format := strings.ToLower(strings.TrimSpace(sourceFormat))
-	if strings.Contains(format, "image") || strings.Contains(format, "video") || strings.Contains(format, "audio") || strings.Contains(format, "speech") || strings.Contains(format, "realtime") || strings.Contains(format, "websocket") {
-		return false
-	}
-	if nonEmptyJSONValue(payload["previous_response_id"]) || nonEmptyJSONValue(payload["conversation"]) {
-		return false
-	}
-	for _, key := range []string{"store", "background"} {
-		if value, ok := payload[key].(bool); ok && value {
-			return false
-		}
-	}
-	if containsCompactionTrigger(payload) || containsUnsafeContentType(payload) {
-		return false
-	}
-	if hasNonTextModality(payload["modalities"]) {
-		return false
-	}
-	if value, ok := payload["web_search_options"]; ok && value != nil {
-		return false
-	}
-	if nonEmptyJSONValue(payload["mcp_servers"]) {
-		return false
-	}
-	if rawTools, okTools := payload["tools"]; okTools {
-		tools, ok := rawTools.([]any)
-		if !ok {
-			return false
-		}
-		for _, rawTool := range tools {
-			tool, _ := rawTool.(map[string]any)
-			if tool == nil {
-				continue
-			}
-			kind := strings.ToLower(asString(tool["type"]))
-			switch kind {
-			case "function", "custom", "local_shell", "apply_patch", "tool_search", "shell":
-				if kind == "shell" && !localShellTool(tool) {
-					return false
-				}
-			default:
-				return false
-			}
-		}
-	}
-	if reasoningDisabledBody(payload) {
-		return false
-	}
-	return true
+	return safeReplayPayload(decodeRequestPayload(body), sourceFormat)
 }
 
 func nonEmptyJSONValue(value any) bool {
@@ -1309,12 +1266,8 @@ func containsCompactionTrigger(value any) bool {
 
 const clientCompactionPromptMarker = "it is a system-generated compaction prompt, not a real user message"
 
-func isResponsesCompactionRequest(body []byte) bool {
-	if len(body) == 0 {
-		return false
-	}
-	var payload map[string]any
-	if errUnmarshal := json.Unmarshal(body, &payload); errUnmarshal != nil || payload == nil {
+func isResponsesCompactionPayload(payload map[string]any) bool {
+	if payload == nil {
 		return false
 	}
 	if hasCompactionTriggerItem(payload["input"]) {

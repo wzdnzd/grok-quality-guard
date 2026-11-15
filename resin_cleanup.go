@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,6 +19,50 @@ const (
 func resinLeaseDeleteKey(adminURL, platformID, account string) string {
 	return strings.TrimRight(strings.TrimSpace(adminURL), "/") + "\x00" +
 		strings.TrimSpace(platformID) + "\x00" + strings.TrimSpace(account)
+}
+
+func resinAdminTokenKey(adminURL, token string) string {
+	normalizedURL := strings.ToLower(strings.TrimRight(strings.TrimSpace(adminURL), "/"))
+	sum := sha256.Sum256([]byte(normalizedURL + "\x00" + strings.TrimSpace(token)))
+	return hex.EncodeToString(sum[:])
+}
+
+func migrateResinAdminTokens(state *State) {
+	if state == nil {
+		return
+	}
+	if state.ResinAdminTokens == nil {
+		state.ResinAdminTokens = make(map[string]string)
+	}
+	for index := range state.ResinLeaseDeletes {
+		job := &state.ResinLeaseDeletes[index]
+		token := strings.TrimSpace(job.AdminToken)
+		if token == "" {
+			continue
+		}
+		ref := resinAdminTokenKey(job.AdminURL, token)
+		state.ResinAdminTokens[ref] = token
+		job.AdminTokenRef = ref
+		job.AdminToken = ""
+	}
+	gcResinAdminTokens(state)
+}
+
+func gcResinAdminTokens(state *State) {
+	if state == nil || len(state.ResinAdminTokens) == 0 {
+		return
+	}
+	used := make(map[string]struct{}, len(state.ResinLeaseDeletes))
+	for _, job := range state.ResinLeaseDeletes {
+		if job.AdminTokenRef != "" {
+			used[job.AdminTokenRef] = struct{}{}
+		}
+	}
+	for ref := range state.ResinAdminTokens {
+		if _, ok := used[ref]; !ok {
+			delete(state.ResinAdminTokens, ref)
+		}
+	}
 }
 
 func canDeleteResinLease(settings ResinSettings) bool {
@@ -40,10 +86,18 @@ func queueResinLeaseDelete(state *State, authID string, settings ResinSettings, 
 		}
 	}
 	now := time.Now().UTC()
+	adminTokenRef := ""
+	if token := strings.TrimSpace(settings.AdminToken); token != "" {
+		if state.ResinAdminTokens == nil {
+			state.ResinAdminTokens = make(map[string]string)
+		}
+		adminTokenRef = resinAdminTokenKey(settings.AdminURL, token)
+		state.ResinAdminTokens[adminTokenRef] = token
+	}
 	state.ResinLeaseDeletes = append(state.ResinLeaseDeletes, ResinLeaseDelete{
 		AuthID:        strings.TrimSpace(authID),
 		AdminURL:      strings.TrimSpace(settings.AdminURL),
-		AdminToken:    strings.TrimSpace(settings.AdminToken),
+		AdminTokenRef: adminTokenRef,
 		PlatformID:    strings.TrimSpace(settings.PlatformID),
 		Account:       account,
 		CreatedAt:     now,
@@ -122,9 +176,9 @@ func (p *Plugin) processDueResinLeaseDeletes(ctx context.Context, now time.Time)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	state := p.stateStore().Snapshot()
+	jobs := p.stateStore().ResinLeaseDeletesSnapshot()
 	processed := 0
-	for _, job := range state.ResinLeaseDeletes {
+	for _, job := range jobs {
 		if ctx.Err() != nil {
 			break
 		}
@@ -151,6 +205,9 @@ func (p *Plugin) processResinLeaseDelete(ctx context.Context, job ResinLeaseDele
 	adminURL := firstNonEmpty(job.AdminURL, settings.AdminURL)
 	platformID := firstNonEmpty(job.PlatformID, settings.PlatformID)
 	adminToken := strings.TrimSpace(job.AdminToken)
+	if adminToken == "" {
+		adminToken = p.stateStore().ResinAdminToken(job.AdminTokenRef)
+	}
 	if adminToken == "" || sameResinAdminURL(adminURL, settings.AdminURL) {
 		adminToken = firstNonEmpty(strings.TrimSpace(settings.AdminToken), adminToken)
 	}
@@ -179,6 +236,7 @@ func (p *Plugin) finishResinLeaseDelete(job ResinLeaseDelete) {
 	_ = p.stateStore().UpdateIfChanged(func(state *State) (bool, error) {
 		removed := removeResinLeaseDelete(state, job)
 		if removed {
+			gcResinAdminTokens(state)
 			p.recordEvent(state, job.AuthID, "", "resin_lease_delete", "succeeded", "account="+job.Account)
 		}
 		return removed, nil

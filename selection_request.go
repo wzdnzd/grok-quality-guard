@@ -61,6 +61,18 @@ func (p *Plugin) newTransparentSelection(req rpcExecutorRequest, body []byte, so
 }
 
 func (p *Plugin) newTransparentSelectionForModel(req rpcExecutorRequest, body []byte, sourceFormat, model string) (*transparentSelection, error) {
+	return p.newTransparentSelectionWithSession(p.selectionSessionKeyForModel(req, body, sourceFormat, model))
+}
+
+func (p *Plugin) newTransparentSelectionForFacts(req rpcExecutorRequest, facts transparentRequestFacts) (*transparentSelection, error) {
+	sessionKey := ""
+	if facts.SessionSeed != "" {
+		sessionKey = p.selectionSessionKeyForSeed(req, facts.SourceFormat, facts.Model, facts.SessionSeed)
+	}
+	return p.newTransparentSelectionWithSession(sessionKey)
+}
+
+func (p *Plugin) newTransparentSelectionWithSession(sessionKey string) (*transparentSelection, error) {
 	if errEnsure := p.ensureSelectionIndex(); errEnsure != nil {
 		return nil, errEnsure
 	}
@@ -88,7 +100,7 @@ func (p *Plugin) newTransparentSelectionForModel(req rpcExecutorRequest, body []
 		}
 	}
 	if selection.routing.SessionAffinity {
-		selection.sessionKey = p.selectionSessionKeyForModel(req, body, sourceFormat, model)
+		selection.sessionKey = sessionKey
 		if selection.sessionKey != "" {
 			if authID, ok := p.selectionRuntime.LookupBinding(selection.sessionKey, time.Now().UTC()); ok {
 				selection.sessionAuthID = authID

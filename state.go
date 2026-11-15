@@ -91,6 +91,7 @@ type ResinState struct {
 type ResinLeaseDelete struct {
 	AuthID        string    `json:"auth_id,omitempty"`
 	AdminURL      string    `json:"admin_url,omitempty"`
+	AdminTokenRef string    `json:"admin_token_ref,omitempty"`
 	AdminToken    string    `json:"admin_token,omitempty"`
 	PlatformID    string    `json:"platform_id,omitempty"`
 	Account       string    `json:"account"`
@@ -111,6 +112,9 @@ type AccountState struct {
 	LastProbeAt                  time.Time        `json:"last_probe_at,omitzero"`
 	CooldownUntil                time.Time        `json:"cooldown_until,omitzero"`
 	QualityStrikeMissingThinking bool             `json:"quality_strike_missing_thinking,omitempty"`
+	QualityFailureAt             time.Time        `json:"quality_failure_at,omitzero"`
+	HealthyStreak                int              `json:"healthy_streak,omitempty"`
+	HealthyStreakStartedAt       time.Time        `json:"healthy_streak_started_at,omitzero"`
 	SoftStrikes                  int              `json:"soft_strikes,omitempty"`
 	ErrorStrikes                 int              `json:"error_strikes,omitempty"`
 	ThinkingStrikes              int              `json:"thinking_strikes,omitempty"`
@@ -153,6 +157,7 @@ type State struct {
 	Accounts           map[string]*AccountState `json:"accounts"`
 	Events             []Event                  `json:"events"`
 	ResinLeaseDeletes  []ResinLeaseDelete       `json:"resin_lease_deletes,omitempty"`
+	ResinAdminTokens   map[string]string        `json:"resin_admin_tokens,omitempty"`
 }
 
 type StateStore struct {
@@ -386,6 +391,7 @@ func (s *StateStore) Load(defaultPolicy Policy, revision string) error {
 	if state.PolicyYAMLRevision == "" {
 		state.PolicyYAMLRevision = revision
 	}
+	migrateResinAdminTokens(&state)
 	for authID, account := range state.Accounts {
 		if account == nil {
 			delete(state.Accounts, authID)
@@ -406,6 +412,24 @@ func (s *StateStore) Load(defaultPolicy Policy, revision string) error {
 	}
 	s.state = state
 	return nil
+}
+
+func (s *StateStore) ResinLeaseDeletesSnapshot() []ResinLeaseDelete {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]ResinLeaseDelete(nil), s.state.ResinLeaseDeletes...)
+}
+
+func (s *StateStore) ResinAdminToken(ref string) string {
+	if s == nil || ref == "" {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.state.ResinAdminTokens[ref]
 }
 
 func (s *StateStore) Snapshot() State {
@@ -834,6 +858,12 @@ func cloneState(state State) State {
 	}
 	if state.ResinLeaseDeletes != nil {
 		clone.ResinLeaseDeletes = append([]ResinLeaseDelete{}, state.ResinLeaseDeletes...)
+	}
+	if state.ResinAdminTokens != nil {
+		clone.ResinAdminTokens = make(map[string]string, len(state.ResinAdminTokens))
+		for ref, token := range state.ResinAdminTokens {
+			clone.ResinAdminTokens[ref] = token
+		}
 	}
 	return clone
 }

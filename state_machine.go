@@ -17,6 +17,67 @@ type verdictResult struct {
 	ThresholdHit bool
 }
 
+const defaultStrikeDecayMinHealthy = 10
+
+// isQualityFailureClass lists classes that are genuine quality signals. Probe
+// and transport errors do not reset the healthy streak used for strike decay.
+func isQualityFailureClass(class string) bool {
+	switch class {
+	case ClassNone, ClassIgnored, ClassProbeError, ClassProxyError, ClassRateLimited,
+		ClassCredentialInvalid, ClassQuotaExhausted:
+		return false
+	default:
+		return true
+	}
+}
+
+func noteQualityFailure(account *AccountState, now time.Time) {
+	if account == nil {
+		return
+	}
+	account.QualityFailureAt = now
+	account.HealthyStreak = 0
+	account.HealthyStreakStartedAt = time.Time{}
+}
+
+// noteHealthyObservation advances the healthy streak and returns a decay event
+// when a missing-thinking strike has survived both the configured quiet period
+// and the minimum number of healthy samples.
+func noteHealthyObservation(account *AccountState, now time.Time, cfg QualityConfig) *Event {
+	if account == nil {
+		return nil
+	}
+	if account.HealthyStreakStartedAt.IsZero() {
+		account.HealthyStreakStartedAt = now
+	}
+	account.HealthyStreak++
+	if !account.QualityStrikeMissingThinking || cfg.StrikeDecayAfterHours <= 0 {
+		return nil
+	}
+	minHealthy := cfg.StrikeDecayMinHealthy
+	if minHealthy <= 0 {
+		minHealthy = defaultStrikeDecayMinHealthy
+	}
+	if account.HealthyStreak < minHealthy {
+		return nil
+	}
+	elapsed := now.Sub(account.HealthyStreakStartedAt)
+	if elapsed < time.Duration(cfg.StrikeDecayAfterHours)*time.Hour {
+		return nil
+	}
+	streak := account.HealthyStreak
+	account.QualityStrikeMissingThinking = false
+	account.HealthyStreak = 0
+	account.HealthyStreakStartedAt = time.Time{}
+	return &Event{
+		Time:   now,
+		AuthID: account.AuthID,
+		Action: "strike_decay",
+		Result: "expired",
+		Detail: fmt.Sprintf("healthy_streak=%d elapsed=%s", streak, elapsed.Round(time.Hour)),
+	}
+}
+
 // ApplyVerdict records one passive, transparent, or externally supplied
 // observation. It serializes auth mutation with probes and Resin operations.
 func (p *Plugin) ApplyVerdict(ctx context.Context, authID string, verdict QualityVerdict, source, callbackID string) error {
@@ -71,6 +132,9 @@ func (p *Plugin) applyVerdictLocked(
 		account.LastAttempt = &AttemptEvidence{
 			At: now, Source: source, Class: verdict.Class, Reason: verdict.Reason,
 		}
+		if isQualityFailureClass(verdict.Class) {
+			noteQualityFailure(account, now)
+		}
 		if verdict.Class != ClassIgnored && !isProbeErrorClass(verdict.Class) && !isAccountStatusClass(verdict.Class) {
 			account.Metrics = Metrics{
 				FirstTokenMS:    sig.FirstTokenMS,
@@ -113,6 +177,9 @@ func (p *Plugin) applyVerdictLocked(
 			account.ThinkingStrikes = 0
 			if !preserveIsolation() {
 				account.State = StateHealthy
+				if decay := noteHealthyObservation(account, now, policy.Quality); decay != nil {
+					return decay, nil
+				}
 			}
 			return nil, nil
 
@@ -147,9 +214,6 @@ func (p *Plugin) applyVerdictLocked(
 			}
 
 		case ClassRateLimited:
-			account.SoftStrikes = 0
-			account.ErrorStrikes = 0
-			account.ThinkingStrikes = 0
 			account.ProbeBackoffUntil = now.Add(backoff)
 			eventResult = "rate_limited"
 			eventDetail = source + " · upstream rate limit, not a quality failure"
@@ -532,6 +596,9 @@ func (p *Plugin) saveGuardDisableLocked(
 		account.DisableKind = kind
 		account.DisableReason = class
 		account.PreviousDisabled = previousDisabled
+		if strike {
+			noteQualityFailure(account, time.Now().UTC())
+		}
 		account.QualityStrikeMissingThinking = account.QualityStrikeMissingThinking || strike
 		if class != "" {
 			account.LastReason = class
@@ -601,7 +668,7 @@ func (p *Plugin) ManualRestore(ctx context.Context, authID string) error {
 	if authDisabled(raw) && !guardOwned {
 		if errUpdate := p.stateStore().UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 			resetGuardDisableState(account)
-			account.QualityStrikeMissingThinking = false
+			resetStrikeDecayState(account)
 			return newEvent(authID, "", "restore", "external_left_disabled", "manual"), nil
 		}); errUpdate != nil {
 			return errUpdate
@@ -624,9 +691,19 @@ func (p *Plugin) ManualRestore(ctx context.Context, authID string) error {
 	}
 	return store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 		resetGuardDisableState(account)
-		account.QualityStrikeMissingThinking = false
+		resetStrikeDecayState(account)
 		return newEvent(authID, "", "restore", "restored", "manual"), nil
 	})
+}
+
+func resetStrikeDecayState(account *AccountState) {
+	if account == nil {
+		return
+	}
+	account.QualityStrikeMissingThinking = false
+	account.QualityFailureAt = time.Time{}
+	account.HealthyStreak = 0
+	account.HealthyStreakStartedAt = time.Time{}
 }
 
 func resetGuardDisableState(account *AccountState) {

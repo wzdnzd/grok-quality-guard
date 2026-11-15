@@ -404,7 +404,11 @@ func (p *Plugin) ProbeAccount(ctx context.Context, authID string, force bool, ca
 
 func (p *Plugin) markProbeSuccess(authID string, sig Signals) error {
 	now := time.Now().UTC()
+	p.mu.RLock()
+	qualityCfg := p.policy.Quality
+	p.mu.RUnlock()
 	verdict := QualityVerdict{Class: ClassNone, Reason: "probe passed", Signals: sig}
+	var decayEvent *Event
 	errUpdate := p.stateStore().UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 		account.State = StateHealthy
 		account.LastProbeAt = now
@@ -421,6 +425,7 @@ func (p *Plugin) markProbeSuccess(authID string, sig Signals) error {
 		account.SoftStrikes = 0
 		account.ErrorStrikes = 0
 		account.ThinkingStrikes = 0
+		decayEvent = noteHealthyObservation(account, now, qualityCfg)
 		account.Metrics = Metrics{
 			FirstTokenMS:    sig.FirstTokenMS,
 			DurationMS:      sig.DurationMS,
@@ -441,6 +446,9 @@ func (p *Plugin) markProbeSuccess(authID string, sig Signals) error {
 	})
 	if errUpdate == nil {
 		p.refreshSelectionAccount(authID)
+		if decayEvent != nil {
+			_ = p.stateStore().AppendEvent(*decayEvent)
+		}
 	}
 	return errUpdate
 }

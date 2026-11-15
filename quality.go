@@ -45,6 +45,7 @@ const (
 	defaultQualityFastFlushMS      = int64(1000)
 	defaultQualityFakeFlushMS      = int64(2000)
 	defaultQualityCipherVisible    = int64(1024)
+	defaultQualityMaxVisibleTPS    = int64(1000)
 	defaultEncryptedBytes          = int64(256)
 	defaultEncryptedBytesPerToken  = int64(4)
 	thinkingGuardMinOutputTokens   = int64(64)
@@ -655,6 +656,7 @@ func (a *StreamAnalyzer) observeResponsesItemMap(item map[string]any, now time.T
 		if strings.TrimSpace(asString(item["id"])) != "" {
 			a.reasoningStart = true
 			a.signals.ReasoningStarted = true
+			a.markFirstToken(now)
 		}
 		if enc := asString(item["encrypted_content"]); strings.TrimSpace(enc) != "" {
 			a.addEncrypted(enc)
@@ -758,6 +760,7 @@ func (a *StreamAnalyzer) observeAnthropic(payload map[string]any, now time.Time)
 		case "thinking":
 			a.reasoningStart = true
 			a.signals.ReasoningStarted = true
+			a.markFirstToken(now)
 			if text := asString(block["thinking"]); strings.TrimSpace(text) != "" {
 				a.addReasoningText(text)
 			}
@@ -886,6 +889,7 @@ func (a *StreamAnalyzer) addEncrypted(value string) {
 	if value == "" {
 		return
 	}
+	a.markFirstToken(time.Now())
 	if size := int64(len([]byte(value))); size > a.encryptedBytes {
 		a.encryptedBytes = size
 	}
@@ -1063,15 +1067,28 @@ func qualityHasDumpBill(sig Signals) bool {
 	return qualityMeetsEncryptedFloor(sig) || sig.ReasoningTokens >= defaultQualityMinReasoning
 }
 
+// qualityWindowFinal reports whether the visible arrival window is complete.
+// Time-based dump checks must wait for this evidence, otherwise a healthy
+// stream is indistinguishable from a dump while its first deltas arrive.
+func qualityWindowFinal(sig Signals) bool {
+	return sig.Terminal || sig.HoldExpired
+}
+
 // qualityVisibleStreaming reports evidence that the visible text arrived as a
 // real stream instead of a single buffered dump. Dump checks must not fire once
 // this evidence exists.
 func qualityVisibleStreaming(sig Signals) bool {
-	return sig.FirstVisible && sig.VisibleChunks >= 2 && sig.VisibleSpanMS >= 200
+	if !sig.FirstVisible || sig.VisibleSpanMS < 100 {
+		return false
+	}
+	if sig.VisibleTokens > 0 && sig.VisibleTokens*1000 > defaultQualityMaxVisibleTPS*sig.VisibleSpanMS {
+		return false
+	}
+	return sig.VisibleChunks >= 4 || sig.VisibleSpanMS >= 200
 }
 
 func qualityFastFlush(sig Signals, limitMS int64) bool {
-	if !sig.FirstVisible || sig.VisibleChunks < 2 || qualityVisibleStreaming(sig) {
+	if !sig.FirstVisible || !qualityWindowFinal(sig) || qualityVisibleStreaming(sig) {
 		return false
 	}
 	return sig.VisibleSpanMS >= 0 && sig.VisibleSpanMS < limitMS
@@ -1079,13 +1096,13 @@ func qualityFastFlush(sig Signals, limitMS int64) bool {
 
 func qualityIsBurstDump(sig Signals, minOutput int64) bool {
 	_ = minOutput
-	if sig.HasReasoningDelta || qualityVisibleStreaming(sig) {
+	if sig.HasReasoningDelta {
 		return false
 	}
 	shortVisible := sig.VisibleTokens > 0 && sig.VisibleTokens < defaultQualityMaxVisible
 	heavyReasoning := sig.ReasoningTokens >= defaultQualityMinReasoning
-	if sig.HoldExpired && shortVisible && heavyReasoning {
-		return true
+	if sig.HoldExpired {
+		return shortVisible && heavyReasoning
 	}
 	return shortVisible && qualityFastFlush(sig, defaultQualityFastFlushMS) && qualityHasDumpBill(sig)
 }
@@ -1093,9 +1110,6 @@ func qualityIsBurstDump(sig Signals, minOutput int64) bool {
 func qualityIsCipherDrool(sig Signals, minOutput int64) bool {
 	if minOutput <= 0 {
 		minOutput = defaultQualityMinOutput
-	}
-	if qualityVisibleStreaming(sig) {
-		return false
 	}
 	if sig.HasReasoningDelta || sig.ReasoningTokens > 0 || sig.EncryptedBytes <= 0 {
 		return false
@@ -1108,7 +1122,7 @@ func qualityIsCipherDrool(sig Signals, minOutput int64) bool {
 
 func qualityIsFakeEncryptedDump(sig Signals, minOutput int64) bool {
 	_ = minOutput
-	if sig.HasReasoningDelta || qualityVisibleStreaming(sig) {
+	if sig.HasReasoningDelta {
 		return false
 	}
 	if !qualityFastFlush(sig, defaultQualityFakeFlushMS) {
@@ -1118,7 +1132,7 @@ func qualityIsFakeEncryptedDump(sig Signals, minOutput int64) bool {
 }
 
 func qualityIsFastReasoningRatioDump(sig Signals) bool {
-	if !sig.HasReasoningDelta || qualityVisibleStreaming(sig) {
+	if !sig.HasReasoningDelta {
 		return false
 	}
 	if !qualityFastFlush(sig, defaultQualityFakeFlushMS) {
@@ -1164,7 +1178,7 @@ func ClassifyQualityHold(sig Signals, minOutput int64) QualityVerdict {
 		if sig.Terminal {
 			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "encrypted reasoning met the floor", Signals: sig}
 		}
-		if sig.VisibleTokens >= minOutput && sig.FirstVisible && sig.VisibleSpanMS >= 500 {
+		if sig.VisibleTokens >= minOutput && qualityVisibleStreaming(sig) && sig.VisibleSpanMS >= 500 {
 			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "encrypted reasoning with sustained visible output", Signals: sig}
 		}
 		return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "waiting for encrypted reasoning evidence", Signals: sig}
@@ -1217,7 +1231,17 @@ func isEmptyStream(sig Signals) bool {
 	return sig.Terminal && !sig.HasThinking && sig.ReasoningTokens <= 0 && sig.OutputTokens <= 0 && sig.VisibleTokens <= 0 && !sig.SemanticOutput
 }
 
+func qualitySpeedSkipped(sig Signals) bool {
+	// A heavy reasoning bill cannot fit in a sub-second stream. When the
+	// reasoning duration was not observable, skip TPS instead of turning the
+	// missing time into a hard_tps verdict.
+	return sig.ReasoningTokens >= defaultQualityMinReasoning && sig.DurationMS > 0 && sig.DurationMS < defaultQualityMinGenerationMS
+}
+
 func classifyOutputSpeed(sig Signals, cfg QualityConfig, failClosed bool) (string, float64, int64) {
+	if qualitySpeedSkipped(sig) {
+		return ClassNone, 0, 0
+	}
 	genMS := generationWindowMS(sig.DurationMS, sig.FirstTokenMS, sig.ReasoningTokens)
 	if genMS <= 0 || sig.OutputTokens <= 0 {
 		return ClassNone, 0, genMS
@@ -1347,7 +1371,7 @@ func classifyProbeResult(sig Signals, cfg QualityConfig, expectedMatched, reason
 	class, speed, gen := classifyOutputSpeed(sig, cfg, cfg.FailClosed)
 	sig.GenerationMS = gen
 	sig.TPS = speed
-	if class == ClassNone && cfg.FailClosed && gen < cfg.MinGenerationMS {
+	if class == ClassNone && cfg.FailClosed && gen < cfg.MinGenerationMS && !qualitySpeedSkipped(sig) {
 		return QualityVerdict{Action: QualityActionWithhold, Class: ClassInsufficientGeneration, Reason: "insufficient generation window", Signals: sig}
 	}
 	if class != ClassNone {
@@ -1436,42 +1460,16 @@ func reasoningRequired(body []byte) bool {
 	if len(body) == 0 {
 		return true
 	}
-	var payload map[string]any
-	if errUnmarshal := json.Unmarshal(body, &payload); errUnmarshal != nil {
-		return true
-	}
-	if effort := strings.ToLower(strings.TrimSpace(asString(payload["reasoning_effort"]))); effort == "none" || effort == "off" {
-		return false
-	}
-	for _, key := range []string{"reasoning", "output_config", "thinking"} {
-		if raw, ok := payload[key]; ok && disabledReasoningValue(raw) {
-			return false
-		}
-	}
-	return true
+	return reasoningRequiredPayload(decodeRequestPayload(body))
 }
 
 func reasoningRequiredForModel(model string, body []byte) bool {
-	if !reasoningRequired(body) {
-		return false
-	}
-	known, supports := modelReasoningSupport(model)
-	if !known {
-		if bodyModel := modelFromRequestBody(body); bodyModel != "" && bodyModel != model {
-			known, supports = modelReasoningSupport(bodyModel)
-		}
-	}
-	// Match grok2api: unknown models advertise no reasoning capability and
-	// therefore stay outside the request-path thinking gate.
-	return known && supports
+	return reasoningRequiredForModelPayload(model, decodeRequestPayload(body))
 }
 
 func modelFromRequestBody(body []byte) string {
-	if len(body) == 0 {
-		return ""
-	}
-	var payload map[string]any
-	if errUnmarshal := json.Unmarshal(body, &payload); errUnmarshal != nil {
+	payload := decodeRequestPayload(body)
+	if payload == nil {
 		return ""
 	}
 	return strings.TrimSpace(asString(payload["model"]))

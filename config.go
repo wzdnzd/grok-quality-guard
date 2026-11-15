@@ -81,6 +81,8 @@ type QualityConfig struct {
 	ConsecutiveSoft                 int      `yaml:"consecutive_soft" json:"consecutive_soft"`
 	ConsecutiveErrors               int      `yaml:"consecutive_errors" json:"consecutive_errors"`
 	ConsecutiveMissingThinking      int      `yaml:"consecutive_missing_thinking" json:"consecutive_missing_thinking"`
+	StrikeDecayAfterHours           int      `yaml:"strike_decay_after" json:"strike_decay_after"`
+	StrikeDecayMinHealthy           int      `yaml:"strike_decay_min_healthy" json:"strike_decay_min_healthy"`
 	ThinkingGuard                   bool     `yaml:"thinking_guard" json:"thinking_guard"`
 	SoftCrossVerify                 bool     `yaml:"soft_cross_verify" json:"soft_cross_verify"`
 	ThinkingCrossVerify             bool     `yaml:"thinking_cross_verify" json:"thinking_cross_verify"`
@@ -178,6 +180,8 @@ func DefaultQualityConfig() QualityConfig {
 		ConsecutiveSoft:                 2,
 		ConsecutiveErrors:               2,
 		ConsecutiveMissingThinking:      1,
+		StrikeDecayAfterHours:           48,
+		StrikeDecayMinHealthy:           10,
 		ThinkingGuard:                   true,
 		SoftCrossVerify:                 false,
 		ThinkingCrossVerify:             false,
@@ -359,6 +363,15 @@ func normalizeQuality(q *QualityConfig) error {
 	}
 	if q.ConsecutiveMissingThinking <= 0 {
 		q.ConsecutiveMissingThinking = defaults.ConsecutiveMissingThinking
+	}
+	if q.StrikeDecayAfterHours < 0 {
+		return fmt.Errorf("quality.strike_decay_after must be >= 0")
+	}
+	if q.StrikeDecayMinHealthy < 0 {
+		return fmt.Errorf("quality.strike_decay_min_healthy must be >= 0")
+	}
+	if q.StrikeDecayMinHealthy == 0 {
+		q.StrikeDecayMinHealthy = defaults.StrikeDecayMinHealthy
 	}
 	if q.MinGenerationMS <= 0 {
 		q.MinGenerationMS = defaults.MinGenerationMS

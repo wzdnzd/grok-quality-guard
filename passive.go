@@ -27,10 +27,9 @@ func (p *Plugin) InterceptResponse(request []byte) []byte {
 		return raw
 	}
 	p.mu.RLock()
-	prefixes := append([]string(nil), p.policy.ModelPrefixes...)
 	passiveGuard := p.policy.PassiveGuard
 	p.mu.RUnlock()
-	if !passiveGuard || isProbeHeader(req.RequestHeaders) || !isGrokModel(firstNonEmpty(req.RequestedModel, req.Model), prefixes) {
+	if !passiveGuard || isProbeHeader(req.RequestHeaders) || !p.isGrokRouteModel(firstNonEmpty(req.RequestedModel, req.Model)) {
 		return raw
 	}
 	if req.RequestID == "" {
@@ -66,10 +65,9 @@ func (p *Plugin) InterceptStreamChunk(request []byte) []byte {
 		return raw
 	}
 	p.mu.RLock()
-	prefixes := append([]string(nil), p.policy.ModelPrefixes...)
 	passiveGuard := p.policy.PassiveGuard
 	p.mu.RUnlock()
-	if !passiveGuard || isProbeHeader(req.RequestHeaders) || !isGrokModel(firstNonEmpty(req.RequestedModel, req.Model), prefixes) {
+	if !passiveGuard || isProbeHeader(req.RequestHeaders) || !p.isGrokRouteModel(firstNonEmpty(req.RequestedModel, req.Model)) {
 		return raw
 	}
 	if req.RequestID == "" {
@@ -130,7 +128,7 @@ func (p *Plugin) HandleUsage(request []byte) {
 	if !policy.PassiveGuard {
 		return
 	}
-	if !isGrokModel(record.Model, policy.ModelPrefixes) && !isGrokProvider(record.Provider) {
+	if !p.isGrokRouteModel(record.Model) && !isGrokProvider(record.Provider) {
 		return
 	}
 

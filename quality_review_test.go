@@ -111,9 +111,11 @@ func TestReviewEncryptedStreamNotBurst(t *testing.T) {
 	}
 	for _, test := range cases {
 		sig := Signals{
+			Terminal:        true,
 			HasThinking:     true,
 			VisibleTokens:   20,
-			ReasoningTokens: 0,
+			OutputTokens:    420,
+			ReasoningTokens: 400,
 			EncryptedBytes:  2048,
 			EncryptedFloor:  256,
 			FirstVisible:    true,
@@ -423,5 +425,49 @@ func TestReviewNonReasoningProbeSkipsDumpClasses(t *testing.T) {
 	verdict := classifyProbeResult(sig, config, true, false)
 	if verdict.Class != ClassNone || verdict.Action != QualityActionDeliver {
 		t.Fatalf("non-reasoning probe verdict = %#v, want deliver", verdict)
+	}
+}
+
+func TestReviewEncryptedStreamFastDeltasNotDump(t *testing.T) {
+	config := DefaultQualityConfig()
+	analyzer := NewStreamAnalyzerWithProtocolAt("openai-response", time.Now())
+	analyzer.SetRetainText(false)
+	analyzer.SetEncryptedConfig(config.MinEncryptedBytes, config.EncryptedBytesPerReasoningToken)
+	analyzer.ObserveChunk([]byte("data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_fast\",\"type\":\"reasoning\",\"encrypted_content\":\"" + strings.Repeat("A", 2048) + "\"}}\n\n"))
+	for index := 0; index < 12; index++ {
+		time.Sleep(20 * time.Millisecond)
+		analyzer.ObserveChunk([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"word \"}\n\n"))
+		preview := analyzer.Preview()
+		preview.ReasoningRequired = true
+		if verdict := ClassifyQualityHold(preview, config.MinHoldOutputTokens); verdict.Action == QualityActionWithhold {
+			t.Fatalf("healthy fast stream withheld at delta %d: %#v", index+1, verdict)
+		}
+	}
+	analyzer.ObserveChunk([]byte("data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"output_tokens\":420,\"output_tokens_details\":{\"reasoning_tokens\":400}}}}\n\n"))
+	sig := analyzer.Finalize(true)
+	if sig.VisibleChunks != 12 || sig.VisibleSpanMS < 100 {
+		t.Fatalf("unexpected visible stream signals: %#v", sig)
+	}
+	if verdict := classifyFinal(sig, config, true, config.MinHoldOutputTokens, true); verdict.Action != QualityActionDeliver {
+		t.Fatalf("healthy fast stream final verdict = %#v, want deliver", verdict)
+	}
+}
+
+func TestReviewProbeSingleChunkDumpRejects(t *testing.T) {
+	config := DefaultQualityConfig()
+	sig := Signals{
+		Terminal:        true,
+		HasThinking:     true,
+		VisibleTokens:   20,
+		OutputTokens:    420,
+		ReasoningTokens: 400,
+		EncryptedBytes:  2048,
+		EncryptedFloor:  256,
+		FirstVisible:    true,
+		VisibleChunks:   1,
+		VisibleSpanMS:   0,
+	}
+	if verdict := classifyProbeResult(sig, config, true, true); !isDumpClass(verdict.Class) {
+		t.Fatalf("probe accepted a single-chunk dump: %#v", verdict)
 	}
 }

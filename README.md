@@ -183,6 +183,8 @@ plugins:
         consecutive_soft: 2
         consecutive_errors: 2
         consecutive_missing_thinking: 1
+        strike_decay_after: 48
+        strike_decay_min_healthy: 10
         thinking_guard: true
         soft_cross_verify: false
         thinking_cross_verify: false
@@ -239,9 +241,11 @@ plugins:
 - `consecutive_errors`：连续传输/代理错误达到次数后才进入处置；上游 5xx、普通限流和无法确认的 403/429 只记录为 `ignored`，不计入 strike；默认 `2`
 - 外部禁用只标记状态，插件无法得知外部原因，因此不写入 `disable_reason`；插件自身禁用会持久化简短的 `disable_reason`，dashboard 统一显示中文
 - 上游 `401` 标记为 `credential_invalid`，写入 `disabled=true` 并等待管理员更新凭据后手动恢复
-- 上游 `402`、包含 free usage/quota/credits 等明确额度耗尽文案的 `403/429` 标记为 `quota_exhausted`，写入 24 小时冷却；到期后自动恢复探测
+- 上游 `402`、包含明确 free usage/spending-limit/credits 耗尽短语的 `403/429` 标记为 `quota_exhausted`，写入 24 小时冷却；到期后自动恢复探测
 - CPA 返回的 `model_cooldown` 是宿主级调度状态，不能证明当前 auth 单独额度耗尽；插件只记录为 `ignored`，不会因此写入 `disabled=true`
 - `consecutive_missing_thinking`：连续缺少真实思考达到次数后才进入处置；默认 `1`
+- `strike_decay_after`：missing-thinking strike 自动降级窗口，单位小时，默认 `48`；设置为 `0` 关闭自动降级
+- `strike_decay_min_healthy`：窗口内至少积累的连续健康观测/探测次数，默认 `10`；健康样本包括 passive/transparent 的 `ClassNone` 和成功探测，真实质量失败会重置窗口与计数
 - `thinking_guard=false`：跳过缺少思考判定，只保留 TPS、空流等其他质量检查
 - `fail_closed=true`：生成窗口小于 `min_generation_ms` 且速度达到 `soft_tps` 时判定为 `buffered_burst`；窗口不足但速度不高时判定为 `insufficient_generation_window`
 - `ignored`、`probe_error`、`proxy_error` 不覆盖上一次真实质量指标；详情页会分别展示最近尝试和最近质量证据

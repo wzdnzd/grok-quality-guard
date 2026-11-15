@@ -123,6 +123,8 @@ TPS = outputTokens * 1000 / generationWindow
 | `max_attempts` | 6 | 透明模式总上游尝试次数 |
 | `on_exhausted` | `fail_closed` | 所有候选异常后的行为 |
 | `missing_thinking_cooldown` | 12h | missing-thinking 首次冷却 |
+| `strike_decay_after` | 48h | missing-thinking strike 自动降级窗口，单位小时；0 关闭 |
+| `strike_decay_min_healthy` | 10 | 窗口内至少积累的连续健康观测/探测次数 |
 | `empty_stream_cooldown` | 15m | 空流/空闲流冷却 |
 | `min_encrypted_bytes` | 256 | encrypted thinking 字节下限 |
 | `encrypted_bytes_per_reasoning_token` | 4 | 每 reasoning token 的密文下限 |
@@ -133,12 +135,13 @@ TPS = outputTokens * 1000 / generationWindow
 | 分类 | 含义 | 典型证据 |
 | --- | --- | --- |
 | `missing_thinking` | 应有 reasoning，但没有真实思考证据 | 无 reasoning delta，密文不足下限 |
-| `buffered_burst` | 极短生成窗口内倾倒输出 | `generationWindow < min_generation_ms` 且 TPS 高 |
+| `buffered_burst` | 可见窗口结束后极短跨度内倾倒输出 | `VisibleSpanMS < 1000ms`、可见流式证据不足且账单异常 |
 | `cipher_drool` | cipher 已达到下限但无明文 reasoning、无 reasoning tokens，却持续倾倒 visible text | encrypted 存在、reasoning tokens 为 0、visible 很大 |
-| `fake_encrypted_dump` | 先出现 fake encrypted 账单，再在极短时间内倾倒完整答案 | 无 reasoning delta、2s 内 flush、reasoning tokens 或密文达到 dump 条件 |
-| `fast_reasoning_ratio_dump` | 明文 reasoning 存在，但 reasoning 占 output 比例过高且极快 flush | reasoning tokens >= 80% output，2s 内 flush |
+| `fake_encrypted_dump` | 先出现 fake encrypted 账单，再在极短可见窗口内倾倒完整答案 | 无 reasoning delta、窗口结束、可见跨度小于 2000ms、账单异常 |
+| `fast_reasoning_ratio_dump` | 明文 reasoning 存在，但 reasoning 占比过高且可见窗口极短 | reasoning tokens >= 80% output、窗口结束、可见跨度小于 2000ms |
 | `soft_tps` | TPS 达到 soft 阈值但未达到 hard | TPS >= 500 且低于 hard |
 | `hard_tps` | TPS 达到 hard 阈值 | TPS >= 1000 |
+| `rate_limited` | 上游限速但不是明确额度耗尽 | 429 或明确 rate limit 文案，无强 quota 特征；只设置探测退避，不写 auth |
 | `empty_stream` | 上游完成但没有有效内容 | 无 thinking、无 usage、无 visible/semantic output |
 | `probe_error` | 主动探测请求失败或流不完整 | 网络、超时、非 2xx、无终止事件 |
 | `proxy_error` | 代理层失败 | 代理连接、认证或 Resin 错误 |
@@ -155,6 +158,9 @@ TPS = outputTokens * 1000 / generationWindow
 8. `empty_stream`
 
 dump 检测必须先于“已有 thinking 就放行”，否则 fake reasoning 可以绕过。
+
+时间型 dump（`buffered_burst`、`fake_encrypted_dump`、`fast_reasoning_ratio_dump`）只能在可见窗口结束后判断；流式进行中只能依据可见 token 体量触发 `cipher_drool`。
+
 
 ### 2.5 CPA v8 插件能力与边界
 
@@ -331,7 +337,7 @@ probe scheduler
 质量判定对象是 xAI / Grok OAuth 请求的响应。
 
 - `transparent_guard=true` 时，所有可识别的 Grok 路由请求都进入透明门，不按 reasoning 能力或重放资格旁路。
-- 非推理模型、显式关闭 reasoning 和未知推理能力的请求只跳过 `missing_thinking`；空流、速度、dump 和缓冲上限仍须执行。
+- 非推理模型、显式关闭 reasoning 和未知推理能力的请求跳过 `missing_thinking` 与 dump 类；空流、速度和缓冲上限仍须执行。
 - 可安全重放只决定质量失败后能否换号或换代理，不决定是否接管请求。
 - passive 观测只对具有可解析文本流的样本形成质量结论，不改变 CPA 原生路由。
 - 主动探测请求本身不重复进入普通账号被动样本。
@@ -423,32 +429,41 @@ usage.output_tokens - usage.reasoning_tokens
 
 ### 4.5 dump 检测
 
+先定义可见窗口信号：
+
+- `VisibleSpanMS = lastVisibleAt - firstVisibleAt`
+- `VisibleChunks` 为可见文本 delta 的到达次数
+- `VisibleTPS = VisibleTokens * 1000 / VisibleSpanMS`
+- `windowFinal = Terminal || HoldExpired`
+- `qualityVisibleStreaming = FirstVisible && VisibleSpanMS >= 100ms && VisibleTPS <= 1000 && (VisibleChunks >= 4 || VisibleSpanMS >= 200ms)`
+
 #### buffered_burst
 
-满足任一条件：
-
-- hold 超时后出现短 visible 文本，但 reasoning bill 或 encrypted bill 很大
-- visible flush 小于 1000ms，且存在明显 dump 账单
-- terminal 时 visible tokens >= min_hold_output_tokens 且无 reasoning delta，但 reasoning/encrypted 账单异常
+- hold 超时后出现短 visible 文本，但 reasoning bill 很大；密文达到下限本身不满足该分支
+- `windowFinal` 且没有持续流式证据，`VisibleSpanMS < 1000ms`，并存在明显 dump 账单
 
 #### cipher_drool
 
 - 无明文 reasoning delta
 - reasoning tokens 为 0
 - encrypted bytes 大于 0
-- visible tokens >= 1024，或 terminal 且 visible tokens >= min_hold_output_tokens
+- visible tokens >= 1024 可在流式进行中触发；terminal 时 visible tokens >= 最小输出阈值
 
 #### fake_encrypted_dump
 
 - 无明文 reasoning delta
-- visible flush 小于 2000ms
+- `windowFinal` 且没有持续流式证据
+- `VisibleSpanMS < 2000ms`
 - reasoning tokens >= 80 或 encrypted bytes 达到下限
 
 #### fast_reasoning_ratio_dump
 
 - 有明文 reasoning delta
-- visible flush 小于 2000ms
+- `windowFinal` 且没有持续流式证据
+- `VisibleSpanMS < 2000ms`
 - reasoning tokens * 5 >= output tokens * 4
+
+`qualityVisibleStreaming` 成立时，时间型 dump 直接跳过；单块、可见跨度不足 100ms 或可见速率异常高的样本仍按上述规则拦截。
 
 ### 4.6 速度分类
 
@@ -473,6 +488,9 @@ else:
 - HTTP 成功
 - 非 compaction
 - 非 forced egress probe
+- 非流式响应不计算生成窗口和 TPS；只执行空响应、缺少真实思考和语义输出检查
+- 流式响应若 reasoning tokens >= 80 且总时长小于 1000ms，说明 reasoning 持续时间不可观测，跳过 TPS 分类而不是判 `hard_tps`
+- 非流式响应和上述重推理短窗口样本不得返回 `insufficient_generation_window`
 
 ### 4.7 空流
 
@@ -501,6 +519,9 @@ type QualityVerdict struct {
     EncryptedBytes   int64
     EncryptedFloor   int64
     FirstTokenMS     int64
+    FirstTokenKnown  bool
+    VisibleSpanMS    int64
+    VisibleChunks    int
     DurationMS       int64
     GenerationMS     int64
     TPS              float64
@@ -522,15 +543,15 @@ type QualityVerdict struct {
 4. `hold_expired` 后的短 visible 文本只有在 `reasoning_tokens >= 80` 时按 burst 处理；密文达到下限本身不满足该分支。
 5. `: grok2api-reasoning-evidence <bytes>` 只提供密文字节长度，仍需经过 `max(min_encrypted_bytes, reasoning_tokens * encrypted_bytes_per_reasoning_token)` 下限校验。
 6. 聚合 message 文本会计入 visible token，但不会伪造流式首个可见块的 flush 时间。
-7. Chat、Responses、Anthropic Messages 的流式与非流式响应共享内容、thinking、密文下限、TPS 和空流规则。
+7. Chat、Responses、Anthropic Messages 的流式与非流式响应共享内容、thinking、密文下限和空流规则；TPS 仅适用于具有可观测生成窗口的流式样本。
 
 判定路径存在明确差异：
 
 | 路径 | 判定范围 | 不会推断的内容 |
 | --- | --- | --- |
 | 被动审计 | 仅 streaming、已有 TTFT、输出 >= 32、生成窗口有效的样本；已知要求推理时检查 missing-thinking | 不推断未知模型能力、显式关闭推理或非流式被动样本 |
-| 主动探测 | marker、输出下限、thinking 要求、生成窗口、TPS | 不把传输错误或上游非 2xx 当成质量降智 |
-| 非流式质量门 | 空响应、缺少真实思考、密文下限、可用的 TPS | 不做流式 burst/dump 推断 |
+| 主动探测 | marker、输出下限、thinking 要求、生成窗口、TPS，并复用 `ClassifyQualityHold` 的 dump 判定 | 不把传输错误或上游非 2xx 当成质量降智；成功探测保留 strike |
+| 非流式质量门 | 空响应、缺少真实思考、密文下限、语义输出 | 不计算 TPS，不做流式 burst/dump 推断 |
 
 `ignored` 表示本次样本不是质量信号。它只更新最近尝试，不增加质量 strike，也不覆盖上一次真实质量指标。`probe_error` / `proxy_error` 会更新最近尝试和探测退避，但同样保留上一次质量证据。
 
@@ -540,11 +561,23 @@ type QualityVerdict struct {
 
 - 判定来源、结果、说明、协议、流式/非流式、终止和 hold 超时状态
 - visible/output/reasoning token、密文字节与密文下限
-- TTFT、总时长、生成窗口、visible flush 和 TPS
+- TTFT、总时长、生成窗口、visible flush、visible span、visible chunks 和 TPS
 - has thinking、明文 reasoning delta、reasoning started、semantic output、usage reported
 - chunk、byte、event、unknown event 和 parse failure 计数
 
 “最近尝试”与“最近质量判定”分开保存。这样即使最近一次是 `ignored` 或探测错误，也能看到上一次真实质量结论及其指标，而不是把所有指标误显示为 0。
+
+### 4.11 复核后补充契约
+
+- 主动探测与透明 hold 门共用 dump 判定，探测成功只解除冷却，不清除 `strike_missing_thinking`。
+- `rate_limited` 是账号调度信号，不是质量失败：状态置 `suspect`，只写探测退避，不写 auth，不清零连续计数。
+- `model_prefixes` 采用严格前缀匹配，不使用 `grok` 子串兜底；不以配置前缀开头的别名只能通过 `host.auth.models` 缓存识别。
+- 被动拦截入口也使用 auth 模型缓存识别别名，不因严格前缀匹配丢失已发现模型。
+- 非流式响应没有可观测生成窗口，速度维度整体跳过；非推理和显式关闭推理请求跳过 missing-thinking 与 dump 类，但仍执行空流、速度和缓冲上限检查。
+
+
+
+
 
 ## 5. 状态机与惩罚策略
 
@@ -639,6 +672,20 @@ disabled_by_guard
 
 上游账号状态错误独立于质量 strike：`credential_invalid` 直接禁用并等待凭据更新；`quota_exhausted` 使用固定 24 小时冷却，因为 Grok 免费额度按滚动 24 小时窗口恢复。这两类处置不受 `auto_action: observe` 限制，避免失效凭据或耗尽额度继续参与路由。
 
+`rate_limited` 语义：
+
+- 普通 429 或明确 rate limit 文案，仅在缺少强 quota 特征时归类为 `rate_limited`
+- 状态置 `suspect`，只写 `probe_backoff_until`，不写 auth、不自动轮换
+- 不清零 soft/error/thinking 连续计数，因为限速不是成功样本
+
+上游错误匹配优先使用结构化状态码和强特征：
+
+- `401` -> `credential_invalid`
+- `402` -> `quota_exhausted`
+- `403` 仅当响应体为 JSON 且包含明确凭据拒绝短语时判 `credential_invalid`，HTML/文本 403 判 `ignored`
+- `429` 仅命中 `free-usage-exhausted`、`run out of credits`、`spending-limit`、`included free usage` 等强额度短语时判 `quota_exhausted`，否则判 `rate_limited`
+- 删除裸 `quota`、`authentication`、`unauthorized` 以及 `tokens (actual/limit)` 等过宽匹配
+
 CPA 的 `model_cooldown` 是模型级调度状态，其文案可能携带最后一次上游额度错误，但不能证明当前 auth 自身额度耗尽。插件必须将其视为 `ignored` 宿主调度错误，不得据此写入 auth 的 `disabled` 字段。
 
 `missing_thinking` strike 语义：
@@ -647,6 +694,14 @@ CPA 的 `model_cooldown` 是模型级调度状态，其文案可能携带最后�
 - 主动探测成功清 cooldown，但保留 strike
 - 下一次确认 missing-thinking 时直接进入永久禁用
 - 管理员手动 restore 时清除 strike
+
+strike 自动降级：
+
+- `quality.strike_decay_after` 单位小时，默认 48；设置为 0 时关闭自动降级
+- 必须同时满足自动降级窗口和 `quality.strike_decay_min_healthy` 指定的连续健康样本数，默认 10
+- 健康样本包括 passive/transparent 的 `ClassNone` 观测和主动探测成功
+- 真实质量失败会重置窗口和连续健康计数；探测/代理错误和限速不计入质量失败，也不增加健康计数
+- 降级只清除 `strike_missing_thinking`，并记录 `strike_decay/expired` 事件
 
 `empty_stream`：
 
@@ -774,6 +829,15 @@ req := pluginapi.HostModelExecutionRequest{
 
 调用必须转发 `HostCallbackID`。如果 host 返回的 format 需要调整，必须以集成测试结果为准；不得自行实现 xAI 上游协议。
 
+#### 6.4.1 请求事实单次解析
+
+透明请求前置阶段必须一次解析 body，得到 `model`、`reasoningRequired`、`replayable`、`compact` 和 `sessionSeed`，复用于选择、执行和会话键计算。
+
+加密 reasoning include 注入需要保留大整数精度时，可再使用 `map[string]json.RawMessage` 做一次受控解析；不得在 model、reasoning、replay、session 四个独立函数中重复完整 unmarshal。
+
+请求事实只来自原始请求；include 注入不改变 model、reasoning、replay 资格和 session signal。
+
+
 ### 6.5 流式质量门
 
 ```text
@@ -816,6 +880,11 @@ if terminal and no verdict:
 ```
 
 一旦 `emitStarted=true`，不得换号、不得回滚，上游错误直接下传。
+
+- 时间型 dump 只在 `terminal` 或 `hold_expired` 后判定；流式进行中不得因前两个 delta 提前拦截
+- emit 失败或请求 context 结束时，整个请求按客户端中止处理：关闭上游流、不换号、不记 strike、不写失败事件
+- 缓冲超过 4 MiB 时放行已缓冲内容并记录 `transparent_overflow` 事件，不对该样本应用健康/异常判定，也不清零 strike
+- 非推理请求在首个可见块后约 200ms 提前放行，但仍执行空流和速度等结构性检查
 
 ### 6.6 非流式请求
 
@@ -1148,6 +1217,7 @@ sessionKey = SHA256(
 - TTL 过期后删除绑定
 - 绑定只在内存中保存，进程重启后自然丢失
 - 超过 `session_affinity_max_entries` 时淘汰最旧绑定
+- TTL 过期和超限淘汰使用按到期时间、绑定时间维护的最小堆；堆项惰性校验并定期压缩，避免每次请求全表扫描
 
 没有稳定 session signal 时不创建绑定，请求仍享受分层、preferred 和并发分散。
 
@@ -1501,12 +1571,15 @@ CPA 不允许直接执行 disabled auth。恢复探测流程必须：
 ### 8.5 探测结果
 
 - 通过：`healthy`
+- 探测与透明 hold 门共用 `ClassifyQualityHold` 的 dump 判定；成功探测只解除冷却，保留 `strike_missing_thinking`
+- 探测成功计入 strike 自动降级的连续健康样本；失败不增加健康计数
 - `missing_thinking`：冷却后再次确认 -> `disabled_by_guard`
 - 空流：15m 冷却
 - probe 网络/超时/流不完整：`suspect` + backoff
 - 代理错误：`proxy_error`，冷却并在条件允许时轮换 Resin
 - `401`：`credential_invalid`，直接写入 `disabled=true`，不自动探测
-- `402` 或包含免费额度/quota/credits 明确文案的 `403/429`：`quota_exhausted`，直接进入 24 小时冷却
+- `402` 或包含明确 free usage/spending-limit/credits 短语的 `403/429`：`quota_exhausted`，直接进入 24 小时冷却
+- 普通 `429` 或明确 rate limit 文案：`rate_limited`，只设置探测退避，不写 auth、不清零连续计数
 - 其他非 2xx：`ignored` 或 `probe_error`，不直接永久禁用
 
 ## 9. Resin 管理
@@ -1735,6 +1808,8 @@ API 模式的验证与保存都执行同一套服务端验证逻辑。`resin.con
 
 当 refresh catalog 发现某个 auth 已从 CPA 列表消失时，插件必须在删除该账号的 state 记录前读取 `Resin.Account`，并在 Resin API 模式启用且配置完整时写入 `resin_lease_deletes`。清理任务与显式清除和轮换共用同一持久化队列及后台 worker。`resin.enabled=false`、`local_only`、缺少 Admin URL、Platform ID 或 Admin Token，以及没有租约 account 的账号只删除 state 记录，不调用 Resin API。
 
+Resin 删除队列不得为每个 job 复制 Admin Token。state 维护共享 `resin_admin_tokens` 凭据表，job 只保存 `admin_token_ref` 指纹引用；旧状态加载时将 legacy job token 迁移到共享表并清空 job 内 token。配置切换到新 URL 后仍使用旧 URL 对应的共享 token 清理旧租约。
+
 ## 10. 管理页与 JSON API
 
 ### 10.1 路径
@@ -1781,6 +1856,7 @@ Action API 注册路径：
 - `Resin 租约`：每个 Grok 账号、脱敏代理、代理账号和轮换代数、搜索、状态筛选和分页、单账号绑定/轮换/清除，绑定仅 API 模式可用；表头复选框全选当前页，工具栏可全选当前筛选或全部账号，再批量绑定或清除代理；连接凭据不在此页修改
 - `事件日志`：按关键词和事件类型筛选并分页展示时间、auth ID、分类、动作、结果和脱敏详情
 - `设置`：低频配置集中在此 Tab，内部再分为 `守护策略` 与 `Resin 连接`；策略保存后热更新，API 模式的 Resin 连接必须先验证成功再保存，仅本地轮换无需 API 验证
+- `守护策略` 的层内策略显示为“轮询分配 / 随机分配 / 顺序优先”；内部 `strike` 统一显示为“缺思考惩罚标记”或“惩罚标记降级”，避免直接暴露实现术语
 
 页面技术要求：
 
@@ -1909,6 +1985,8 @@ plugins:
         consecutive_soft: 2
         consecutive_errors: 2
         consecutive_missing_thinking: 1
+        strike_decay_after: 48
+        strike_decay_min_healthy: 10
         thinking_guard: true
         soft_cross_verify: false
         thinking_cross_verify: false
@@ -1983,6 +2061,8 @@ Resin 配置采用“YAML 初始化，管理页验证后保存并优先使用”
 
 `policy.reset` 使用当前 YAML 值重新初始化运行时策略。`plugin.reconfigure` 不得静默覆盖用户在管理页保存的策略。
 
+`model_prefixes` 采用严格前缀匹配：配置了 `grok-` 时，`my-grok-proxy` 不匹配；`gpt-` 不会匹配 `grok-4.5`。不以配置前缀开头的已发现别名只能通过 `host.auth.models` 缓存识别，不使用 `grok` 子串兜底。
+
 ### 11.3 默认值
 
 - `passive_guard=true`
@@ -1998,6 +2078,8 @@ Resin 配置采用“YAML 初始化，管理页验证后保存并优先使用”
 - `quality.consecutive_soft=2`
 - `quality.consecutive_errors=2`
 - `quality.consecutive_missing_thinking=1`
+- `quality.strike_decay_after=48`
+- `quality.strike_decay_min_healthy=10`
 - `quality.thinking_guard=true`
 - `quality.soft_cross_verify=false`
 - `quality.thinking_cross_verify=false`
@@ -2056,6 +2138,9 @@ Docker 部署必须将 `/CLIProxyAPI/plugin-data/grok-quality-guard` 挂载为�
       "last_probe_at": "",
       "cooldown_until": "",
       "quality_strike_missing_thinking": false,
+      "quality_failure_at": "",
+      "healthy_streak": 0,
+      "healthy_streak_started_at": "",
       "soft_strikes": 0,
       "error_strikes": 0,
       "thinking_strikes": 0,
@@ -2080,6 +2165,20 @@ Docker 部署必须将 `/CLIProxyAPI/plugin-data/grok-quality-guard` 挂载为�
       }
     }
   },
+  "resin_lease_deletes": [
+    {
+      "auth_id": "auth-id",
+      "admin_url": "http://old-resin:2260",
+      "admin_token_ref": "<sha256-ref>",
+      "platform_id": "11111111-1111-1111-1111-111111111111",
+      "account": "grok-alice-old1",
+      "attempts": 0,
+      "next_attempt_at": ""
+    }
+  ],
+  "resin_admin_tokens": {
+    "<sha256-ref>": "<stored-secret>"
+  },
   "events": []
 }
 ```
@@ -2090,7 +2189,9 @@ Docker 部署必须将 `/CLIProxyAPI/plugin-data/grok-quality-guard` 挂载为�
 - 写入前后检查 JSON 有效性
 - 事件最多保留 `events_limit`
 - 纯观测更新可节流 1s 写入
-- 状态转换、disabled 修改、Resin 重绑必须立即写入
+- `RecordObservation` 只更新内存并合并落盘；状态转换、禁用、恢复、探测成功、Resin 变更和管理员动作走同步写入
+- `UpdateIfChanged` 由回调显式返回 changed，避免全量 clone + 深比较；无变化不重写文件
+- 探测调度和 Resin 删除扫描按账号/队列快照读取，不得为周期扫描复制完整 state
 - `resin.config.save` 在 API 模式仅在验证成功后写入；本地模式直接写入，并与运行时配置在同一更新中切换
 - Resin token 只存储在本机 state；依赖目录 `0700`、文件 `0600` 限制访问
 - 进程崩溃后启动时进行 reconcile
@@ -2118,6 +2219,9 @@ Docker 部署必须将 `/CLIProxyAPI/plugin-data/grok-quality-guard` 挂载为�
 - 插件 shutdown 时停止 probe worker、关闭 host model streams、flush 状态、不主动恢复任何 disabled auth
 - 同一 request ID 的 passive 状态只更新一次
 - 所有后台 goroutine 必须可通过 context cancel
+- 透明流 bridge 使用请求生命周期 `requestCtx` 并纳入 `taskWG`；Quiesce/Shutdown 取消并等待，避免卸载后继续调用 host 回调
+- 每个 model stream 使用一个常驻读协程，不为每个 chunk 创建 goroutine
+- 会话绑定过期和超限淘汰使用最小堆；状态观测更新不复制完整选择索引
 
 ## 14. 安全与日志
 

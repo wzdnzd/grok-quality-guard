@@ -1,6 +1,7 @@
 package main
 
 import (
+	"container/heap"
 	"fmt"
 	"math/rand/v2"
 	"sort"
@@ -30,6 +31,31 @@ type routingSelectionIndex struct {
 	buildGeneration atomic.Uint64
 }
 
+type bindingTimeEntry struct {
+	sessionKey string
+	at         time.Time
+}
+
+type bindingTimeHeap []bindingTimeEntry
+
+func (h bindingTimeHeap) Len() int { return len(h) }
+func (h bindingTimeHeap) Less(i, j int) bool {
+	if h[i].at.Equal(h[j].at) {
+		return h[i].sessionKey < h[j].sessionKey
+	}
+	return h[i].at.Before(h[j].at)
+}
+func (h bindingTimeHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *bindingTimeHeap) Push(value any) {
+	*h = append(*h, value.(bindingTimeEntry))
+}
+func (h *bindingTimeHeap) Pop() any {
+	old := *h
+	last := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return last
+}
+
 type routingSelectionRuntime struct {
 	mu                 sync.Mutex
 	cursors            map[string]int
@@ -37,7 +63,8 @@ type routingSelectionRuntime struct {
 	preferredAuthID    string
 	preferredSuccessAt time.Time
 	bindings           map[string]routingSessionBinding
-	bindOps            uint64
+	bindingExpiry      bindingTimeHeap
+	bindingAge         bindingTimeHeap
 }
 
 type routingSessionBinding struct {
@@ -508,21 +535,18 @@ func (runtime *routingSelectionRuntime) GetOrBind(sessionKey, proposedAuthID str
 	}
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
-	runtime.bindOps++
-	if runtime.bindOps%16 == 0 {
-		runtime.pruneBindingsLocked(now)
-	}
+	runtime.pruneBindingsLocked(now)
 	if binding, ok := runtime.bindings[sessionKey]; ok && now.Before(binding.ExpiresAt) {
 		return binding.AuthID
 	}
 	if maxEntries > 0 && len(runtime.bindings) >= maxEntries {
 		runtime.evictOldestBindingLocked()
 	}
-	runtime.bindings[sessionKey] = routingSessionBinding{
+	runtime.setBindingLocked(sessionKey, routingSessionBinding{
 		AuthID:    proposedAuthID,
 		ExpiresAt: now.Add(ttl),
 		BoundAt:   now,
-	}
+	})
 	return proposedAuthID
 }
 
@@ -531,11 +555,12 @@ func (runtime *routingSelectionRuntime) RefreshBinding(sessionKey, authID string
 		return
 	}
 	runtime.mu.Lock()
-	runtime.bindings[sessionKey] = routingSessionBinding{
+	runtime.pruneBindingsLocked(now)
+	runtime.setBindingLocked(sessionKey, routingSessionBinding{
 		AuthID:    authID,
 		ExpiresAt: now.Add(ttl),
 		BoundAt:   now,
-	}
+	})
 	runtime.mu.Unlock()
 }
 
@@ -550,24 +575,58 @@ func (runtime *routingSelectionRuntime) DeleteIfBoundTo(sessionKey, authID strin
 	runtime.mu.Unlock()
 }
 
+func (runtime *routingSelectionRuntime) setBindingLocked(sessionKey string, binding routingSessionBinding) {
+	runtime.bindings[sessionKey] = binding
+	heap.Push(&runtime.bindingExpiry, bindingTimeEntry{sessionKey: sessionKey, at: binding.ExpiresAt})
+	heap.Push(&runtime.bindingAge, bindingTimeEntry{sessionKey: sessionKey, at: binding.BoundAt})
+}
+
 func (runtime *routingSelectionRuntime) pruneBindingsLocked(now time.Time) {
-	for key, binding := range runtime.bindings {
-		if !now.Before(binding.ExpiresAt) {
-			delete(runtime.bindings, key)
+	for runtime.bindingExpiry.Len() > 0 {
+		entry := runtime.bindingExpiry[0]
+		if entry.at.After(now) {
+			break
 		}
+		heap.Pop(&runtime.bindingExpiry)
+		binding, ok := runtime.bindings[entry.sessionKey]
+		if ok && binding.ExpiresAt.Equal(entry.at) && !now.Before(binding.ExpiresAt) {
+			delete(runtime.bindings, entry.sessionKey)
+		}
+	}
+	if runtime.bindingExpiry.Len() > len(runtime.bindings)*2+64 {
+		runtime.compactBindingHeapsLocked()
+	}
+}
+
+func (runtime *routingSelectionRuntime) compactBindingHeapsLocked() {
+	runtime.bindingExpiry = runtime.bindingExpiry[:0]
+	runtime.bindingAge = runtime.bindingAge[:0]
+	for sessionKey, binding := range runtime.bindings {
+		heap.Push(&runtime.bindingExpiry, bindingTimeEntry{sessionKey: sessionKey, at: binding.ExpiresAt})
+		heap.Push(&runtime.bindingAge, bindingTimeEntry{sessionKey: sessionKey, at: binding.BoundAt})
 	}
 }
 
 func (runtime *routingSelectionRuntime) evictOldestBindingLocked() {
-	oldestKey := ""
-	var oldest time.Time
-	for key, binding := range runtime.bindings {
-		if oldestKey == "" || binding.BoundAt.Before(oldest) {
-			oldestKey = key
-			oldest = binding.BoundAt
+	for runtime.bindingAge.Len() > 0 {
+		entry := heap.Pop(&runtime.bindingAge).(bindingTimeEntry)
+		binding, ok := runtime.bindings[entry.sessionKey]
+		if ok && binding.BoundAt.Equal(entry.at) {
+			delete(runtime.bindings, entry.sessionKey)
+			return
 		}
 	}
-	if oldestKey != "" {
-		delete(runtime.bindings, oldestKey)
+	// The heaps can only lag the map after lazy deletions. Rebuild once if a
+	// caller still needs to enforce the size limit.
+	if len(runtime.bindings) == 0 {
+		return
+	}
+	runtime.compactBindingHeapsLocked()
+	for runtime.bindingAge.Len() > 0 {
+		entry := heap.Pop(&runtime.bindingAge).(bindingTimeEntry)
+		if _, ok := runtime.bindings[entry.sessionKey]; ok {
+			delete(runtime.bindings, entry.sessionKey)
+			return
+		}
 	}
 }

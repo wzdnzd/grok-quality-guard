@@ -96,15 +96,18 @@ type accountSummaryView struct {
 
 type accountView struct {
 	accountSummaryView
-	Evidence              *QualityEvidence `json:"evidence,omitempty"`
-	LastProbeAt           time.Time        `json:"last_probe_at,omitzero"`
-	DisableKind           string           `json:"disable_kind,omitempty"`
-	StrikeMissingThinking bool             `json:"strike_missing_thinking,omitempty"`
-	SoftStrikes           int              `json:"soft_strikes,omitempty"`
-	ErrorStrikes          int              `json:"error_strikes,omitempty"`
-	ThinkingStrikes       int              `json:"thinking_strikes,omitempty"`
-	TTFTMS                int64            `json:"ttft_ms,omitempty"`
-	VisibleTokens         int64            `json:"visible_tokens,omitempty"`
+	Evidence               *QualityEvidence `json:"evidence,omitempty"`
+	LastProbeAt            time.Time        `json:"last_probe_at,omitzero"`
+	DisableKind            string           `json:"disable_kind,omitempty"`
+	StrikeMissingThinking  bool             `json:"strike_missing_thinking,omitempty"`
+	QualityFailureAt       time.Time        `json:"quality_failure_at,omitzero"`
+	HealthyStreak          int              `json:"healthy_streak,omitempty"`
+	HealthyStreakStartedAt time.Time        `json:"healthy_streak_started_at,omitzero"`
+	SoftStrikes            int              `json:"soft_strikes,omitempty"`
+	ErrorStrikes           int              `json:"error_strikes,omitempty"`
+	ThinkingStrikes        int              `json:"thinking_strikes,omitempty"`
+	TTFTMS                 int64            `json:"ttft_ms,omitempty"`
+	VisibleTokens          int64            `json:"visible_tokens,omitempty"`
 }
 
 func (p *Plugin) HandleManagement(request []byte) ([]byte, error) {
@@ -929,16 +932,19 @@ func accountStateFromSummary(summary AccountStateSummary) AccountState {
 
 func (p *Plugin) accountView(account Account, stateAccount AccountState, resinCfg ResinSettings, proxyURL string) accountView {
 	return accountView{
-		accountSummaryView:    p.accountSummary(account, stateAccount, resinCfg, proxyURL),
-		Evidence:              stateAccount.LastEvidence,
-		LastProbeAt:           stateAccount.LastProbeAt,
-		DisableKind:           stateAccount.DisableKind,
-		StrikeMissingThinking: stateAccount.QualityStrikeMissingThinking,
-		SoftStrikes:           stateAccount.SoftStrikes,
-		ErrorStrikes:          stateAccount.ErrorStrikes,
-		ThinkingStrikes:       stateAccount.ThinkingStrikes,
-		TTFTMS:                stateAccount.Metrics.FirstTokenMS,
-		VisibleTokens:         stateAccount.Metrics.VisibleTokens,
+		accountSummaryView:     p.accountSummary(account, stateAccount, resinCfg, proxyURL),
+		Evidence:               stateAccount.LastEvidence,
+		LastProbeAt:            stateAccount.LastProbeAt,
+		DisableKind:            stateAccount.DisableKind,
+		StrikeMissingThinking:  stateAccount.QualityStrikeMissingThinking,
+		QualityFailureAt:       stateAccount.QualityFailureAt,
+		HealthyStreak:          stateAccount.HealthyStreak,
+		HealthyStreakStartedAt: stateAccount.HealthyStreakStartedAt,
+		SoftStrikes:            stateAccount.SoftStrikes,
+		ErrorStrikes:           stateAccount.ErrorStrikes,
+		ThinkingStrikes:        stateAccount.ThinkingStrikes,
+		TTFTMS:                 stateAccount.Metrics.FirstTokenMS,
+		VisibleTokens:          stateAccount.Metrics.VisibleTokens,
 	}
 }
 
