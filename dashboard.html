@@ -2868,10 +2868,13 @@
       const resinDetail = account.resin_account ? '<div class="subline">' + esc(account.resin_account) + ' · 第 ' + esc(account.resin_generation || 0) + ' 代</div>' : '';
       const cooldown = account.cooldown_until ? '冷却至：' + esc(formatFullTime(account.cooldown_until)) : '无冷却';
       const probe = account.probe_backoff_until ? '探测退避至：' + esc(formatFullTime(account.probe_backoff_until)) : '可立即探测';
+      const isolatedByGuard = ['cooling', 'quota_exhausted', 'credential_invalid', 'disabled_by_guard'].includes(account.state);
+      const disableReason = account.disable_reason ? reasonLabel(account.disable_reason) : '';
+      const reasonSummary = isolatedByGuard ? '插件已禁用' : reasonLabel(account.last_reason);
       const attemptDetail = account.last_attempt ? '最近尝试：' + attemptLabel(account.last_attempt, { includeTime: false }) : '最近观测：' + formatTime(account.last_observed_at);
-      const reasonSummary = account.disable_reason ? reasonLabel(account.disable_reason) : (['cooling', 'quota_exhausted', 'credential_invalid', 'disabled_by_guard'].includes(account.state) ? '插件已禁用（原因未记录）' : reasonLabel(account.last_reason));
+      const disableReasonDetail = disableReason ? '<div class="subline truncate-line" title="禁用原因：' + esc(disableReason) + '">禁用原因：' + esc(disableReason) + '</div>' : '';
       return '<tr><td class="select-cell"><input type="checkbox" data-account-select="' + authID + '" aria-label="选择账号" ' + (selected ? 'checked' : '') + '></td>' +
-        '<td><div class="account-name" title="' + esc(account.display_full || account.display || account.label || '未命名账号') + '">' + esc(account.display || account.label || '未命名账号') + '</div><div class="subline" title="' + esc(account.auth_id) + '">' + esc(account.auth_id_display || account.auth_id) + '</div></td><td class="nowrap">' + badge(stateLabel(account.state), stateTone(account.state)) + '</td><td><div class="truncate-line" title="' + esc(reasonSummary) + '">' + esc(reasonSummary) + '</div><div class="subline truncate-line" title="' + esc(attemptDetail) + '">' + esc(attemptDetail) + '</div></td><td><div class="metric-inline"><strong>' + esc(num(account.tps, 1)) + '</strong><span class="muted">TPS</span></div><div class="subline">输出：' + esc(num(account.output_tokens)) + ' · 推理：' + esc(num(account.reasoning_tokens)) + ' · 密文：' + esc(formatBytes(account.encrypted_bytes)) + '</div></td><td>' + resin + resinDetail + '</td><td><div>' + cooldown + '</div><div class="subline">' + probe + '</div></td><td class="actions-cell"><div class="actions"><button class="btn btn-xs" type="button" data-account-action="accounts.probe" data-auth="' + authID + '">' + icon('play') + '检测</button><button class="btn btn-xs" type="button" data-open-account="' + authID + '">' + icon('eye') + '详情</button></div></td></tr>';
+        '<td><div class="account-name" title="' + esc(account.display_full || account.display || account.label || '未命名账号') + '">' + esc(account.display || account.label || '未命名账号') + '</div><div class="subline" title="' + esc(account.auth_id) + '">' + esc(account.auth_id_display || account.auth_id) + '</div></td><td class="nowrap">' + badge(stateLabel(account.state), stateTone(account.state)) + '</td><td><div class="truncate-line" title="' + esc(reasonSummary) + '">' + esc(reasonSummary) + '</div><div class="subline truncate-line" title="' + esc(attemptDetail) + '">' + esc(attemptDetail) + '</div>' + disableReasonDetail + '</td><td><div class="metric-inline"><strong>' + esc(num(account.tps, 1)) + '</strong><span class="muted">TPS</span></div><div class="subline">输出：' + esc(num(account.output_tokens)) + ' · 推理：' + esc(num(account.reasoning_tokens)) + ' · 密文：' + esc(formatBytes(account.encrypted_bytes)) + '</div></td><td>' + resin + resinDetail + '</td><td><div>' + cooldown + '</div><div class="subline">' + probe + '</div></td><td class="actions-cell"><div class="actions"><button class="btn btn-xs" type="button" data-account-action="accounts.probe" data-auth="' + authID + '">' + icon('play') + '检测</button><button class="btn btn-xs" type="button" data-open-account="' + authID + '">' + icon('eye') + '详情</button></div></td></tr>';
     }
     function leaseStatus(account) {
       if (account.resin_managed || account.proxy_status === 'bound') return 'bound';
@@ -3261,6 +3264,8 @@
       const resin = state.resin || {};
       const evidence = account.evidence;
       const ignoredAttempt = account.last_attempt && account.last_attempt.class === 'ignored' ? badge('最近尝试未计入质量', 'warn') : '';
+      const disableReason = account.disable_reason ? reasonLabel(account.disable_reason) : '';
+      const disableReasonCell = disableReason ? '<div class="detail-cell"><div class="detail-label">禁用原因</div><div class="detail-value">' + esc(disableReason) + '</div></div>' : '';
       const canBind = Boolean(resin.configured && resin.enabled && !resin.local_only);
       if (account.resin_managed) actionButtons.push('<button class="btn" type="button" data-resin-action="resin.rotate" data-auth="' + esc(account.auth_id) + '">' + icon('rotate') + (resin.local_only && resin.enabled ? '本地轮换' : '轮换租约') + '</button>');
       else if (account.proxy_status !== 'conflict' && canBind) actionButtons.push('<button class="btn" type="button" data-resin-action="resin.bind" data-auth="' + esc(account.auth_id) + '">' + icon('link') + '绑定 Resin</button>');
@@ -3271,7 +3276,7 @@
         '<div class="drawer-section"><div class="detail-grid">',
         '<div class="detail-cell"><div class="detail-label">最近尝试</div><div class="detail-value">' + esc(attemptLabel(account.last_attempt)) + '</div></div>',
         '<div class="detail-cell"><div class="detail-label">最近质量判定</div><div class="detail-value">' + esc(reasonLabel(account.last_reason)) + '</div></div>',
-        '<div class="detail-cell"><div class="detail-label">插件禁用原因</div><div class="detail-value">' + esc(account.disable_reason ? reasonLabel(account.disable_reason) : (['cooling', 'quota_exhausted', 'credential_invalid', 'disabled_by_guard'].includes(account.state) ? '插件已禁用（原因未记录）' : '—')) + '</div></div>',
+        disableReasonCell,
         '<div class="detail-cell"><div class="detail-label">输出速度</div><div class="detail-value">' + esc(num(account.tps, 1)) + ' TPS</div></div>',
         '<div class="detail-cell"><div class="detail-label">首 Token</div><div class="detail-value">' + esc(num(account.ttft_ms)) + ' 毫秒</div></div>',
         '<div class="detail-cell"><div class="detail-label">输出 / 推理</div><div class="detail-value">' + esc(num(account.output_tokens)) + ' / ' + esc(num(account.reasoning_tokens)) + '</div></div>',
