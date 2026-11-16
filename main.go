@@ -60,21 +60,20 @@ import (
 	"fmt"
 	"unsafe"
 
+	"grok-quality-guard/internal/abi"
+	"grok-quality-guard/internal/app"
+
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
-type envelope struct {
-	OK     bool             `json:"ok"`
-	Result json.RawMessage  `json:"result,omitempty"`
-	Error  *pluginabi.Error `json:"error,omitempty"`
-}
+type envelope = abi.Envelope
 
 type lifecycleRequest struct {
 	ConfigYAML []byte `json:"config_yaml"`
 }
 
-var globalApp = NewPlugin()
+var globalApp = app.NewPlugin()
 
 func main() {}
 
@@ -98,7 +97,7 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 		response.len = 0
 	}
 	if method == nil {
-		writeResponse(response, errorEnvelope("invalid_method", "method is required", 400))
+		writeResponse(response, abi.Error("invalid_method", "method is required", 400))
 		return 1
 	}
 	var requestBytes []byte
@@ -107,7 +106,7 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 	}
 	raw, errHandle := handleMethod(C.GoString(method), requestBytes)
 	if errHandle != nil {
-		writeResponse(response, errorEnvelope("plugin_error", errHandle.Error(), 500))
+		writeResponse(response, abi.Error("plugin_error", errHandle.Error(), 500))
 		return 1
 	}
 	writeResponse(response, raw)
@@ -134,48 +133,50 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		var req lifecycleRequest
 		if len(request) > 0 {
 			if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
-				return errorEnvelope("invalid_config", sanitizeError(errUnmarshal), 400), nil
+				return abi.Error("invalid_config", app.SanitizeError(errUnmarshal), 400), nil
 			}
 		}
 		if errConfigure := globalApp.Configure(req.ConfigYAML); errConfigure != nil {
-			return errorEnvelope("invalid_config", sanitizeError(errConfigure), 400), nil
+			return abi.Error("invalid_config", app.SanitizeError(errConfigure), 400), nil
 		}
-		return okEnvelope(pluginRegistration())
+		return abi.OK(app.PluginRegistration())
 	case pluginabi.MethodPluginQuiesce:
 		globalApp.Quiesce()
-		return okEnvelope(map[string]any{})
+		return abi.OK(map[string]any{})
 	case pluginabi.MethodPluginShutdown:
 		globalApp.Shutdown()
-		return okEnvelope(map[string]any{})
+		return abi.OK(map[string]any{})
 	case pluginabi.MethodManagementRegister:
-		return okEnvelope(globalApp.ManagementRegistration())
+		return abi.OK(globalApp.ManagementRegistration())
 	case pluginabi.MethodManagementHandle:
 		return globalApp.HandleManagement(request)
 	case pluginabi.MethodModelRoute:
 		return globalApp.RouteModel(request)
 	case pluginabi.MethodExecutorIdentifier:
-		return okEnvelope(map[string]string{"identifier": pluginID})
+		return abi.OK(map[string]string{"identifier": app.PluginIdentifier()})
 	case pluginabi.MethodExecutorExecute:
 		return globalApp.Execute(request)
 	case pluginabi.MethodExecutorExecuteStream:
 		return globalApp.ExecuteStream(request)
 	case pluginabi.MethodExecutorCountTokens:
-		return okEnvelope(pluginapi.ExecutorResponse{Payload: []byte(`{"total_tokens":0}`)})
+		return abi.OK(pluginapi.ExecutorResponse{Payload: []byte(`{"total_tokens":0}`)})
 	case pluginabi.MethodExecutorHTTPRequest:
-		return errorEnvelope("not_implemented", "executor.http_request is not supported", 501), nil
+		return abi.Error("not_implemented", "executor.http_request is not supported", 501), nil
 	case pluginabi.MethodResponseInterceptAfter:
 		return globalApp.InterceptResponse(request), nil
 	case pluginabi.MethodResponseInterceptStreamChunk:
 		return globalApp.InterceptStreamChunk(request), nil
 	case pluginabi.MethodUsageHandle:
 		globalApp.HandleUsage(request)
-		return okEnvelope(map[string]any{})
+		return abi.OK(map[string]any{})
 	default:
-		return errorEnvelope("unknown_method", "unknown method: "+method, 404), nil
+		return abi.Error("unknown_method", "unknown method: "+method, 404), nil
 	}
 }
 
-var hostCall = callHost
+func init() {
+	app.SetHostCall(callHost)
+}
 
 func callHost(method string, payload any) (json.RawMessage, error) {
 	rawPayload, errMarshal := json.Marshal(payload)
@@ -221,27 +222,6 @@ func callHost(method string, payload any) (json.RawMessage, error) {
 	}
 	return append(json.RawMessage(nil), env.Result...), nil
 }
-
-func okEnvelope(value any) ([]byte, error) {
-	raw, errMarshal := json.Marshal(value)
-	if errMarshal != nil {
-		return nil, errMarshal
-	}
-	return json.Marshal(envelope{OK: true, Result: raw})
-}
-
-func errorEnvelope(code, message string, status int) []byte {
-	raw, _ := json.Marshal(envelope{
-		OK: false,
-		Error: &pluginabi.Error{
-			Code:       code,
-			Message:    message,
-			HTTPStatus: status,
-		},
-	})
-	return raw
-}
-
 func writeResponse(response *C.cliproxy_buffer, raw []byte) {
 	if response == nil || len(raw) == 0 {
 		return

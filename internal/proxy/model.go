@@ -3,7 +3,6 @@ package proxy
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -294,58 +293,4 @@ func ValidateTemplate(t Template) ValidationReport {
 	}
 	report.Samples = compiled.Preview(3)
 	return report
-}
-
-func groupRowCount(groups []ValueGroup) int {
-	total := 0
-	for _, group := range groups {
-		total += len(group.Rows)
-	}
-	return total
-}
-
-func combinationCount(t Template) int64 {
-	total := int64(1)
-	grouped := map[string]bool{}
-	for _, group := range t.ValueGroups {
-		total *= int64(len(group.Rows))
-		for _, column := range group.Columns {
-			grouped[column] = true
-		}
-	}
-	for _, placeholder := range t.Placeholders {
-		if grouped[placeholder.Name] {
-			continue
-		}
-		if placeholder.Kind == PlaceholderEnum {
-			count := int64(len(placeholder.ValueList()))
-			if count > 0 {
-				total *= count
-			}
-		}
-	}
-	return total
-}
-
-func hasRandom(t Template) bool {
-	for _, placeholder := range t.Placeholders {
-		if placeholder.Kind == PlaceholderRandom {
-			return true
-		}
-	}
-	return false
-}
-
-func ValidateEndpoint(endpoint Endpoint) error {
-	if err := endpoint.Validate(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func EndpointFromNode(node Node) (Endpoint, error) {
-	if err := node.Endpoint.Validate(); err != nil {
-		return Endpoint{}, fmt.Errorf("node %s: %w", node.Name, err)
-	}
-	return node.Endpoint, nil
 }

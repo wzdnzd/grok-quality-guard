@@ -1,0 +1,99 @@
+package probe
+
+import (
+	"context"
+	"encoding/json"
+	"sync"
+	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+
+	"grok-quality-guard/internal/app/model"
+	qualityapp "grok-quality-guard/internal/app/quality"
+	appstate "grok-quality-guard/internal/app/state"
+	"grok-quality-guard/internal/config"
+	domain "grok-quality-guard/internal/quality"
+)
+
+type Account = model.Account
+type AccountState = appstate.AccountState
+type Event = appstate.Event
+type State = appstate.State
+type Store = appstate.Store
+type Policy = config.Policy
+type ProbeConfig = config.ProbeConfig
+type QualityConfig = config.QualityConfig
+type QualityVerdict = domain.QualityVerdict
+type Signals = domain.Signals
+
+const (
+	ClassNone                  = domain.ClassNone
+	ClassIgnored               = domain.ClassIgnored
+	ClassProbeError            = domain.ClassProbeError
+	ClassProxyError            = domain.ClassProxyError
+	ClassCredentialInvalid     = domain.ClassCredentialInvalid
+	ClassQuotaExhausted        = domain.ClassQuotaExhausted
+	ClassRateLimited           = domain.ClassRateLimited
+	ClassExpectedMarkerMissing = domain.ClassExpectedMarkerMissing
+	ClassMissingThinking       = domain.ClassMissingThinking
+	ClassBufferedBurst         = domain.ClassBufferedBurst
+	ClassCipherDrool           = domain.ClassCipherDrool
+	ClassFakeEncryptedDump     = domain.ClassFakeEncryptedDump
+	ClassFastReasoningRatio    = domain.ClassFastReasoningRatio
+	ClassHardTPS               = domain.ClassHardTPS
+	ClassEmptyStream           = domain.ClassEmptyStream
+)
+
+const (
+	StateUnknown            = appstate.StateUnknown
+	StateHealthy            = appstate.StateHealthy
+	StateSuspect            = appstate.StateSuspect
+	StateDegraded           = appstate.StateDegraded
+	StateCooling            = appstate.StateCooling
+	StateQuotaExhausted     = appstate.StateQuotaExhausted
+	StateCredentialInvalid  = appstate.StateCredentialInvalid
+	StateDisabledByGuard    = appstate.StateDisabledByGuard
+	StateExternallyDisabled = appstate.StateExternallyDisabled
+)
+
+type Environment interface {
+	Store() *appstate.Store
+	CatalogSnapshot() []model.Account
+	Policy() config.Policy
+	AccountLock(string) *sync.Mutex
+	ResolveAuth(context.Context, string) (model.Account, pluginapi.HostAuthGetResponse, map[string]json.RawMessage, error)
+	StateAccount(string) (appstate.AccountState, bool)
+	SaveAuth(string, json.RawMessage) (pluginapi.HostAuthSaveResponse, error)
+	SaveAuthDisabled(string, map[string]json.RawMessage, bool) error
+	RefreshSelectionAccount(string)
+	ExecuteModelStream(context.Context, pluginapi.HostModelExecutionRequest, string) (pluginapi.HostModelStreamResponse, error)
+	CloseModelStream(string) error
+	ReadModelStream(context.Context, string) (pluginapi.HostModelStreamReadResponse, error)
+	ReadModelStreamErrorBody(context.Context, string) []byte
+	Reconcile(context.Context) error
+	Quality() *qualityapp.Service
+	RecordInternalError(string, error) error
+}
+
+type Service struct {
+	env Environment
+
+	probeGate            sync.Mutex
+	probeCond            *sync.Cond
+	probeActive          int
+	probePriorityWaiters int
+	probing              map[string]struct{}
+
+	probeSkipMu sync.Mutex
+	probeSkip   map[string]time.Time
+}
+
+func NewService(env Environment) *Service {
+	service := &Service{
+		env:       env,
+		probing:   make(map[string]struct{}),
+		probeSkip: make(map[string]time.Time),
+	}
+	service.probeCond = sync.NewCond(&service.probeGate)
+	return service
+}

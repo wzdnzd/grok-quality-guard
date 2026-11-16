@@ -159,7 +159,7 @@ jobs:
           mkdir -p dist
           version="${VERSION#v}"
           go build -buildmode=c-shared -trimpath -buildvcs=false \
-            -ldflags "-X main.pluginVersion=${version}" \
+            -ldflags "-X grok-quality-guard/internal/app.pluginVersion=${version}" \
             -o "dist/${PLUGIN_ID}.${EXT}" .
 
       - name: Upload plugin library

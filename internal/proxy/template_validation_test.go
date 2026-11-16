@@ -374,6 +374,22 @@ func TestTemplateRenderAvoidingFindsFiniteAlternative(t *testing.T) {
 	}
 }
 
+func TestTemplateRelationRowsAllowLegacyLimitAndRejectAboveNewLimit(t *testing.T) {
+	rows := make([][]string, maxGroupRows)
+	for index := range rows {
+		rows[index] = []string{fmt.Sprintf("%x", index), "x"}
+	}
+	if _, err := CompileTemplate(relationTemplate(rows)); err != nil {
+		t.Fatalf("compile %d relation rows: %v", maxGroupRows, err)
+	}
+	tooMany := make([][]string, maxGroupRows+1)
+	_, err := CompileTemplate(relationTemplate(tooMany))
+	var issue *ValidationError
+	if !errors.As(err, &issue) || issue.Code != "group_row_limit" {
+		t.Fatalf("expected group_row_limit above %d rows, got %v", maxGroupRows, err)
+	}
+}
+
 func TestTemplateCombinationCountDoesNotOverflow(t *testing.T) {
 	template := Template{Protocol: ProtocolHTTP, Host: "proxy.example", Port: 8080}
 	for index := 0; index < 20; index++ {

@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	maxTemplateBytes = 2 << 20
+	maxTemplateBytes = 16 << 20
 	maxPlaceholders  = 32
-	maxGroupRows     = 10000
+	maxGroupRows     = 100000
 )
 
 type patternToken struct {
@@ -152,12 +152,12 @@ func CompileTemplate(template Template) (*CompiledTemplate, error) {
 	for _, group := range template.ValueGroups {
 		rowCount += len(group.Rows)
 		if rowCount > maxGroupRows {
-			return nil, invalid("group_row_limit", "value_groups", "template supports at most 10000 relation rows")
+			return nil, invalid("group_row_limit", "value_groups", "template supports at most 100000 relation rows")
 		}
 	}
 	body, err := json.Marshal(template)
 	if err != nil || len(body) > maxTemplateBytes {
-		return nil, invalid("template_too_large", "template", "template exceeds the configuration size limit")
+		return nil, invalid("template_too_large", "template", "template exceeds the 16 MiB configuration size limit")
 	}
 	if template.UsernamePatternEncoding != "" && template.UsernamePatternEncoding != "literal" && template.UsernamePatternEncoding != "url" {
 		return nil, invalid("pattern_encoding_invalid", "username_pattern_encoding", "username pattern encoding is invalid")

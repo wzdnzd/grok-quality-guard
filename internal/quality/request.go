@@ -1,0 +1,65 @@
+package quality
+
+import (
+	"encoding/json"
+	"strings"
+
+	"grok-quality-guard/internal/model"
+)
+
+// DecodeRequestPayload parses a JSON object without failing the caller on
+// malformed or non-object input.
+func DecodeRequestPayload(body []byte) map[string]any {
+	if len(body) == 0 {
+		return nil
+	}
+	var payload map[string]any
+	if errUnmarshal := json.Unmarshal(body, &payload); errUnmarshal != nil {
+		return nil
+	}
+	return payload
+}
+
+func decodeRequestPayload(body []byte) map[string]any {
+	return DecodeRequestPayload(body)
+}
+
+// ReasoningRequiredPayload reports whether the request did not explicitly
+// disable reasoning.
+func ReasoningRequiredPayload(payload map[string]any) bool {
+	if payload == nil {
+		return true
+	}
+	if effort := strings.ToLower(strings.TrimSpace(asString(payload["reasoning_effort"]))); effort == "none" || effort == "off" {
+		return false
+	}
+	for _, key := range []string{"reasoning", "output_config", "thinking"} {
+		if raw, ok := payload[key]; ok && disabledReasoningValue(raw) {
+			return false
+		}
+	}
+	return true
+}
+
+// ReasoningRequiredForModelPayload combines the request flag with model
+// capability detection.
+func ReasoningRequiredForModelPayload(modelName string, payload map[string]any) bool {
+	if !ReasoningRequiredPayload(payload) {
+		return false
+	}
+	known, supports := model.ReasoningSupport(modelName)
+	if !known && payload != nil {
+		if bodyModel := strings.TrimSpace(asString(payload["model"])); bodyModel != "" && bodyModel != modelName {
+			known, supports = model.ReasoningSupport(bodyModel)
+		}
+	}
+	return known && supports
+}
+
+func reasoningRequiredPayload(payload map[string]any) bool {
+	return ReasoningRequiredPayload(payload)
+}
+
+func reasoningRequiredForModelPayload(modelName string, payload map[string]any) bool {
+	return ReasoningRequiredForModelPayload(modelName, payload)
+}

@@ -31,9 +31,6 @@ auths/*
 
 # Documentation
 references/*
-docs/*
-!docs/grok-quality-guard-plugin-design.md
-!docs/proxy-management-design.md
 AGENTS.md
 CLAUDE.md
 GEMINI.md
@@ -65,3 +62,6 @@ _bmad-output/*
 # macOS
 .DS_Store
 ._*
+.npm-cache/
+.pw-browsers/
+.pw-node/

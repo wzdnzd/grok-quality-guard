@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 type TemplateKind string
@@ -325,8 +324,4 @@ func variantKey(values map[string]string) string {
 	}
 	sum := sha256.Sum256([]byte(builder.String()))
 	return hex.EncodeToString(sum[:16])
-}
-
-func ValidUTF8(value string) bool {
-	return utf8.ValidString(value)
 }

@@ -4,7 +4,7 @@
 
 Grok Quality Guard 观测 Grok / xAI auth 的真实响应质量，识别 HTTP 200 但实际降智的输出，并提供账号级状态、冷却、恢复探测和可选的透明换号保护。质量异常默认只读观测；上游 401 凭据失效和明确额度耗尽仍会直接禁用或冷却账号。
 
-设计细节和完整状态机见 [插件设计文档](docs/grok-quality-guard-plugin-design.md)。
+设计细节和完整状态机见 [插件设计文档](designs/plugin.md)。
 
 ## 功能
 
@@ -130,7 +130,7 @@ Windows：
 ```powershell
 $env:CGO_ENABLED = '1'
 go build -buildmode=c-shared -trimpath -buildvcs=false `
-  -ldflags "-X main.pluginVersion=0.1.0" `
+  -ldflags "-X grok-quality-guard/internal/app.pluginVersion=0.1.0" `
   -o bin/grok-quality-guard.dll .
 ```
 
@@ -138,7 +138,7 @@ Linux：
 
 ```bash
 CGO_ENABLED=1 go build -buildmode=c-shared -trimpath -buildvcs=false \
-  -ldflags "-X main.pluginVersion=0.1.0" \
+  -ldflags "-X grok-quality-guard/internal/app.pluginVersion=0.1.0" \
   -o bin/grok-quality-guard.so .
 ```
 
@@ -146,11 +146,49 @@ macOS：
 
 ```bash
 CGO_ENABLED=1 go build -buildmode=c-shared -trimpath -buildvcs=false \
-  -ldflags "-X main.pluginVersion=0.1.0" \
+  -ldflags "-X grok-quality-guard/internal/app.pluginVersion=0.1.0" \
   -o bin/grok-quality-guard.dylib .
 ```
 
 版本号不要带 `v` 前缀。GitHub Actions 发布时会把 tag 版本自动注入插件元数据。
+
+## 代码结构
+
+```text
+main.go                         C ABI 入口、宿主回调和插件生命周期分发
+designs/                       插件与代理模块设计文档
+internal/
+  abi/                          ABI envelope 编解码
+  app/                          插件装配、宿主桥、注册与接口适配
+    auth/                       账号 JSON 元数据与身份识别
+    catalog/                    账号目录、模型缓存与 state 同步
+    dashboard/                  内嵌管理页与前端回归脚本
+    executor/                   执行器、透明流重试与响应改写
+    management/                 管理 API、账号/策略视图与响应封装
+    model/                      catalog 账号投影
+    passive/                    被动请求观测、usage 归并与质量审计
+    action/                     管理 action 协议与参数解析
+    probe/                      主动探测、恢复探测与调度
+    proxy/                      代理来源、绑定、操作、清理与自动绑定
+      resin/                    Resin 客户端、Provider 与租约清理
+    quality/                    质量处置、冷却、恢复与状态对账
+    redact/                     日志和错误脱敏
+    routing/                    候选选择、会话粘性与选择索引
+    state/                      持久化状态、代理 journal 与路径迁移
+    tasks/                      后台任务队列
+  test/                         通过公开 ABI/管理接口驱动的跨包测试
+  config/                       配置解码、默认值、校验与策略映射
+  model/                        Grok 模型版本与 reasoning 能力识别
+  quality/                      SSE/JSON 流分析、质量信号与判定策略
+  sse/                          CPA 流式响应分帧与 SSE 输出规范化
+  proxy/                        代理端点、模板、约束与 Provider 领域模型
+```
+
+`internal/app` 根目录的生产代码只保留 Plugin 生命周期、宿主桥、`plugin_ports.go` 中的应用子包 Environment 端口实现，以及注册与 ABI 边界。端口方法集中放在组合根，不再为每个子包创建 `*_adapter.go` 薄文件，也不保留 `*_facade.go`、类型别名包装文件或 `*_types.go`；仅为根包测试访问私有装配状态而存在的辅助函数集中在 `*_bridge_test.go`，不会进入构建产物。具体领域实现和领域类型直接使用对应子包。
+
+领域实现位于 `internal/app` 的各自子包；`plugin.go`、`host_bridge.go` 和 `registration.go` 只保留装配与宿主边界。子包通过显式的 `Environment` interface 使用宿主能力，不反向导入 `internal/app`。Resin 是 `internal/app/proxy/resin` 独立子包，普通代理模板不依赖 Resin 配置。
+
+测试按作用域组织：只验证单个子包行为的单元测试放在目标包目录；跨包验收测试优先放在 `internal/test`，通过 `NewPlugin`、`Configure`、`RouteModel`、`Execute*`、`HandleManagement` 和 fake host 等公开边界驱动，不依赖私有字段。`internal/app` 根目录只保留仍需验证同包私有装配细节的过渡性白盒测试；迁移时按业务域拆分测试场景，而不是新增生产代码导出。
 
 ## 配置
 
@@ -241,7 +279,7 @@ plugins:
           retry_initial: "1m"
           retry_max: "1h"
 
-      state_file: "/CLIProxyAPI/plugin-data/grok-quality-guard/state.json"
+      state_file: "/CLIProxyAPI/plugins/data/grok-quality-guard/state.json"
       events_limit: 1000
 ```
 
@@ -451,8 +489,8 @@ API 只接受 POST，并由 CPA management 层完成认证。插件不要求自�
 默认路径按顺序选择第一个可写位置：
 
 ```text
-/CLIProxyAPI/plugin-data/grok-quality-guard/state.json
-plugin-data/grok-quality-guard/state.json
+/CLIProxyAPI/plugins/data/grok-quality-guard/state.json
+plugins/data/grok-quality-guard/state.json
 <UserConfigDir>/cliproxyapi/grok-quality-guard/state.json
 <temp>/grok-quality-guard/state.json
 ```
@@ -463,7 +501,7 @@ Docker 部署必须把第一项所在目录挂载为宿主持久卷，否则容�
 services:
   cliproxyapi:
     volumes:
-      - ./plugin-data/grok-quality-guard:/CLIProxyAPI/plugin-data/grok-quality-guard
+      - ./plugins/data/grok-quality-guard:/CLIProxyAPI/plugins/data/grok-quality-guard
 ```
 
 如果已经挂载了 `/CLIProxyAPI/plugins`，也可以显式把 `state_file` 指向该持久目录下的文件。显式配置的 `state_file` 是启动引导路径；路径不可写时插件会报错，而不是静默改写到临时目录。
@@ -478,7 +516,7 @@ services:
 
 来源编辑须传 `expected_version`。节点端点变化自动同步绑定；模板默认保持旧绑定，选择 `rerender_bound` 才回溯。失败任务保留成功结果，调用方应检查 `counts`、`committed` 和 `needs_reconcile`。普通详情不返回密码，节点编辑通过 `edit_fields:true` 获取用户名字段，密码使用 keep/set/clear 更新。
 
-依赖的 CLIProxyAPI v8.0.67 将 `socks5` 和 `socks5h` 都按远端 DNS 执行；按用户确认的兼容策略保留两种 URL，不改 scheme。HTTPS 代理在普通 HTTP/SSE 路径使用 TLS，原生 WebSocket 仍受宿主拨号器能力限制。完整实现约束与审查记录见 [代理管理设计](docs/proxy-management-design.md)。
+依赖的 CLIProxyAPI v8.0.67 将 `socks5` 和 `socks5h` 都按远端 DNS 执行；按用户确认的兼容策略保留两种 URL，不改 scheme。HTTPS 代理在普通 HTTP/SSE 路径使用 TLS，原生 WebSocket 仍受宿主拨号器能力限制。完整实现约束与审查记录见 [代理管理设计](designs/proxy.md)。
 
 ## 开发与测试
 
