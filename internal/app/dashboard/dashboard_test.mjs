@@ -114,7 +114,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, runProxyAccountBatches, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, resinAccountFormatFromTemplate, leaseRow, toggleLeaseEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -309,6 +309,26 @@ test('A stale condition preview cannot overwrite newer inputs or validation stat
   await ui.previewProxyTemplate(editor, null, {}, new Element());
   assert.match(get('proxyTemplatePreviewResults').innerHTML, /vendor/);
   assert.match(get('proxyTemplatePreviewResults').innerHTML, /&lt;unsafe&gt;/);
+});
+
+test('Default password keep is omitted from template URL payloads', () => {
+  const { dashboard: ui, get, placeholder } = harness();
+  get('ptpl_name').value = 'region proxy';
+  get('ptpl_url').value = 'socks5h://proxy-{country}-sid-{session}:test-pass@proxy.example:3010';
+  get('ptpl_enabled').checked = true;
+  get('ptpl_update_policy').value = 'keep_bound';
+  get('ptpl_password_action').value = 'keep';
+  ui.state.proxyEditing = { groups: new Map() };
+  placeholder('country', { separator: ',', input: 'US,JP,SG' });
+  placeholder('session', { kind: 'random' });
+
+  const source = ui.collectProxyTemplateEditor(null, {});
+  assert.equal(source.password_update, undefined);
+  assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(source)), 'password_update'), false);
+
+  get('ptpl_password_action').value = 'set';
+  get('ptpl_password_value').value = 'new-pass';
+  assert.deepEqual(plain(ui.collectProxyTemplateEditor(null, {}).password_update), { action: 'set', value: 'new-pass' });
 });
 
 test('Partial sync results distinguish committed failures and skipped accounts', async () => {
@@ -516,6 +536,47 @@ test('A dirty Resin form retains its original version when the server changes', 
   assert.equal(ui.resinInput().expected_version, 5);
 });
 
+test('Resin form edits only the username account format', () => {
+  const { dashboard: ui, get } = harness();
+  assert.equal(ui.resinAccountFormatFromTemplate('socks5h://CPA.grok-{account}:secret@resin:2260', 'CPA'), 'grok-{account}');
+  ui.state.resin = { config_version: 5, name: 'Primary Resin', account_format: 'grok-{account}' };
+  ui.populateResinForm();
+  assert.equal(get('r_name').value, 'Primary Resin');
+  assert.equal(get('r_account_format').value, 'grok-{account}');
+  get('r_account_format').value = 'svc-{account}';
+  get('r_admin_url').value = 'https://resin.example:8443/base';
+  const input = ui.resinInput();
+  assert.equal(input.name, 'Primary Resin');
+  assert.equal(input.account_format, 'svc-{account}');
+  assert.equal(Object.hasOwn(input, 'proxy_template'), false);
+});
+
+test('Lease endpoints stay masked until the eye reveals the full endpoint', async () => {
+  const { dashboard: ui, mock } = harness();
+  ui.state.proxy = {};
+  ui.state.proxySources = [];
+  ui.state.resin = {};
+  const account = { auth_id: 'auth-1', auth_id_display: 'auth-1', display: 'a***@example.com', display_full: 'alice@example.com', proxy: 'socks5h://resin:2260', proxy_status: 'bound', proxy_managed: true };
+  let row = ui.leaseRow(account);
+  assert.match(row, /data-lease-endpoint="auth-1"/);
+  assert.match(row, /title="点击眼睛显示完整端点"/);
+  assert.doesNotMatch(row, /user:pass/);
+  ui.state.leaseProxyDetails.set('auth-1', 'socks5h://user:pass@resin:2260');
+  row = ui.leaseRow(account);
+  assert.match(row, /socks5h:\/\/user:pass@resin:2260/);
+  assert.match(row, /title="socks5h:\/\/user:pass@resin:2260"/);
+  assert.match(row, /隐藏完整端点/);
+
+  ui.state.leaseProxyDetails.clear();
+  mock('renderResin', () => {});
+  mock('api', async (action) => {
+    assert.equal(action, 'proxy.bindings.endpoint');
+    return { proxy_full: 'socks5h://user:pass@resin:2260' };
+  });
+  await ui.toggleLeaseEndpoint('auth-1', new Element());
+  assert.equal(ui.state.leaseProxyDetails.get('auth-1'), 'socks5h://user:pass@resin:2260');
+});
+
 test('A late task-detail refresh cannot restore an older selected page', async () => {
   const { dashboard: ui, mock } = harness();
   const old = deferred(), fresh = deferred();
@@ -539,6 +600,27 @@ test('Checkbox controls reserve a label line and retry fields share one row', ()
   assert.match(html, /首次失败后的等待时长/);
   assert.match(html, /退避等待的最长时间/);
 });
+
+test('Routing affinity cards share a row and parameter hints explain their effects', () => {
+  const ttl = html.indexOf('id="p_session_affinity_ttl"');
+  const prefer = html.indexOf('id="p_prefer_last_success"');
+  const affinity = html.indexOf('id="p_session_affinity"');
+  assert(ttl > 0 && ttl < prefer && prefer < affinity);
+  assert.match(html, /健康记录超过此时长后失效/);
+  assert.match(html, /仅选择健康且未过期的来源/);
+  assert.match(html, /:password@proxy\.example:1080/);
+  assert.doesNotMatch(html, /:密码@proxy\.example:1080/);
+  assert.match(html, /\.check-card\.compact\s*\{[^}]*min-height: 33px;[^}]*margin-top: 20px;/s);
+  assert.match(html, /class="check-card compact" title="健康账号不做周期探测"><input id="p_probe_recovery_only"/);
+  assert.doesNotMatch(html, /class="check-desc">健康账号不做周期探测/);
+  assert.match(html, /默认显示脱敏端点，点击眼睛查看完整端点/);
+  assert.match(html, /<th>端点<\/th>/);
+  assert.match(html, /for="r_account_format">账号格式/);
+  assert.match(html, /for="r_name">来源名称/);
+  assert.match(html, /无需填写 \{platform\}；只填写 username 后缀，例如 \{account\}。系统会拼成 socks5h:\/\/\{platform\}\.&lt;填写内容&gt;:\{proxy_token\}@&lt;Admin API 主机&gt;:&lt;端口&gt;/);
+  assert.doesNotMatch(html, /for="r_proxy_template">模板/);
+});
+
 test('Network and management API failures use actionable Chinese copy', async () => {
   const { dashboard: ui, context, mock, get } = harness();
   context.fetch = async () => { throw new TypeError('Failed to fetch'); };

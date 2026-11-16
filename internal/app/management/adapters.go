@@ -150,6 +150,9 @@ func (s *Service) actionProxySourceDelete(params map[string]any) (any, int, erro
 func (s *Service) actionProxyBindingsList(ctx context.Context, params map[string]any) (any, int, error) {
 	return s.env.Proxy().ActionBindingsList(ctx, params)
 }
+func (s *Service) actionProxyBindingEndpoint(ctx context.Context, params map[string]any) (any, int, error) {
+	return s.env.Proxy().ActionBindingEndpoint(ctx, params)
+}
 func (s *Service) actionProxyBind(ctx context.Context, params map[string]any) (any, int, error) {
 	return s.env.Proxy().ActionBind(ctx, params)
 }

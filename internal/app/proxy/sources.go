@@ -30,9 +30,12 @@ func validateSourceMetadata(name string, priority, limit int) error {
 	}
 	return nil
 }
+func passwordUpdateKeepsExisting(update *passwordUpdate) bool {
+	return update != nil && update.Action == "keep" && update.Value == nil
+}
 func proxyInputEndpoint(input proxyNodeInput) (proxy.Endpoint, error) {
 	if input.URL != "" {
-		if input.Protocol != "" || input.Host != "" || input.Port != 0 || input.Username != "" || input.Password != "" || input.PasswordUpdate != nil {
+		if input.Protocol != "" || input.Host != "" || input.Port != 0 || input.Username != "" || input.Password != "" || (input.PasswordUpdate != nil && !passwordUpdateKeepsExisting(input.PasswordUpdate)) {
 			return proxy.Endpoint{}, proxyError("proxy_endpoint_ambiguous", 400, "provide a URL or individual endpoint fields")
 		}
 		return proxy.ParseEndpoint(input.URL, proxy.ParseOptions{AllowColonFormat: input.ImportFormat == "address_first"})
@@ -342,6 +345,7 @@ func (s *Service) updateProxyNodeContext(ctx context.Context, input proxyNodeInp
 
 func buildProxyTemplate(input proxyTemplateInput, current *proxy.Template) (proxy.Template, error) {
 	var template proxy.Template
+	passwordUpdate := input.PasswordUpdate
 	if current != nil {
 		template = proxy.CloneTemplate(*current)
 	}
@@ -350,8 +354,9 @@ func buildProxyTemplate(input proxyTemplateInput, current *proxy.Template) (prox
 		if err != nil {
 			return proxy.Template{}, err
 		}
-		if input.PasswordUpdate != nil {
-			return proxy.Template{}, proxyError("proxy_endpoint_ambiguous", 400, "provide a URL or individual template fields")
+		if parsed.HasPassword {
+			// A complete template URL is authoritative for its credentials.
+			passwordUpdate = nil
 		}
 		if current != nil {
 			parsed.ID = current.ID
@@ -385,9 +390,9 @@ func buildProxyTemplate(input proxyTemplateInput, current *proxy.Template) (prox
 		}
 		template.HasUser = template.UsernamePattern != ""
 	}
-	if input.PasswordUpdate != nil {
+	if passwordUpdate != nil {
 		endpoint := proxy.Endpoint{Username: "configured", HasUser: true, Password: template.Password, HasPassword: template.HasPassword}
-		if err := applyPasswordUpdate(&endpoint, input.PasswordUpdate); err != nil {
+		if err := applyPasswordUpdate(&endpoint, passwordUpdate); err != nil {
 			return proxy.Template{}, err
 		}
 		template.Password = endpoint.Password
@@ -596,12 +601,12 @@ func proxyBindingAuthIDsFromState(state State, sourceID string, kind proxy.Sourc
 }
 
 func (s *Service) deleteProxyNode(id string, force bool) (map[string]any, error) {
-	return s.deleteProxySource(context.Background(), id, proxy.SourceNode, force)
+	return s.deleteProxySource(context.Background(), id, force)
 }
 func (s *Service) deleteProxyTemplate(id string, force bool) (map[string]any, error) {
-	return s.deleteProxySource(context.Background(), id, proxy.SourceTemplate, force)
+	return s.deleteProxySource(context.Background(), id, force)
 }
-func (s *Service) deleteProxySource(ctx context.Context, id string, kind proxy.SourceKind, force bool) (map[string]any, error) {
+func (s *Service) deleteProxySource(ctx context.Context, id string, force bool) (map[string]any, error) {
 	s.mgr.changeMu.Lock()
 	if s.proxyCatalog().ByID[id] == nil {
 		s.mgr.changeMu.Unlock()

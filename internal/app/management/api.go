@@ -205,6 +205,8 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 		return s.actionProxySourceDelete(request.Params)
 	case "proxy.bindings.list":
 		return s.actionProxyBindingsList(ctx, request.Params)
+	case "proxy.bindings.endpoint":
+		return s.actionProxyBindingEndpoint(ctx, request.Params)
 	case "proxy.bindings.bind":
 		return s.actionProxyBind(ctx, request.Params)
 	case "proxy.bindings.clear":

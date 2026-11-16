@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -109,6 +110,38 @@ func TestProxyNodeCRUDBindAndClearPreservesAuth(t *testing.T) {
 		t.Fatalf("binding was not removed: %#v", stateAccount.Proxy)
 	}
 }
+func TestProxyBindingEndpointRevealIsOnDemand(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	if _, err := plugin.createProxyNode(proxyapp.NodeInput{URL: "socks5h://user:secret@proxy.example:8080", Name: "reveal"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.bindProxy(context.Background(), "auth-1", proxyapp.BindOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	response := actionManagementForTest(t, plugin, "proxy.bindings.endpoint", map[string]any{"auth_id": "auth-1"})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var decoded struct {
+		Data struct {
+			AuthID    string `json:"auth_id"`
+			Proxy     string `json:"proxy"`
+			ProxyFull string `json:"proxy_full"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Data.AuthID != "auth-1" || decoded.Data.ProxyFull != "socks5h://user:secret@proxy.example:8080" {
+		t.Fatalf("unexpected endpoint response: %#v", decoded.Data)
+	}
+	if decoded.Data.Proxy != "socks5h://proxy.example:8080" || strings.Contains(decoded.Data.Proxy, "secret") {
+		t.Fatalf("masked endpoint leaked credentials: %#v", decoded.Data)
+	}
+}
+
 func TestProxyNodeSelectionBalancesInitialBindings(t *testing.T) {
 	entries := []pluginapi.HostAuthFileEntry{
 		{ID: "auth-1", AuthIndex: "auth-1", Name: "auth-1", Type: "xai", Provider: "xai", Email: "a@example.com", Label: "a@example.com"},

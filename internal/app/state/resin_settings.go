@@ -5,6 +5,7 @@ import "time"
 // ResinSettings is the persisted runtime configuration for Resin integration.
 type ResinSettings struct {
 	Configured                    bool      `json:"configured"`
+	Name                          string    `json:"name,omitempty"`
 	Enabled                       bool      `json:"enabled"`
 	LocalOnly                     bool      `json:"local_only"`
 	Platform                      string    `json:"platform"`

@@ -1,6 +1,10 @@
 package proxy
 
-import proxy "grok-quality-guard/internal/proxy"
+import (
+	"strings"
+
+	proxy "grok-quality-guard/internal/proxy"
+)
 
 func (s *Service) ensureProxyStateDefaults(store *StateStore, autoBind proxy.AutoBindConfig, resinSettings ResinSettings) error {
 	if store == nil {
@@ -13,7 +17,11 @@ func (s *Service) ensureProxyStateDefaults(store *StateStore, autoBind proxy.Aut
 			changed = true
 		}
 		if state.Proxy.ResinSource.ID == "" {
-			state.Proxy.ResinSource = proxy.ResinSourceState{ID: "resin", Name: "Resin", Revision: 1, ConfigVersion: 1, Enabled: resinSettings.Enabled}
+			name := strings.TrimSpace(resinSettings.Name)
+			if name == "" {
+				name = "Resin"
+			}
+			state.Proxy.ResinSource = proxy.ResinSourceState{ID: "resin", Name: name, Revision: 1, ConfigVersion: 1, Enabled: resinSettings.Enabled}
 			changed = true
 		}
 		if !state.Resin.Configured && state.Proxy.ResinSource.Enabled != resinSettings.Enabled {

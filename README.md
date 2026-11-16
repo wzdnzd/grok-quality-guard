@@ -358,15 +358,15 @@ plugins:
 
 ### API 模式
 
-API 模式用于创建新的代理绑定，并管理 Resin 远端租约。Admin API URL、Platform、Admin Token、Proxy Token 和代理模板在管理页中配置。用户只填写平台名称，保存时会按顺序验证：
+API 模式用于创建新的代理绑定，并管理 Resin 远端租约。来源名称、Admin API URL、Platform、Admin Token、Proxy Token 和账号格式在管理页中配置。来源名称用于代理来源列表和自动绑定选择，可自定义。用户只填写平台名称与 username 后缀；系统自动添加 `{platform}.` 前缀。协议固定为 SOCKS5H，密码固定使用 Proxy Token，代理主机和端口从 Admin API URL 解析。保存时会按顺序验证：
 
 1. 使用 Admin Token 请求 Resin `GET /api/v1/system/info`
 2. 使用同一 Admin Token 请求 `GET /api/v1/platforms?keyword={platform}`，按名称精确解析平台 UUID 并读取规范平台名称
-3. 按代理模板渲染验证账号，并执行 SOCKS5 RFC1929 用户名/密码认证，确认 Proxy Token 有效
+3. 按账号格式生成代理 URL 渲染验证账号，并执行 SOCKS5 RFC1929 用户名/密码认证，确认 Proxy Token 有效
 
 任一步失败都不会保存配置。已保存的 token 不会回填到页面，也不会通过管理页或 JSON API 返回；再次保存时留空 Secret 输入框会保留已有值。YAML 中的 `admin_token_env` 和 `proxy_token_env` 仅作为 state 尚未配置时的环境变量回退来源。
 
-Resin 平台名称在 Resin 中唯一。管理页只要求填写名称，保存时通过平台列表接口解析出 `platform_id` 并写入状态文件；管理员不需要手工填写 UUID。绑定操作仍会按内部 `platform_id` 重新查询规范名称；轮换使用已保存的规范平台名称和代理模板，不在请求关键路径调用平台接口。
+Resin 平台名称在 Resin 中唯一。管理页只要求填写名称，保存时通过平台列表接口解析出 `platform_id` 并写入状态文件；管理员不需要手工填写 UUID。绑定操作仍会按内部 `platform_id` 重新查询规范名称；轮换使用已保存的规范平台名称和账号格式，不在请求关键路径调用平台接口。
 
 Resin 绑定必须由管理员显式触发，不会在首次启动时自动覆盖已有 `proxy_url`。API 模式轮换顺序固定为：
 
@@ -453,6 +453,7 @@ curl -X POST \
 | `proxy.sources.validate/preview/test` | 配置验证、条件预览和端点检测 |
 | `proxy.sources.create/import_nodes/update/delete` | 节点、模板 CRUD 与批量节点导入 |
 | `proxy.bindings.list/bind/clear/rotate/adopt` | 分页查询、绑定、清除、轮换和显式接管 |
+| `proxy.bindings.endpoint` | 按 auth 显式读取完整代理端点；列表默认仅返回脱敏端点 |
 | `proxy.bindings.set_auto_bind` | 暂停或恢复指定 auth 的自动绑定 |
 | `proxy.bind_unbound` | 显式批量绑定未绑定 auth |
 | `proxy.template.apply` / `proxy.templates.apply_bound` | 将当前模板按固定版本应用到已绑定 auth |

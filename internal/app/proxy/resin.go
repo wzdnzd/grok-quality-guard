@@ -32,11 +32,13 @@ var resinPlatformIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0
 type resinConfigView struct {
 	ConfigVersion                 uint64    `json:"config_version"`
 	Configured                    bool      `json:"configured"`
+	Name                          string    `json:"name"`
 	Enabled                       bool      `json:"enabled"`
 	LocalOnly                     bool      `json:"local_only"`
 	Platform                      string    `json:"platform"`
 	PlatformID                    string    `json:"platform_id"`
 	AdminURL                      string    `json:"admin_url"`
+	AccountFormat                 string    `json:"account_format"`
 	ProxyTemplate                 string    `json:"proxy_template"`
 	AutoRotateAfterQualityFailure bool      `json:"auto_rotate_after_quality_failure"`
 	AdminTokenSet                 bool      `json:"admin_token_set"`
@@ -117,6 +119,10 @@ func resinSettingsFromConfig(cfg ResinConfig) ResinSettings {
 }
 
 func normalizeResinSettingsBestEffort(settings ResinSettings) ResinSettings {
+	settings.Name = strings.TrimSpace(settings.Name)
+	if settings.Name == "" {
+		settings.Name = "Resin"
+	}
 	settings.Platform = strings.TrimSpace(settings.Platform)
 	if settings.Platform == "" {
 		settings.Platform = "Default"
@@ -156,14 +162,18 @@ func (s *Service) resinConfigView(settings ResinSettings) resinConfigView {
 			displayTemplate = scheme + "://" + user + "@" + rest[at+1:]
 		}
 	}
+	accountFormat, _ := resinpkg.AccountFormat(settings.ProxyTemplate)
+	accountFormat = resinAccountSuffix(accountFormat, settings.Platform)
 	return resinConfigView{
 		ConfigVersion:                 version,
 		Configured:                    settings.Configured,
+		Name:                          settings.Name,
 		Enabled:                       settings.Enabled,
 		LocalOnly:                     settings.LocalOnly,
 		Platform:                      settings.Platform,
 		PlatformID:                    settings.PlatformID,
 		AdminURL:                      settings.AdminURL,
+		AccountFormat:                 accountFormat,
 		ProxyTemplate:                 displayTemplate,
 		AutoRotateAfterQualityFailure: settings.AutoRotateAfterQualityFailure,
 		AdminTokenSet:                 strings.TrimSpace(settings.AdminToken) != "",
@@ -177,7 +187,10 @@ func (s *Service) actionResinConfigGet() (any, int, error) {
 }
 
 func (s *Service) actionResinConfigValidate(_ context.Context, params map[string]any) (any, int, error) {
-	candidate := resinSettingsFromParams(params, s.ResinConfig())
+	candidate, errCandidate := resinCandidateFromParams(params, s.ResinConfig())
+	if errCandidate != nil {
+		return nil, http.StatusBadRequest, errCandidate
+	}
 	normalized, errNormalize := normalizeResinSettings(candidate)
 	if errNormalize != nil {
 		return nil, http.StatusBadRequest, errNormalize
@@ -196,7 +209,10 @@ func (s *Service) actionResinConfigSave(_ context.Context, params map[string]any
 	if expected := actionpkg.Int(params, "expected_version", 0); expected > 0 && uint64(expected) != version {
 		return nil, 409, proxyError("proxy_source_version_conflict", 409, "Resin configuration changed; reload before saving")
 	}
-	candidate := resinSettingsFromParams(params, s.ResinConfig())
+	candidate, errCandidate := resinCandidateFromParams(params, s.ResinConfig())
+	if errCandidate != nil {
+		return nil, http.StatusBadRequest, errCandidate
+	}
 	normalized, errNormalize := normalizeResinSettings(candidate)
 	if errNormalize != nil {
 		return nil, http.StatusBadRequest, errNormalize
@@ -284,7 +300,7 @@ func (s *Service) saveResinConfigVersioned(ctx context.Context, normalized Resin
 			state.ResinSnapshots[resinSnapshotID(normalized)] = normalized
 		}
 		state.Proxy.ResinSource.ID = resinSourceID
-		state.Proxy.ResinSource.Name = "Resin"
+		state.Proxy.ResinSource.Name = normalized.Name
 		state.Proxy.ResinSource.Enabled = normalized.Enabled
 		state.Proxy.ResinSource.Deleted = false
 		if !resinGeneratedConfigEqual(previous, normalized) {
@@ -323,6 +339,7 @@ func resinGeneratedConfigEqual(left, right ResinSettings) bool {
 }
 func resinSettingsFromParams(params map[string]any, current ResinSettings) ResinSettings {
 	settings := current
+	settings.Name = optionalStringParam(params, "name", settings.Name)
 	settings.Enabled = optionalBoolParam(params, "enabled", settings.Enabled)
 	settings.LocalOnly = optionalBoolParam(params, "local_only", settings.LocalOnly)
 	settings.Platform = optionalStringParam(params, "platform", settings.Platform)
@@ -347,6 +364,62 @@ func resinSettingsFromParams(params map[string]any, current ResinSettings) Resin
 		settings.ProxyToken = ""
 	}
 	return settings
+}
+
+func resinCandidateFromParams(params map[string]any, current ResinSettings) (ResinSettings, error) {
+	settings := resinSettingsFromParams(params, current)
+	rawFormat, supplied := params["account_format"]
+	if !supplied || settings.LocalOnly {
+		return settings, nil
+	}
+	template, err := resinProxyTemplateFromAccountFormat(actionpkg.String(rawFormat), settings.AdminURL)
+	if err != nil {
+		return ResinSettings{}, err
+	}
+	settings.ProxyTemplate = template
+	return settings, nil
+}
+
+func resinProxyTemplateFromAccountFormat(accountFormat, adminURL string) (string, error) {
+	accountFormat = strings.TrimSpace(accountFormat)
+	if accountFormat == "" {
+		return "", resinConfigErrorf(http.StatusBadRequest, "resin account_format is required")
+	}
+	if strings.Contains(accountFormat, "{platform}") {
+		return "", resinConfigErrorf(http.StatusBadRequest, "resin account_format must not contain {platform}")
+	}
+	if strings.ContainsAny(accountFormat, "/?#@:") {
+		return "", resinConfigErrorf(http.StatusBadRequest, "resin account_format must contain only the username pattern")
+	}
+	parsedAdmin, errAdmin := url.Parse(strings.TrimSpace(adminURL))
+	if errAdmin != nil || parsedAdmin.Scheme == "" || parsedAdmin.Hostname() == "" {
+		return "", resinConfigErrorf(http.StatusBadRequest, "resin admin_url is invalid")
+	}
+	if parsedAdmin.Scheme != "http" && parsedAdmin.Scheme != "https" {
+		return "", resinConfigErrorf(http.StatusBadRequest, "resin admin_url must use http or https")
+	}
+	host := parsedAdmin.Hostname()
+	port := parsedAdmin.Port()
+	if port == "" {
+		if parsedAdmin.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	return "socks5h://{platform}." + accountFormat + ":{proxy_token}@" + net.JoinHostPort(host, port), nil
+}
+
+func resinAccountSuffix(accountFormat, platform string) string {
+	accountFormat = strings.TrimSpace(accountFormat)
+	if strings.HasPrefix(accountFormat, "{platform}.") {
+		return strings.TrimPrefix(accountFormat, "{platform}.")
+	}
+	platform = strings.TrimSpace(platform)
+	if platform != "" && strings.HasPrefix(accountFormat, platform+".") {
+		return strings.TrimPrefix(accountFormat, platform+".")
+	}
+	return accountFormat
 }
 
 func optionalStringParam(params map[string]any, key, fallback string) string {
@@ -406,6 +479,9 @@ func normalizeResinAdminSettings(settings ResinSettings) (ResinSettings, error) 
 
 func normalizeResinSettings(settings ResinSettings) (ResinSettings, error) {
 	settings = normalizeResinSettingsBestEffort(settings)
+	if len(settings.Name) > 256 {
+		return ResinSettings{}, resinConfigErrorf(http.StatusBadRequest, "resin name must not exceed 256 bytes")
+	}
 	if settings.LocalOnly {
 		return settings, nil
 	}

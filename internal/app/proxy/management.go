@@ -354,7 +354,7 @@ func (s *Service) actionProxySourceDelete(params map[string]any) (any, int, erro
 		return nil, 409, proxyError("proxy_source_in_use", 409, "source has active bindings; use force=true to clear them and delete")
 	}
 	task := s.env.ProxyStartTask("proxy.source.delete", nil, "正在清理绑定并删除代理来源", func(ctx context.Context) (any, error) {
-		return s.deleteProxySource(ctx, id, proxy.SourceKind(kind), actionpkg.Bool(params, "force"))
+		return s.deleteProxySource(ctx, id, actionpkg.Bool(params, "force"))
 	})
 	return task, 202, nil
 }
@@ -623,6 +623,26 @@ func (s *Service) actionProxyBindingsList(ctx context.Context, params map[string
 	}
 	return map[string]any{"items": items, "total": total, "page": page, "page_size": size}, 200, nil
 }
+
+func (s *Service) actionProxyBindingEndpoint(ctx context.Context, params map[string]any) (any, int, error) {
+	authID := strings.TrimSpace(actionpkg.String(params["auth_id"]))
+	if authID == "" {
+		return nil, 400, errors.New("auth_id is required")
+	}
+	_, _, raw, err := s.env.ProxyResolveAuth(ctx, authID)
+	if err != nil {
+		return nil, 502, err
+	}
+	proxyURL, err := proxyURLFromRaw(raw)
+	if err != nil {
+		return nil, proxyInputErrorStatus(err), err
+	}
+	if proxyURL == "" {
+		return nil, 404, errors.New("proxy endpoint is empty")
+	}
+	return map[string]any{"auth_id": authID, "proxy": maskProxyURL(proxyURL), "proxy_full": proxyURL}, 200, nil
+}
+
 func (s *Service) actionProxyBindingsAutoBind(params map[string]any) (any, int, error) {
 	ids := actionpkg.AuthIDs(params)
 	if len(ids) == 0 || len(ids) > 10000 {

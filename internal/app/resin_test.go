@@ -1051,6 +1051,7 @@ func TestResinConfigSaveLocalOnlyWithoutAPI(t *testing.T) {
 	plugin := newTestPlugin(t, host, nil)
 	params := map[string]any{
 		"enabled":                           true,
+		"name":                              "Primary Resin",
 		"local_only":                        true,
 		"platform":                          "Default",
 		"platform_id":                       testResinPlatformID,
@@ -1065,8 +1066,11 @@ func TestResinConfigSaveLocalOnlyWithoutAPI(t *testing.T) {
 		t.Fatalf("status = %d body=%s", response.StatusCode, response.Body)
 	}
 	state := plugin.store.Snapshot()
-	if !state.Resin.Configured || !state.Resin.Enabled || !state.Resin.LocalOnly {
+	if !state.Resin.Configured || !state.Resin.Enabled || !state.Resin.LocalOnly || state.Resin.Name != "Primary Resin" {
 		t.Fatalf("local resin config was not persisted: %#v", state.Resin)
+	}
+	if state.Proxy.ResinSource.Name != "Primary Resin" {
+		t.Fatalf("resin source name was not persisted: %#v", state.Proxy.ResinSource)
 	}
 	if state.Resin.PlatformID != "" || state.Resin.AdminURL != "" || state.Resin.AdminToken != "" || state.Resin.ProxyToken != "" {
 		t.Fatalf("local resin config persisted API credentials: %#v", state.Resin)
@@ -1085,7 +1089,7 @@ func TestResinConfigSaveLocalOnlyWithoutAPI(t *testing.T) {
 	if errUnmarshal := json.Unmarshal(response.Body, &decoded); errUnmarshal != nil {
 		t.Fatal(errUnmarshal)
 	}
-	if !decoded.Data.LocalOnly || !decoded.Data.Configured || !decoded.Data.Enabled {
+	if !decoded.Data.LocalOnly || !decoded.Data.Configured || !decoded.Data.Enabled || decoded.Data.Name != "Primary Resin" {
 		t.Fatalf("unexpected local config view: %#v", decoded.Data)
 	}
 	validateResponse := actionManagementForTest(t, plugin, "resin.config.validate", map[string]any{"local_only": true})

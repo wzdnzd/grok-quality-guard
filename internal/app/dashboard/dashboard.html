@@ -873,6 +873,23 @@
       cursor: help;
     }
 
+    .endpoint-cell {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      max-width: 320px;
+    }
+
+    .endpoint-cell .truncate-line {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .endpoint-cell .btn {
+      flex: 0 0 auto;
+    }
+
     .mono {
       font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
       font-variant-numeric: tabular-nums;
@@ -1152,6 +1169,25 @@
       height: 15px;
       margin: 2px 0 0;
       accent-color: var(--primary);
+    }
+
+    .check-card.compact {
+      align-self: start;
+      min-height: 33px;
+      margin-top: 20px;
+      padding: 6px 9px;
+      align-items: center;
+    }
+
+    .check-card.compact .check-copy {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 2px 8px;
+    }
+
+    .check-card.compact .check-desc {
+      margin-top: 0;
     }
 
     .check-copy {
@@ -1775,6 +1811,10 @@
     }
 
     @media (max-width: 680px) {
+      .check-card.compact {
+        margin-top: 0;
+      }
+
       .page {
         padding: 18px 14px 42px;
       }
@@ -2273,8 +2313,8 @@
             <section class="settings-group">
               <h3 class="section-title">健康与账号范围</h3>
               <div class="field-grid">
-                <div class="field"><label for="pab_health_max_age">健康最大年龄</label><input id="pab_health_max_age" type="text" placeholder="10m"><span class="hint">超过后不再视为健康</span></div>
-                <div class="field"><label class="check-row"><input id="pab_require_healthy" type="checkbox"><span>仅使用健康来源</span></label><span class="hint">要求版本有效且未超龄</span></div>
+                <div class="field"><label for="pab_health_max_age">健康最大年龄</label><input id="pab_health_max_age" type="text" placeholder="10m"><span class="hint">健康记录超过此时长后失效</span></div>
+                <div class="field"><label class="check-row"><input id="pab_require_healthy" type="checkbox"><span>仅使用健康来源</span></label><span class="hint">仅选择健康且未过期的来源</span></div>
                 <div class="field"><label class="check-row"><input id="pab_include_guard_disabled" type="checkbox"><span>纳入插件隔离账号</span></label><span class="hint">包括冷却或隔离中的账号</span></div>
                 <div class="field"><label class="check-row"><input id="pab_include_externally_disabled" type="checkbox"><span>纳入外部禁用账号</span></label><span class="hint">包括 CPA 外部禁用的账号</span></div>
               </div>
@@ -2306,7 +2346,7 @@
               <h2 id="leaseTitle"><svg class="icon">
                   <use href="#i-database"></use>
                 </svg>账号代理</h2>
-              <p>节点、模板与代理服务统一绑定；仅显示脱敏端点</p>
+              <p>节点、模板与代理服务统一绑定；默认显示脱敏端点，点击眼睛查看完整端点</p>
             </div>
             <div class="card-actions">
               <span class="badge" id="resinConfigState">未配置</span>
@@ -2361,7 +2401,7 @@
                       title="选择本页全部账号"></th>
                   <th>账号</th>
                   <th>来源</th>
-                  <th>脱敏端点</th>
+                  <th>端点</th>
                   <th>模板版本</th>
                   <th>状态</th>
                   <th style="text-align:right">操作</th>
@@ -2529,12 +2569,12 @@
                         <option value="random">随机分配</option>
                         <option value="fill_first">顺序优先</option>
                       </select><span class="hint">仅在同一个质量/优先级层内生效</span></div>
+                    <div class="field"><label for="p_session_affinity_ttl">会话亲和 TTL</label><input id="p_session_affinity_ttl"
+                        type="text" placeholder="1h"><span class="hint">成功请求后刷新</span></div>
                     <label class="check-card"><input id="p_prefer_last_success" type="checkbox"><span
                         class="check-copy"><span class="check-title">优先复用上次成功账号</span><span class="check-desc">仅在该账号健康且空闲时优先使用；并发时自动分散</span></span></label>
                     <label class="check-card"><input id="p_session_affinity" type="checkbox"><span
                         class="check-copy"><span class="check-title">启用会话亲和</span><span class="check-desc">同一会话在账号正常时尽量固定到同一 auth</span></span></label>
-                    <div class="field"><label for="p_session_affinity_ttl">会话亲和 TTL</label><input id="p_session_affinity_ttl"
-                        type="text" placeholder="1h"><span class="hint">成功请求后刷新</span></div>
                     <div class="field"><label for="p_session_affinity_max_entries">会话绑定上限</label><input
                         id="p_session_affinity_max_entries" type="number" min="1" max="100000"></div>
                   </div>
@@ -2556,9 +2596,8 @@
                         <option value="fail_closed">失败关闭</option>
                         <option value="fail_open">失败放行</option>
                       </select></div>
-                    <label class="check-card"><input id="p_probe_recovery_only" type="checkbox"><span
-                        class="check-copy"><span class="check-title">仅恢复性探测</span><span
-                          class="check-desc">健康账号不做周期探测</span></span></label>
+                    <label class="check-card compact" title="健康账号不做周期探测"><input id="p_probe_recovery_only" type="checkbox"><span
+                        class="check-copy"><span class="check-title">仅恢复性探测</span></span></label>
                     <div class="field"><label for="p_probe_model">探测模型</label><input id="p_probe_model" type="text"
                         autocomplete="off" placeholder="grok-4.5"></div>
                     <div class="field"><label for="p_probe_timeout">探测超时</label><input id="p_probe_timeout" type="text"
@@ -2643,8 +2682,9 @@
           <div class="field-grid">
             <label class="check-card full"><input id="r_enabled" type="checkbox"><span class="check-copy"><span class="check-title">启用代理轮换</span><span class="check-desc">关闭后不会自动写入或轮换账号代理</span></span></label>
             <label class="check-card full"><input id="r_local_only" type="checkbox"><span class="check-copy"><span class="check-title">仅本地轮换</span><span class="check-desc">不调用 Resin API，只改写 OAuth 文件中已有代理的用户名</span></span></label>
+            <div class="field"><label for="r_name">来源名称</label><input id="r_name" type="text" autocomplete="off" placeholder="Resin"><span class="hint">用于代理来源列表和自动绑定选择</span></div>
             <div class="field"><label for="r_platform">平台名称</label><input id="r_platform" type="text" autocomplete="off" placeholder="例如 Default"><span class="hint">保存时按名称查询 Resin 平台并取得 UUID</span></div>
-            <div class="field"><label for="r_admin_url">Admin API URL</label><input id="r_admin_url" type="url" autocomplete="off" placeholder="http://resin:2260"><span class="hint">仅 API 模式需要，必须可从 CPA 插件进程访问</span></div>
+            <div class="field full"><label for="r_admin_url">Admin API URL</label><input id="r_admin_url" type="url" autocomplete="off" placeholder="http://resin:2260"><span class="hint">仅 API 模式需要，必须可从 CPA 插件进程访问</span></div>
           </div>
         </div>
       </section>
@@ -2659,9 +2699,9 @@
       </section>
       <section class="card">
         <div class="form-section">
-          <h3 class="section-title"><svg class="icon"><use href="#i-link"></use></svg>代理模板</h3>
+          <h3 class="section-title"><svg class="icon"><use href="#i-link"></use></svg>Resin 代理账号</h3>
           <div class="field-grid">
-            <div class="field full"><label for="r_proxy_template">模板</label><input id="r_proxy_template" type="text" autocomplete="off" placeholder="socks5h://{platform}.{account}:{proxy_token}@resin:2260"><span class="hint">必须包含 {platform}、{account} 和 {proxy_token}</span></div>
+            <div class="field full"><label for="r_account_format">账号格式</label><input id="r_account_format" type="text" autocomplete="off" placeholder="{account}"><span class="hint">无需填写 {platform}；只填写 username 后缀，例如 {account}。系统会拼成 socks5h://{platform}.&lt;填写内容&gt;:{proxy_token}@&lt;Admin API 主机&gt;:&lt;端口&gt;</span></div>
             <label class="check-card full"><input id="r_auto_rotate" type="checkbox"><span class="check-copy"><span class="check-title">质量异常后自动轮换</span><span class="check-desc">下次尝试前切换代理；API 模式会异步清理旧租约</span></span></label>
           </div>
         </div>
@@ -2743,6 +2783,7 @@
       selectedAuthID: '',
       accountSelection: new Set(),
       leaseSelection: new Set(),
+      leaseProxyDetails: new Map(),
       refreshing: false
     };
     const formDrafts = new Map();
@@ -3671,12 +3712,36 @@
         actions = '<button class="btn btn-xs btn-ghost" type="button" data-open-account="' + authID + '">' + icon('eye') + '详情</button>';
       }
       actions += '<button class="btn btn-xs btn-ghost" type="button" data-proxy-action="' + (account.auto_bind_excluded ? 'resume-auto' : 'pause-auto') + '" data-auth="' + authID + '">' + (account.auto_bind_excluded ? '恢复自动绑定' : '暂停自动绑定') + '</button>';
-      const proxy = account.proxy ? '<div class="mono">' + esc(account.proxy) + '</div>' : '<span class="subtle">-</span>';
+      const revealedProxy = state.leaseProxyDetails.get(account.auth_id) || '';
+      const proxyText = revealedProxy || account.proxy;
+      const proxyTitle = revealedProxy || '点击眼睛显示完整端点';
+      const proxyLabel = revealedProxy ? '隐藏完整端点' : '显示完整端点';
+      const proxy = account.proxy ? '<div class="endpoint-cell"><div class="mono truncate-line" title="' + esc(proxyTitle) + '">' + esc(proxyText) + '</div><button class="btn btn-xs btn-ghost icon-btn" type="button" data-lease-endpoint="' + authID + '" title="' + proxyLabel + '" aria-label="' + proxyLabel + '">' + icon('eye') + '</button></div>' : '<span class="subtle">-</span>';
       const sourceDetail = sourceLabel !== '-' ? '<div class="subline">' + esc(sourceKind) + ' · ' + esc(sourceLabel) + '</div>' : '';
       return '<tr><td class="select-cell"><input type="checkbox" data-lease-select="' + authID + '" aria-label="选择账号" ' + (selected ? 'checked' : '') + '></td>' +
-        '<td><div class="account-name" title="' + esc(account.display_full || account.display || account.label || '未命名账号') + '">' + esc(account.display || account.label || '未命名账号') + '</div><div class="subline" title="' + esc(account.auth_id) + '">' + esc(account.auth_id_display || account.auth_id) + '</div>' + (account.auto_bind_excluded ? '<div class="subline">自动绑定已暂停</div>' : '') + '</td>' +
+        '<td><div class="account-name truncate-line" title="' + esc(account.display_full || account.display || account.label || '未命名账号') + '">' + esc(account.display || account.label || '未命名账号') + '</div><div class="subline truncate-line" title="' + esc(account.auth_id) + '">' + esc(account.auth_id_display || account.auth_id) + '</div>' + (account.auto_bind_excluded ? '<div class="subline">自动绑定已暂停</div>' : '') + '</td>' +
         '<td>' + (sourceDetail || '<span class="subtle">-</span>') + '</td><td>' + proxy + '</td><td class="mono">' + (account.proxy_source_revision ? 'r' + esc(account.proxy_source_revision) : '-') + '</td><td>' + statusBadge + '</td><td class="actions-cell"><div class="actions">' + actions + '</div></td></tr>';
-    }    function proxySourceLabel(kind) {
+    }
+    async function toggleLeaseEndpoint(authID, button) {
+      if (state.leaseProxyDetails.has(authID)) {
+        state.leaseProxyDetails.delete(authID);
+        renderResin();
+        return;
+      }
+      setBusy(button, true);
+      try {
+        const value = await api('proxy.bindings.endpoint', { auth_id: authID });
+        const full = String(value?.proxy_full || '').trim();
+        if (!full) throw new Error('完整端点为空');
+        state.leaseProxyDetails.set(authID, full);
+        renderResin();
+      } catch (error) {
+        toast('读取完整端点失败：' + error.message, 'error');
+      } finally {
+        if (button.isConnected) setBusy(button, false);
+      }
+    }
+    function proxySourceLabel(kind) {
       if (kind === 'node') return '节点';
       if (kind === 'template') return '模板';
       if (kind === 'resin') return 'Resin';
@@ -3978,6 +4043,7 @@
     }
     function readProxyPasswordUpdate(prefix) {
       const action = valueOf(prefix + '_password_action') || 'keep';
+      if (action === 'keep') return undefined;
       return action === 'set' ? { action: action, value: document.getElementById(prefix + '_password_value').value } : { action: action };
     }
     async function showProxyEditorError(error, source, editor) {
@@ -4437,7 +4503,7 @@
       document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyTemplateEditorForm" class="drawer-form"><div class="stack"><section class="card"><div class="form-section"><h3 class="section-title">代理格式</h3><div class="field-grid">' +
         proxyEditorField('模板名称', 'ptpl_name', template.name || '', { hint: '用于识别模板' }) +
         proxyEditorCheck('启用模板', 'ptpl_enabled', source ? Boolean(source.enabled) : true, '关闭后不参与新绑定') +
-        proxyEditorField('模板 URL', 'ptpl_url', '', { full: true, placeholder: source ? '留空保持现有模板，输入新 URL 会重新识别变量' : 'socks5h://user-{vendor}-{plan}:密码@proxy.example:1080', hint: template.username_pattern ? ('当前用户名：' + template.username_pattern + '；留空保持') : '密码不可使用占位符，需包含协议' }) +
+        proxyEditorField('模板 URL', 'ptpl_url', '', { full: true, placeholder: source ? '留空保持现有模板，输入新 URL 会重新识别变量' : 'socks5h://user-{vendor}-{plan}:password@proxy.example:1080', hint: template.username_pattern ? ('当前用户名：' + template.username_pattern + '；URL 中的 password 优先') : 'URL 中的 password 优先；password 不可使用占位符' }) +
         proxyEditorField('优先级', 'ptpl_priority', template.priority || 0, { type: 'number', min: -1000000, max: 1000000, hint: '数值越大越优先' }) +
         proxyEditorField('绑定上限', 'ptpl_max_bindings', template.max_bindings || 0, { type: 'number', min: 0, hint: '0 表示不限' }) +
         '<div class="field"><label for="ptpl_update_policy">保存修改时</label><select id="ptpl_update_policy"><option value="keep_bound">仅保存模板</option><option value="rerender_bound">同步已绑定账号</option></select><span class="hint">仅保存或同步已绑定账号</span></div>' +
@@ -5206,6 +5272,21 @@
         toast(error.message, 'error');
       } finally { setBusy(button, false); }
     }
+    function resinAccountFormatFromTemplate(value, platform) {
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+      const scheme = raw.indexOf('://');
+      let authority = scheme >= 0 ? raw.slice(scheme + 3) : raw;
+      authority = authority.split(/[/?#]/, 1)[0];
+      const at = authority.lastIndexOf('@');
+      const userinfo = at >= 0 ? authority.slice(0, at) : authority;
+      let username = userinfo.split(':')[0] || '';
+      try { username = decodeURIComponent(username); } catch (_) {}
+      if (username.startsWith('{platform}.')) return username.slice('{platform}.'.length);
+      const prefix = String(platform || '').trim();
+      if (prefix && username.startsWith(prefix + '.')) return username.slice(prefix.length + 1);
+      return username;
+    }
     function populateResinForm() {
       if (isFormDirty('resinForm')) return;
       const resin = state.resin || {};
@@ -5213,9 +5294,10 @@
       if (draft) draft.baseVersion = Number(resin.config_version || 1);
       setChecked('r_enabled', Boolean(resin.enabled));
       setChecked('r_local_only', Boolean(resin.local_only));
+      setValue('r_name', resin.name || 'Resin');
       setValue('r_platform', resin.platform || '');
       setValue('r_admin_url', resin.admin_url || '');
-      setValue('r_proxy_template', resin.proxy_template || 'socks5h://{platform}.{account}:{proxy_token}@resin:2260');
+      setValue('r_account_format', resin.account_format || resinAccountFormatFromTemplate(resin.proxy_template, resin.platform) || '{account}');
       setChecked('r_auto_rotate', Boolean(resin.auto_rotate_after_quality_failure));
       setValue('r_admin_token', '');
       setValue('r_proxy_token', '');
@@ -5226,7 +5308,7 @@
     function updateResinModeFields() {
       const resin = state.resin || {};
       const localMode = document.getElementById('r_local_only').checked;
-      ['r_platform', 'r_admin_url', 'r_admin_token', 'r_proxy_token', 'r_proxy_template'].forEach((id) => {
+      ['r_platform', 'r_admin_url', 'r_admin_token', 'r_proxy_token', 'r_account_format'].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.disabled = localMode;
       });
@@ -5253,11 +5335,12 @@
         expected_version: Number(formDrafts.get('resinForm')?.baseVersion || state.resin?.config_version || 1),
         enabled: document.getElementById('r_enabled').checked,
         local_only: document.getElementById('r_local_only').checked,
+        name: valueOf('r_name'),
         platform: valueOf('r_platform'),
         admin_url: valueOf('r_admin_url'),
         admin_token: valueOf('r_admin_token'),
         proxy_token: valueOf('r_proxy_token'),
-        proxy_template: valueOf('r_proxy_template'),
+        account_format: valueOf('r_account_format'),
         auto_rotate_after_quality_failure: document.getElementById('r_auto_rotate').checked
       };
     }
@@ -5586,6 +5669,8 @@
       if (proxyAction) runProxyAction(proxyAction.dataset.proxyAction, proxyAction.dataset.auth, proxyAction);
     });
     document.getElementById('leaseRows').addEventListener('click', (event) => {
+      const endpoint = event.target.closest('[data-lease-endpoint]');
+      if (endpoint) { toggleLeaseEndpoint(endpoint.dataset.leaseEndpoint, endpoint); return; }
       const open = event.target.closest('[data-open-account]');
       if (open) { openAccountDrawer(open.dataset.openAccount); return; }
       const action = event.target.closest('[data-proxy-action]');

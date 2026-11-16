@@ -10,6 +10,30 @@ import (
 	"grok-quality-guard/internal/proxy"
 )
 
+// AccountFormat returns the username pattern without the fixed Resin scheme,
+// password, host, or port.
+func AccountFormat(rawTemplate string) (string, error) {
+	rawTemplate = strings.TrimSpace(rawTemplate)
+	_, rest, ok := strings.Cut(rawTemplate, "://")
+	if !ok {
+		return "", fmt.Errorf("resin proxy template is missing scheme")
+	}
+	authority := rest
+	if end := strings.IndexAny(authority, "/?#"); end >= 0 {
+		authority = authority[:end]
+	}
+	at := strings.LastIndexByte(authority, '@')
+	if at < 0 {
+		return "", fmt.Errorf("resin proxy template requires userinfo")
+	}
+	username, _, _ := strings.Cut(authority[:at], ":")
+	decoded, err := url.PathUnescape(username)
+	if err != nil || strings.TrimSpace(decoded) == "" {
+		return "", fmt.Errorf("resin proxy template username is invalid")
+	}
+	return decoded, nil
+}
+
 // AccountFromProxyURL extracts an identity; callers must separately verify
 // persisted management evidence before treating that identity as a managed lease.
 func AccountFromProxyURL(proxyURL string) string {
