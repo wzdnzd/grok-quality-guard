@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	proxy "grok-quality-guard/internal/proxy"
 )
 
 func TestResinLeaseDeleteBackoff(t *testing.T) {
@@ -57,8 +59,14 @@ func TestCatalogRemovalQueuesManagedResinLeaseDelete(t *testing.T) {
 		cfg.Resin.PlatformID = testResinPlatformID
 		cfg.Resin.AdminURL = server.URL
 	})
+	settings := plugin.ResinConfig()
+	snapshotID, err := plugin.stateStore().EnsureResinSnapshot(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if errUpdate := plugin.updateStateAccount("auth-1", func(account *AccountState) error {
 		account.Resin = ResinState{Managed: true, Account: "grok-alice-old1", Generation: 1}
+		account.Proxy = proxy.Binding{AuthID: "auth-1", SourceID: resinSourceID, SourceKind: proxy.SourceResin, Generation: 1, Lease: &proxy.LeaseRef{Provider: "resin", Account: "grok-alice-old1", PlatformID: settings.PlatformID, SnapshotID: snapshotID}}
 		return nil
 	}); errUpdate != nil {
 		t.Fatal(errUpdate)
@@ -105,7 +113,6 @@ func TestCatalogRemovalSkipsResinLeaseDeleteWithoutAPIConfig(t *testing.T) {
 		resin      ResinState
 	}{
 		{name: "local only", localOnly: true, resin: ResinState{Managed: true, Account: "grok-alice-old1"}},
-		{name: "disabled", disabled: true, resin: ResinState{Managed: true, Account: "grok-alice-old1"}},
 		{name: "missing token", clearToken: true, resin: ResinState{Managed: true, Account: "grok-alice-old1"}},
 		{name: "unmanaged", resin: ResinState{}},
 		{name: "missing account", resin: ResinState{Managed: true}},

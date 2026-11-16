@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	stateSchemaVersion        = 1
+	stateSchemaVersion        = 2
 	defaultEventsLimit        = 1000
 	defaultProbeQueueSize     = 10000
 	maxProbeQueueSize         = 1000000
@@ -146,6 +146,7 @@ type Config struct {
 	Quality          QualityConfig `yaml:"quality" json:"quality"`
 	Probe            ProbeConfig   `yaml:"probe" json:"probe"`
 	Resin            ResinConfig   `yaml:"resin" json:"resin"`
+	Proxy            ProxyConfig   `yaml:"proxy" json:"proxy"`
 	StateFile        string        `yaml:"state_file" json:"state_file"`
 	EventsLimit      int           `yaml:"events_limit" json:"events_limit"`
 }
@@ -160,6 +161,7 @@ type Policy struct {
 	Quality                         QualityConfig `json:"quality"`
 	Probe                           ProbeConfig   `json:"probe"`
 	ResinAutoRotateAfterQualityFail bool          `json:"resin_auto_rotate_after_quality_failure"`
+	ProxyAutoRotateAfterQualityFail bool          `json:"proxy_auto_rotate_after_quality_failure"`
 	EventsLimit                     int           `json:"events_limit"`
 }
 
@@ -228,6 +230,7 @@ func DefaultConfig() Config {
 		Routing:          DefaultRoutingConfig(),
 		Quality:          DefaultQualityConfig(),
 		Probe:            DefaultProbeConfig(),
+		Proxy:            DefaultProxyConfig(),
 		Resin: ResinConfig{
 			Enabled:                       false,
 			Platform:                      "Default",
@@ -282,6 +285,9 @@ func normalizeConfig(cfg *Config) error {
 	}
 	if errProbe := normalizeProbe(&cfg.Probe); errProbe != nil {
 		return errProbe
+	}
+	if errProxy := normalizeProxyConfig(&cfg.Proxy); errProxy != nil {
+		return errProxy
 	}
 	if cfg.Resin.Platform == "" {
 		cfg.Resin.Platform = "Default"
@@ -480,6 +486,7 @@ func PolicyFromConfig(cfg Config) Policy {
 		Quality:                         cfg.Quality,
 		Probe:                           cfg.Probe,
 		ResinAutoRotateAfterQualityFail: cfg.Resin.AutoRotateAfterQualityFailure,
+		ProxyAutoRotateAfterQualityFail: cfg.Proxy.AutoRotateAfterQualityFailure,
 		EventsLimit:                     cfg.EventsLimit,
 	}
 }
@@ -496,6 +503,7 @@ func ApplyPolicy(cfg *Config, policy Policy) error {
 	cfg.Quality = policy.Quality
 	cfg.Probe = policy.Probe
 	cfg.Resin.AutoRotateAfterQualityFailure = policy.ResinAutoRotateAfterQualityFail
+	cfg.Proxy.AutoRotateAfterQualityFailure = policy.ProxyAutoRotateAfterQualityFail
 	cfg.EventsLimit = policy.EventsLimit
 	return normalizeConfig(cfg)
 }
@@ -510,6 +518,7 @@ func normalizePolicy(policy Policy) (Policy, error) {
 	cfg.Quality = policy.Quality
 	cfg.Probe = policy.Probe
 	cfg.Resin.AutoRotateAfterQualityFailure = policy.ResinAutoRotateAfterQualityFail
+	cfg.Proxy.AutoRotateAfterQualityFailure = policy.ProxyAutoRotateAfterQualityFail
 	cfg.EventsLimit = policy.EventsLimit
 	if errNormalize := normalizeConfig(&cfg); errNormalize != nil {
 		return Policy{}, errNormalize

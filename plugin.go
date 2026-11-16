@@ -15,19 +15,21 @@ import (
 )
 
 type Account struct {
-	ID          string
-	AuthIndex   string
-	Type        string
-	Provider    string
-	Label       string
-	Email       string
-	Disabled    bool
-	Unavailable bool
-	Priority    int
-	Path        string
-	Size        int64
-	ModTime     time.Time
-	ProxyURL    string
+	ID            string
+	AuthIndex     string
+	Type          string
+	Provider      string
+	Label         string
+	Email         string
+	Disabled      bool
+	Unavailable   bool
+	Priority      int
+	Path          string
+	Size          int64
+	ModTime       time.Time
+	ProxyURL      string
+	ProxyURLKnown bool
+	ProxyHash     string
 }
 
 type PendingObservation struct {
@@ -97,6 +99,7 @@ type Plugin struct {
 	taskWG  sync.WaitGroup
 
 	resinLeaseDeleteWake chan struct{}
+	proxyMgr             proxyManager
 }
 
 func NewPlugin() *Plugin {
@@ -113,6 +116,7 @@ func NewPlugin() *Plugin {
 		probing:              make(map[string]struct{}),
 		grokModels:           make(map[string]struct{}),
 		resinLeaseDeleteWake: make(chan struct{}, 1),
+		proxyMgr:             newProxyManager(),
 		requestCtx:           requestCtx,
 		requestCancel:        requestCancel,
 	}
@@ -162,6 +166,10 @@ func (p *Plugin) Configure(raw []byte) error {
 		}
 	}
 	p.stateBootstrapPath = bootstrapPath
+	if errProxyDefaults := p.ensureProxyStateDefaults(p.store, cfg.Proxy.AutoBind, resinSettingsFromConfig(cfg.Resin)); errProxyDefaults != nil {
+		p.mu.Unlock()
+		return errProxyDefaults
+	}
 	cfg.StateFile = activePath
 	p.cfg = cfg
 	p.yamlPolicy = PolicyFromConfig(cfg)
@@ -240,7 +248,7 @@ func (p *Plugin) startWorkersLocked() {
 	p.ctx = ctx
 	p.cancel = cancel
 	p.workersActive = true
-	p.wg.Add(3)
+	p.wg.Add(4)
 	go func() {
 		defer p.wg.Done()
 		p.refreshLoop(ctx)
@@ -252,6 +260,10 @@ func (p *Plugin) startWorkersLocked() {
 	go func() {
 		defer p.wg.Done()
 		p.resinLeaseDeleteLoop(ctx)
+	}()
+	go func() {
+		defer p.wg.Done()
+		p.proxyAutoBindLoop(ctx)
 	}()
 }
 
@@ -439,6 +451,7 @@ func (p *Plugin) refreshCatalogLocked(ctx context.Context) error {
 	if routingChanged || !p.selectionIndex.Ready() {
 		_ = p.rebuildSelectionIndex()
 	}
+	p.wakeProxyAutoBind()
 	return nil
 }
 
@@ -549,8 +562,10 @@ func (p *Plugin) refreshAuthMeta(ctx context.Context, accounts, previousCatalog 
 		}
 		if previousIndex, exists := previousByID[account.ID]; exists && previousIndex >= 0 && previousIndex < len(previousCatalog) {
 			cached := previousCatalog[previousIndex]
-			if cached.Path == path && cached.Size == account.Size && cached.ModTime.Equal(account.ModTime) {
+			if cached.ProxyURLKnown && cached.Path == path && cached.Size == account.Size && cached.ModTime.Equal(account.ModTime) {
 				account.ProxyURL = cached.ProxyURL
+				account.ProxyURLKnown = true
+				account.ProxyHash = cached.ProxyHash
 				continue
 			}
 		}
@@ -569,6 +584,10 @@ func (p *Plugin) refreshAuthMeta(ctx context.Context, accounts, previousCatalog 
 		value := values[job.accountIndex]
 		if value.loaded {
 			accounts[job.accountIndex].ProxyURL = value.proxyURL
+			accounts[job.accountIndex].ProxyURLKnown = true
+			if value.proxyURL != "" {
+				accounts[job.accountIndex].ProxyHash = proxyURLHash(value.proxyURL)
+			}
 		}
 	}
 }
@@ -576,17 +595,23 @@ func (p *Plugin) refreshAuthMeta(ctx context.Context, accounts, previousCatalog 
 func readAuthProxyURL(path string) (string, bool) {
 	data, errRead := os.ReadFile(path)
 	if errRead != nil {
-		return "", true
+		return "", false
+	}
+	if strings.TrimSpace(string(data)) == "null" {
+		return "", false
 	}
 	var metadata struct {
 		ProxyURL json.RawMessage `json:"proxy_url"`
 	}
 	if errUnmarshal := json.Unmarshal(data, &metadata); errUnmarshal != nil {
-		return "", true
+		return "", false
 	}
 	var proxyURL string
-	if len(metadata.ProxyURL) == 0 || json.Unmarshal(metadata.ProxyURL, &proxyURL) != nil {
+	if len(metadata.ProxyURL) == 0 || string(metadata.ProxyURL) == "null" {
 		return "", true
+	}
+	if json.Unmarshal(metadata.ProxyURL, &proxyURL) != nil {
+		return "", false
 	}
 	return strings.TrimSpace(proxyURL), true
 }
@@ -600,11 +625,13 @@ func (p *Plugin) syncCatalogState(accounts []Account) error {
 	for _, account := range accounts {
 		live[account.ID] = struct{}{}
 	}
-	resinCfg := p.ResinConfig()
-	cleanupResinLeases := canDeleteResinLease(resinCfg)
 	leaseDeleteQueued := false
 	errSync := store.UpdateIfChanged(func(state *State) (bool, error) {
 		changed := false
+		cleanupKeys := make(map[string]struct{}, len(state.ResinLeaseDeletes))
+		for _, job := range state.ResinLeaseDeletes {
+			cleanupKeys[resinLeaseDeleteKey(job.AdminURL, job.PlatformID, job.Account)] = struct{}{}
+		}
 		for authID, account := range state.Accounts {
 			if _, ok := live[authID]; ok {
 				if account != nil && !account.CatalogMissingSince.IsZero() {
@@ -630,11 +657,20 @@ func (p *Plugin) syncCatalogState(accounts []Account) error {
 					continue
 				}
 			}
-			if cleanupResinLeases {
-				leaseAccount := strings.TrimSpace(account.Resin.Account)
-				if leaseAccount != "" && queueResinLeaseDeleteAndRecord(state, authID, resinCfg, leaseAccount) {
-					leaseDeleteQueued = true
-					changed = true
+			if store.proxyPending[authID] != "" {
+				continue
+			}
+			binding, managed := bindingForAccount(*account)
+			if managed && binding.Lease != nil && binding.Lease.Provider == "resin" && binding.Lease.SnapshotID != "" {
+				if settings, ok := state.ResinSnapshots[binding.Lease.SnapshotID]; ok && resinCleanupConfigured(settings) {
+					job := newResinLeaseDelete(authID, settings, binding.Lease.Account)
+					key := resinLeaseDeleteKey(job.AdminURL, job.PlatformID, job.Account)
+					if _, exists := cleanupKeys[key]; !exists {
+						state.ResinLeaseDeletes = append(state.ResinLeaseDeletes, job)
+						cleanupKeys[key] = struct{}{}
+						leaseDeleteQueued = true
+						changed = true
+					}
 				}
 			}
 			delete(state.Accounts, authID)

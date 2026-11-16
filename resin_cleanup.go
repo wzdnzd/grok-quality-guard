@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	proxy "grok-quality-guard/internal/proxy"
+	resinpkg "grok-quality-guard/internal/proxy/resin"
 )
 
 const (
@@ -66,11 +69,12 @@ func gcResinAdminTokens(state *State) {
 }
 
 func canDeleteResinLease(settings ResinSettings) bool {
-	return settings.Enabled &&
-		!settings.LocalOnly &&
-		strings.TrimSpace(settings.AdminURL) != "" &&
-		strings.TrimSpace(settings.PlatformID) != "" &&
-		strings.TrimSpace(settings.AdminToken) != ""
+	return resinCleanupConfigured(settings)
+}
+
+func newResinLeaseDelete(authID string, settings ResinSettings, account string) ResinLeaseDelete {
+	now := time.Now().UTC()
+	return ResinLeaseDelete{AuthID: authID, AdminURL: settings.AdminURL, PlatformID: settings.PlatformID, Account: account, SnapshotID: resinSnapshotID(settings), Status: "pending", CreatedAt: now, NextAttemptAt: now}
 }
 
 func queueResinLeaseDelete(state *State, authID string, settings ResinSettings, account string) bool {
@@ -185,8 +189,14 @@ func (p *Plugin) processDueResinLeaseDeletes(ctx context.Context, now time.Time)
 		if !job.NextAttemptAt.IsZero() && job.NextAttemptAt.After(now) {
 			continue
 		}
+		if job.Paused || job.Status == "permanent_failure" {
+			continue
+		}
 		p.processResinLeaseDelete(ctx, job)
 		processed++
+		if processed >= 64 {
+			break
+		}
 	}
 	return processed
 }
@@ -201,26 +211,33 @@ func (p *Plugin) processResinLeaseDelete(ctx context.Context, job ResinLeaseDele
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	settings := p.ResinConfig()
-	adminURL := firstNonEmpty(job.AdminURL, settings.AdminURL)
-	platformID := firstNonEmpty(job.PlatformID, settings.PlatformID)
+	adminURL := job.AdminURL
+	platformID := job.PlatformID
 	adminToken := strings.TrimSpace(job.AdminToken)
 	if adminToken == "" {
 		adminToken = p.stateStore().ResinAdminToken(job.AdminTokenRef)
 	}
-	if adminToken == "" || sameResinAdminURL(adminURL, settings.AdminURL) {
-		adminToken = firstNonEmpty(strings.TrimSpace(settings.AdminToken), adminToken)
-	}
 	var errDelete error
-	switch {
-	case strings.TrimSpace(adminURL) == "":
-		errDelete = errors.New("resin admin URL is missing")
-	case strings.TrimSpace(platformID) == "":
-		errDelete = errors.New("resin platform ID is missing")
-	case strings.TrimSpace(adminToken) == "":
-		errDelete = errors.New("resin admin token is missing")
-	default:
-		errDelete = deleteResinLease(ctx, adminURL, platformID, adminToken, job.Account)
+	if job.SnapshotID != "" {
+		handler := resinpkg.CleanupHandler{Resolve: func(_ context.Context, id string) (resinpkg.IntegrationSnapshot, error) {
+			settings, ok := p.stateStore().ResinSnapshot(id)
+			if !ok {
+				return resinpkg.IntegrationSnapshot{}, errors.New("resin cleanup snapshot is missing")
+			}
+			return resinpkg.IntegrationSnapshot{ID: id, AdminURL: settings.AdminURL, PlatformID: settings.PlatformID, AdminToken: settings.AdminToken}, nil
+		}}
+		errDelete = handler.Delete(ctx, proxy.LeaseRef{Provider: "resin", SnapshotID: job.SnapshotID, PlatformID: job.PlatformID, Account: job.Account})
+	} else {
+		switch {
+		case strings.TrimSpace(adminURL) == "":
+			errDelete = errors.New("resin admin URL is missing")
+		case strings.TrimSpace(platformID) == "":
+			errDelete = errors.New("resin platform ID is missing")
+		case strings.TrimSpace(adminToken) == "":
+			errDelete = errors.New("resin admin token is missing")
+		default:
+			errDelete = deleteResinLease(ctx, adminURL, platformID, adminToken, job.Account)
+		}
 	}
 	if ctx.Err() != nil {
 		return
@@ -246,6 +263,20 @@ func (p *Plugin) finishResinLeaseDelete(job ResinLeaseDelete) {
 func (p *Plugin) rescheduleResinLeaseDelete(job ResinLeaseDelete, errDelete error, now time.Time) {
 	attempts := job.Attempts + 1
 	delay := resinLeaseDeleteBackoff(attempts)
+	status := "retry_wait"
+	var remote *resinDeleteError
+	if errors.As(errDelete, &remote) {
+		if remote.RetryAfter > delay {
+			delay = remote.RetryAfter
+		}
+		if remote.Permanent {
+			status = "permanent_failure"
+		}
+		if remote.Status == 401 || remote.Status == 403 {
+			status = "credential_blocked"
+			delay = max(delay, time.Hour)
+		}
+	}
 	nextAttemptAt := now.Add(delay)
 	reason := sanitizeError(errDelete)
 	_ = p.stateStore().UpdateIfChanged(func(state *State) (bool, error) {
@@ -259,6 +290,7 @@ func (p *Plugin) rescheduleResinLeaseDelete(job ResinLeaseDelete, errDelete erro
 			candidate.Attempts = attempts
 			candidate.NextAttemptAt = nextAttemptAt
 			candidate.LastError = reason
+			candidate.Status = status
 			p.recordEvent(state, candidate.AuthID, "", "resin_lease_delete", "retry_scheduled",
 				fmt.Sprintf("account=%s attempt=%d retry_in=%s error=%s", candidate.Account, attempts, delay.Round(time.Second), reason))
 			found = true

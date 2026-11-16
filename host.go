@@ -147,7 +147,7 @@ func rawAuthToMap(raw []byte) (map[string]json.RawMessage, error) {
 		return nil, fmt.Errorf("decode auth JSON: %w", errUnmarshal)
 	}
 	if value == nil {
-		value = make(map[string]json.RawMessage)
+		return nil, fmt.Errorf("auth JSON must be an object")
 	}
 	return value, nil
 }

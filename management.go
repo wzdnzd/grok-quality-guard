@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+
+	proxy "grok-quality-guard/internal/proxy"
 )
 
 type rpcManagementRequest struct {
@@ -88,6 +90,11 @@ type accountSummaryView struct {
 	ResinGeneration   int64            `json:"resin_generation,omitempty"`
 	ProxyStatus       string           `json:"proxy_status"`
 	Proxy             string           `json:"proxy,omitempty"`
+	ProxySourceID     string           `json:"proxy_source_id,omitempty"`
+	ProxySourceKind   string           `json:"proxy_source_kind,omitempty"`
+	ProxyManaged      bool             `json:"proxy_managed,omitempty"`
+	ProxyGeneration   uint64           `json:"proxy_generation,omitempty"`
+	AutoBindExcluded  bool             `json:"auto_bind_excluded,omitempty"`
 	TPS               float64          `json:"tps,omitempty"`
 	OutputTokens      int64            `json:"output_tokens,omitempty"`
 	ReasoningTokens   int64            `json:"reasoning_tokens,omitempty"`
@@ -139,7 +146,20 @@ func (p *Plugin) HandleManagement(request []byte) ([]byte, error) {
 		if status == 0 {
 			status = http.StatusBadRequest
 		}
-		return okEnvelope(managementResponse{StatusCode: status, Headers: jsonHeaders(), Body: jsonError(actionErrorCode(status), sanitizeError(errAction))})
+		code := actionErrorCode(status)
+		detail := map[string]any{"message": sanitizeError(errAction)}
+		var proxyErr *proxyManagementError
+		if errors.As(errAction, &proxyErr) {
+			code = proxyErr.Code
+		}
+		var invalid *proxy.ValidationError
+		if errors.As(errAction, &invalid) {
+			code = invalid.Code
+			detail["path"] = invalid.Path
+		}
+		detail["code"] = code
+		body, _ := json.Marshal(map[string]any{"ok": false, "error": detail})
+		return okEnvelope(managementResponse{StatusCode: status, Headers: jsonHeaders(), Body: body})
 	}
 	if status == 0 {
 		status = http.StatusOK
@@ -167,6 +187,62 @@ func (p *Plugin) handleAction(ctx context.Context, action actionRequest) (any, i
 		return p.actionRestore(ctx, action.Params)
 	case "accounts.restore_selected":
 		return p.actionRestoreSelected(ctx, action.Params)
+	case "proxy.summary":
+		return p.actionProxySummary(ctx)
+	case "proxy.sources.list":
+		return p.actionProxySourcesList(action.Params)
+	case "proxy.sources.get":
+		return p.actionProxySourceGet(action.Params)
+	case "proxy.sources.validate":
+		return p.actionProxySourceValidate(action.Params)
+	case "proxy.sources.preview":
+		return p.actionProxySourcePreview(action.Params)
+	case "proxy.sources.test":
+		return p.actionProxySourceTest(ctx, action.Params)
+	case "proxy.sources.create":
+		return p.actionProxySourceCreate(action.Params)
+	case "proxy.sources.import_nodes":
+		return p.actionProxyImportNodes(action.Params)
+	case "proxy.sources.update":
+		return p.actionProxySourceUpdate(action.Params)
+	case "proxy.sources.delete":
+		return p.actionProxySourceDelete(action.Params)
+	case "proxy.bindings.list":
+		return p.actionProxyBindingsList(ctx, action.Params)
+	case "proxy.bindings.bind":
+		return p.actionProxyBind(ctx, action.Params)
+	case "proxy.bindings.clear":
+		return p.actionProxyClear(ctx, action.Params)
+	case "proxy.bindings.rotate":
+		return p.actionProxyRotate(ctx, action.Params)
+	case "proxy.bindings.adopt":
+		return p.actionProxyBatch("adopt", action.Params)
+	case "proxy.bindings.set_auto_bind":
+		return p.actionProxyBindingsAutoBind(action.Params)
+	case "proxy.template.apply", "proxy.templates.apply_bound":
+		return p.actionProxyTemplateApply(ctx, action.Params)
+	case "proxy.bind_unbound":
+		return p.actionProxyBindUnbound(ctx, action.Params)
+	case "proxy.auto_bind.get":
+		return p.actionProxyAutoBindGet()
+	case "proxy.auto_bind.update":
+		return p.actionProxyAutoBindUpdate(action.Params)
+	case "proxy.auto_bind.run":
+		return p.actionProxyAutoBindRun()
+	case "proxy.changes.list":
+		return p.actionProxyChangesList(action.Params)
+	case "proxy.changes.get":
+		return p.actionProxyChange(action.Params, "get")
+	case "proxy.changes.retry":
+		return p.actionProxyChange(action.Params, "retry")
+	case "proxy.changes.cancel":
+		return p.actionProxyChange(action.Params, "cancel")
+	case "resin.cleanup.list":
+		return p.actionResinCleanup(action.Params, "list")
+	case "resin.cleanup.retry":
+		return p.actionResinCleanup(action.Params, "retry")
+	case "resin.cleanup.pause":
+		return p.actionResinCleanup(action.Params, "pause")
 	case "resin.bind":
 		return p.actionResinBind(ctx, action.Params)
 	case "resin.bind_unbound":
@@ -758,6 +834,7 @@ func (p *Plugin) actionPolicyUpdate(params map[string]any) (any, int, error) {
 	p.cfg.Quality = normalized.Quality
 	p.cfg.Probe = normalized.Probe
 	p.cfg.Resin.AutoRotateAfterQualityFailure = normalized.ResinAutoRotateAfterQualityFail
+	p.cfg.Proxy.AutoRotateAfterQualityFailure = normalized.ProxyAutoRotateAfterQualityFail
 	p.cfg.EventsLimit = normalized.EventsLimit
 	p.mu.Unlock()
 	p.wakeProbeWaiters()
@@ -793,6 +870,7 @@ func (p *Plugin) actionPolicyReset() (any, int, error) {
 	p.cfg.Quality = normalized.Quality
 	p.cfg.Probe = normalized.Probe
 	p.cfg.Resin.AutoRotateAfterQualityFailure = normalized.ResinAutoRotateAfterQualityFail
+	p.cfg.Proxy.AutoRotateAfterQualityFailure = normalized.ProxyAutoRotateAfterQualityFail
 	p.cfg.EventsLimit = normalized.EventsLimit
 	p.mu.Unlock()
 	p.wakeProbeWaiters()
@@ -871,7 +949,9 @@ func (p *Plugin) actionEventsList(params map[string]any) (any, int, error) {
 }
 
 func (p *Plugin) accountSummary(account Account, stateAccount AccountState, resinCfg ResinSettings, proxyURL string) accountSummaryView {
-	resinAccount, resinManaged := managedResinBindingWithProxy(proxyURL, stateAccount, resinCfg)
+	_ = resinCfg
+	resinAccount := strings.TrimSpace(stateAccount.Resin.Account)
+	resinManaged := stateAccount.Resin.Managed || resinAccount != ""
 	displayFull := strings.TrimSpace(firstNonEmpty(account.Email, account.Label, account.ID))
 	displayLabel := strings.TrimSpace(account.Label)
 	if strings.Contains(displayLabel, "@") {
@@ -907,11 +987,21 @@ func (p *Plugin) accountSummary(account Account, stateAccount AccountState, resi
 			view.State = StateExternallyDisabled
 		}
 	}
-
-	if view.ResinAccount != "" {
-		view.ProxyStatus = "bound"
-	} else if strings.TrimSpace(proxyURL) != "" {
-		view.ProxyStatus = "conflict"
+	binding, hasBinding := p.proxyBindingForAccount(stateAccount)
+	proxyStatus, sourceID, sourceKind, _ := p.proxyAccountBindingView(stateAccount, proxyURL)
+	view.ProxyStatus = proxyStatus
+	view.ProxySourceID = sourceID
+	view.ProxySourceKind = string(sourceKind)
+	view.ProxyManaged = hasBinding
+	view.AutoBindExcluded = stateAccount.AutoBind.Excluded
+	if hasBinding {
+		view.ProxyGeneration = binding.Generation
+		if binding.SourceKind == proxy.SourceResin {
+			view.ResinManaged = true
+			if binding.Lease != nil && binding.Lease.Account != "" {
+				view.ResinAccount = binding.Lease.Account
+			}
+		}
 	}
 	return view
 }
@@ -926,6 +1016,8 @@ func accountStateFromSummary(summary AccountStateSummary) AccountState {
 		CooldownUntil:     summary.CooldownUntil,
 		ProbeBackoffUntil: summary.ProbeBackoffUntil,
 		Resin:             summary.Resin,
+		Proxy:             summary.Proxy,
+		AutoBind:          summary.AutoBind,
 		Metrics:           summary.Metrics,
 	}
 }

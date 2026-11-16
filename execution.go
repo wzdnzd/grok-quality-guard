@@ -1034,8 +1034,10 @@ func (p *Plugin) applyTransparentFailureVerdict(ctx context.Context, authID stri
 
 // rotateAfterFailure runs before the verdict is applied so the same auth can retry on the new proxy
 func (p *Plugin) rotateAfterFailure(ctx context.Context, authID, class string) (bool, error) {
-	resinConfig := p.ResinConfig()
-	if !resinConfig.Enabled || !resinConfig.AutoRotateAfterQualityFailure {
+	p.mu.RLock()
+	autoRotate := p.cfg.Proxy.AutoRotateAfterQualityFailure
+	p.mu.RUnlock()
+	if !autoRotate {
 		return false, nil
 	}
 	if class != ClassMissingThinking && class != ClassCipherDrool && class != ClassFakeEncryptedDump && class != ClassBufferedBurst {
@@ -1045,19 +1047,23 @@ func (p *Plugin) rotateAfterFailure(ctx context.Context, authID, class string) (
 	if isIsolatedState(stateAccount.State) {
 		return false, nil
 	}
-	_, _, raw, errResolve := p.resolveAuth(ctx, authID)
-	if errResolve != nil {
+	binding, managed := p.proxyBindingForAccount(stateAccount)
+	if !managed {
+		return false, nil
+	}
+	if _, _, _, errResolve := p.resolveAuth(ctx, authID); errResolve != nil {
 		_ = p.recordAttemptError(authID, ClassProxyError, errResolve)
 		return false, errResolve
 	}
-	if _, managed := managedResinBinding(raw, stateAccount, resinConfig); !managed {
-		return false, nil
-	}
-	if errRotate := p.RotateResin(ctx, authID); errRotate != nil {
+	result, errRotate := p.rotateProxy(ctx, authID, proxyBindOptions{SourceScope: string(binding.SourceKind)})
+	if errRotate != nil {
 		_ = p.recordAttemptError(authID, ClassProxyError, errRotate)
+		if result.Status == "rotation_unavailable" {
+			return false, nil
+		}
 		return false, errRotate
 	}
-	return true, nil
+	return result.Status == "rotated" || result.Status == "succeeded", nil
 }
 
 const maxUpstreamErrorBodyBytes = 64 << 10

@@ -32,8 +32,8 @@ auths/*
 # Documentation
 references/*
 docs/*
-!docs/management-api-v8.md
 !docs/grok-quality-guard-plugin-design.md
+!docs/proxy-management-design.md
 AGENTS.md
 CLAUDE.md
 GEMINI.md
@@ -59,6 +59,7 @@ _bmad/*
 _bmad-output/*
 .gocache/
 .gomodcache/
+.gopath/
 .gitnexus/
 
 # macOS

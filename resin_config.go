@@ -14,6 +14,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	proxy "grok-quality-guard/internal/proxy"
+	resinpkg "grok-quality-guard/internal/proxy/resin"
 )
 
 var resinPlatformIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -33,6 +36,7 @@ type ResinSettings struct {
 }
 
 type resinConfigView struct {
+	ConfigVersion                 uint64    `json:"config_version"`
 	Configured                    bool      `json:"configured"`
 	Enabled                       bool      `json:"enabled"`
 	LocalOnly                     bool      `json:"local_only"`
@@ -76,6 +80,7 @@ func resinConfigErrorf(status int, format string, args ...any) error {
 func (p *Plugin) ResinConfig() ResinSettings {
 	p.mu.RLock()
 	cfg := p.cfg.Resin
+	rotate := p.cfg.Proxy.AutoRotateAfterQualityFailure
 	p.mu.RUnlock()
 
 	settings := resinSettingsFromConfig(cfg)
@@ -95,6 +100,7 @@ func (p *Plugin) ResinConfig() ResinSettings {
 
 		}
 	}
+	settings.AutoRotateAfterQualityFailure = rotate
 	return normalizeResinSettingsBestEffort(settings)
 }
 
@@ -136,14 +142,31 @@ func normalizeResinSettingsBestEffort(settings ResinSettings) ResinSettings {
 }
 
 func (p *Plugin) resinConfigView(settings ResinSettings) resinConfigView {
+	version := uint64(1)
+	if store := p.stateStore(); store != nil {
+		version = max(1, store.ProxyResinSource().ConfigVersion)
+	}
+	displayTemplate := settings.ProxyTemplate
+	if template, err := resinpkg.MigrateTemplate(settings.ProxyTemplate, settings.Platform, settings.ProxyToken); err == nil {
+		template.HasPassword = false
+		template.Password = ""
+		displayTemplate = template.URLForDisplay()
+	}
+	if scheme, rest, ok := strings.Cut(displayTemplate, "://"); ok {
+		if at := strings.LastIndexByte(rest, '@'); at >= 0 {
+			user, _, _ := strings.Cut(rest[:at], ":")
+			displayTemplate = scheme + "://" + user + "@" + rest[at+1:]
+		}
+	}
 	return resinConfigView{
+		ConfigVersion:                 version,
 		Configured:                    settings.Configured,
 		Enabled:                       settings.Enabled,
 		LocalOnly:                     settings.LocalOnly,
 		Platform:                      settings.Platform,
 		PlatformID:                    settings.PlatformID,
 		AdminURL:                      settings.AdminURL,
-		ProxyTemplate:                 settings.ProxyTemplate,
+		ProxyTemplate:                 displayTemplate,
 		AutoRotateAfterQualityFailure: settings.AutoRotateAfterQualityFailure,
 		AdminTokenSet:                 strings.TrimSpace(settings.AdminToken) != "",
 		ProxyTokenSet:                 strings.TrimSpace(settings.ProxyToken) != "",
@@ -171,23 +194,41 @@ func (p *Plugin) actionResinConfigSave(_ context.Context, params map[string]any)
 	if p.stateStore() == nil {
 		return nil, http.StatusInternalServerError, errors.New("state store is not initialized")
 	}
+	version := p.stateStore().ProxyResinSource().ConfigVersion
+	if expected := intFromParams(params, "expected_version", 0); expected > 0 && uint64(expected) != version {
+		return nil, 409, proxyError("proxy_source_version_conflict", 409, "Resin configuration changed; reload before saving")
+	}
 	candidate := resinSettingsFromParams(params, p.ResinConfig())
 	normalized, errNormalize := normalizeResinSettings(candidate)
 	if errNormalize != nil {
 		return nil, http.StatusBadRequest, errNormalize
 	}
 	task := p.startTask("resin.config.save", nil, "正在验证并保存 Resin 配置", func(taskCtx context.Context) (any, error) {
-		return p.saveResinConfig(taskCtx, normalized)
+		return p.saveResinConfigVersioned(taskCtx, normalized, version)
 	})
 	return task, http.StatusAccepted, nil
 }
 
 func (p *Plugin) saveResinConfig(ctx context.Context, normalized ResinSettings) (any, error) {
+	return p.saveResinConfigVersioned(ctx, normalized, 0)
+}
+func (p *Plugin) saveResinConfigVersioned(ctx context.Context, normalized ResinSettings, expected uint64) (any, error) {
 	store := p.stateStore()
 	if store == nil {
 		return nil, errors.New("state store is not initialized")
 	}
-	result, errValidate := validateResinSettings(ctx, normalized)
+	previous := p.ResinConfig()
+	version := store.ProxyResinSource().ConfigVersion
+	if expected > 0 && version != expected {
+		return nil, proxyError("proxy_source_version_conflict", 409, "Resin configuration changed before validation")
+	}
+	var result resinValidationResult
+	var errValidate error
+	if previous.Configured && !previous.ValidatedAt.IsZero() && resinGeneratedConfigEqual(previous, normalized) {
+		result = resinValidationResult{Platform: previous.Platform, PlatformID: previous.PlatformID, LocalOnly: previous.LocalOnly, ValidatedAt: previous.ValidatedAt}
+	} else {
+		result, errValidate = validateResinSettings(ctx, normalized)
+	}
 	if errValidate != nil {
 		return nil, errValidate
 	}
@@ -200,6 +241,15 @@ func (p *Plugin) saveResinConfig(ctx context.Context, normalized ResinSettings) 
 	normalized.LocalOnly = result.LocalOnly
 	normalized.Configured = true
 	normalized.ValidatedAt = result.ValidatedAt
+	if !normalized.LocalOnly {
+		template, err := resinpkg.MigrateTemplate(normalized.ProxyTemplate, normalized.Platform, normalized.ProxyToken)
+		if err != nil {
+			return nil, err
+		}
+		template.HasPassword = false
+		template.Password = ""
+		normalized.ProxyTemplate = template.URLForDisplay()
+	}
 	eventResult := "validated"
 	eventDetail := "platform_id=" + normalized.PlatformID
 	if normalized.LocalOnly {
@@ -207,8 +257,53 @@ func (p *Plugin) saveResinConfig(ctx context.Context, normalized ResinSettings) 
 		eventDetail = "local_only"
 	}
 	if errStore := store.Update(func(state *State) error {
+		if state.Proxy.ResinSource.ConfigVersion != version {
+			return proxyError("proxy_source_version_conflict", 409, "Resin configuration changed during validation")
+		}
+		if hasPendingSourceOperation(*state, resinSourceID) {
+			return proxyError("proxy_source_busy", 409, "complete pending Resin operations before changing configuration")
+		}
+		if state.Proxy.SourceRuntime[resinSourceID].ChangeID != "" {
+			return proxyError("proxy_source_busy", 409, "Resin source change is unfinished")
+		}
+		if state.ResinSnapshots == nil {
+			state.ResinSnapshots = make(map[string]ResinSettings)
+		}
+		if resinCleanupConfigured(previous) {
+			id := resinSnapshotID(previous)
+			state.ResinSnapshots[id] = previous
+			for authID, account := range state.Accounts {
+				binding, managed := bindingForAccount(*account)
+				if managed && binding.SourceKind == proxy.SourceResin && binding.Lease != nil && binding.Lease.SnapshotID == "" {
+					lease := *binding.Lease
+					lease.SnapshotID = id
+					lease.PlatformID = previous.PlatformID
+					binding.Lease = &lease
+					binding.AuthID = authID
+					account.Proxy = binding
+				}
+			}
+		}
 		state.Resin = normalized
+		if resinCleanupConfigured(normalized) {
+			state.ResinSnapshots[resinSnapshotID(normalized)] = normalized
+		}
+		state.Proxy.ResinSource.ID = resinSourceID
+		state.Proxy.ResinSource.Name = "Resin"
+		state.Proxy.ResinSource.Enabled = normalized.Enabled
+		state.Proxy.ResinSource.Deleted = false
+		if !resinGeneratedConfigEqual(previous, normalized) {
+			state.Proxy.ResinSource.Revision++
+		}
+		if state.Proxy.ResinSource.Revision == 0 {
+			state.Proxy.ResinSource.Revision = 1
+		}
+		state.Proxy.ResinSource.ConfigVersion++
+		if state.Proxy.ResinSource.ConfigVersion == 0 {
+			state.Proxy.ResinSource.ConfigVersion = 1
+		}
 		state.Policy.ResinAutoRotateAfterQualityFail = normalized.AutoRotateAfterQualityFailure
+		state.Policy.ProxyAutoRotateAfterQualityFail = normalized.AutoRotateAfterQualityFailure
 		p.recordEvent(state, "", "", "resin_config_save", eventResult, eventDetail)
 		return nil
 	}); errStore != nil {
@@ -216,6 +311,7 @@ func (p *Plugin) saveResinConfig(ctx context.Context, normalized ResinSettings) 
 	}
 	p.mu.Lock()
 	p.policy.ResinAutoRotateAfterQualityFail = normalized.AutoRotateAfterQualityFailure
+	p.policy.ProxyAutoRotateAfterQualityFail = normalized.AutoRotateAfterQualityFailure
 	p.cfg.Resin.Enabled = normalized.Enabled
 	p.cfg.Resin.LocalOnly = normalized.LocalOnly
 	p.cfg.Resin.Platform = normalized.Platform
@@ -223,8 +319,14 @@ func (p *Plugin) saveResinConfig(ctx context.Context, normalized ResinSettings) 
 	p.cfg.Resin.AdminURL = normalized.AdminURL
 	p.cfg.Resin.ProxyTemplate = normalized.ProxyTemplate
 	p.cfg.Resin.AutoRotateAfterQualityFailure = normalized.AutoRotateAfterQualityFailure
+	p.cfg.Proxy.AutoRotateAfterQualityFailure = normalized.AutoRotateAfterQualityFailure
 	p.mu.Unlock()
+	p.wakeProxyAutoBind()
 	return p.resinConfigView(normalized), nil
+}
+
+func resinGeneratedConfigEqual(left, right ResinSettings) bool {
+	return left.LocalOnly == right.LocalOnly && left.Platform == right.Platform && left.PlatformID == right.PlatformID && left.AdminURL == right.AdminURL && left.AdminToken == right.AdminToken && left.ProxyTemplate == right.ProxyTemplate && left.ProxyToken == right.ProxyToken
 }
 func resinSettingsFromParams(params map[string]any, current ResinSettings) ResinSettings {
 	settings := current
@@ -325,30 +427,8 @@ func normalizeResinSettings(settings ResinSettings) (ResinSettings, error) {
 	if len(settings.ProxyToken) > 255 {
 		return ResinSettings{}, resinConfigErrorf(http.StatusBadRequest, "resin proxy_token must not exceed 255 bytes")
 	}
-	if !strings.Contains(settings.ProxyTemplate, "{platform}") || !strings.Contains(settings.ProxyTemplate, "{account}") || !strings.Contains(settings.ProxyTemplate, "{proxy_token}") {
-		return ResinSettings{}, resinConfigErrorf(http.StatusBadRequest, "resin proxy_template must contain {platform}, {account}, and {proxy_token}")
-	}
-	proxyURL, errRender := renderResinProxy(settings, "grok-validation")
-	if errRender != nil {
-		return ResinSettings{}, resinConfigErrorf(http.StatusBadRequest, "resin proxy_template is invalid")
-	}
-	parsedProxy, errProxy := url.Parse(proxyURL)
-	if errProxy != nil || parsedProxy.Host == "" || parsedProxy.User == nil {
-		return ResinSettings{}, resinConfigErrorf(http.StatusBadRequest, "resin proxy_template must contain a proxy host and userinfo")
-	}
-	if parsedProxy.Scheme != "socks5" && parsedProxy.Scheme != "socks5h" {
-		return ResinSettings{}, resinConfigErrorf(http.StatusBadRequest, "resin proxy_template must use socks5 or socks5h")
-	}
-	username := parsedProxy.User.Username()
-	_, hasPassword := parsedProxy.User.Password()
-	if username == "" || !hasPassword {
-		return ResinSettings{}, resinConfigErrorf(http.StatusBadRequest, "resin proxy_template must contain username and password")
-	}
-	if len(username) > 255 {
-		return ResinSettings{}, resinConfigErrorf(http.StatusBadRequest, "resin proxy username must not exceed 255 bytes")
-	}
-	if parsedProxy.Port() == "" {
-		return ResinSettings{}, resinConfigErrorf(http.StatusBadRequest, "resin proxy_template must include a port")
+	if _, err := resinpkg.NewProvider(resinpkg.ProviderSettings{ProxyTemplate: settings.ProxyTemplate, Platform: settings.Platform, PlatformID: settings.PlatformID, ProxyToken: settings.ProxyToken, SnapshotID: "validation"}, nil); err != nil {
+		return ResinSettings{}, resinConfigErrorf(http.StatusBadRequest, "resin proxy template is invalid: %s", err.Error())
 	}
 	return settings, nil
 }
@@ -525,7 +605,8 @@ func resinAdminRequest(ctx context.Context, settings ResinSettings, method, path
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	client := &http.Client{Timeout: 10 * time.Second, Transport: transport}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Timeout: 10 * time.Second, Transport: transport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, errDo := client.Do(req)
 	if errDo != nil {
 		return 0, nil, errDo

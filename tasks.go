@@ -26,6 +26,7 @@ type Task struct {
 	ID          string    `json:"task_id"`
 	Kind        string    `json:"kind"`
 	AuthIDs     []string  `json:"auth_ids,omitempty"`
+	AuthCount   int       `json:"auth_count,omitempty"`
 	Status      string    `json:"status"`
 	Progress    string    `json:"progress,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -120,11 +121,15 @@ func (p *Plugin) runTask(ctx context.Context, taskID string, fn func(context.Con
 	record = p.tasks[taskID]
 	if record != nil {
 		record.task.EndedAt = time.Now().UTC()
+		record.task.AuthCount = len(record.task.AuthIDs)
+		if len(record.task.AuthIDs) > 20 {
+			record.task.AuthIDs = append([]string(nil), record.task.AuthIDs[:20]...)
+		}
 		if errTask != nil {
 			record.task.Status = taskStatusFailed
 			record.task.Error = sanitizeError(errTask)
 			record.task.ErrorStatus = taskErrorStatus(errTask)
-			record.task.Result = nil
+			record.task.Result = result
 		} else {
 			record.task.Status = taskStatusSucceeded
 			record.task.Result = result
@@ -137,6 +142,10 @@ func (p *Plugin) runTask(ctx context.Context, taskID string, fn func(context.Con
 }
 
 func taskErrorStatus(errValue error) int {
+	var proxyErr *proxyManagementError
+	if errors.As(errValue, &proxyErr) {
+		return proxyErr.Status
+	}
 	var resinErr *resinConfigError
 	if errors.As(errValue, &resinErr) {
 		return resinErr.Status
@@ -249,7 +258,18 @@ func (p *Plugin) listTasks(limit int) []Task {
 	tasks := make([]Task, 0, len(p.tasks))
 	for _, record := range p.tasks {
 		if record != nil {
-			tasks = append(tasks, cloneTask(record.task))
+			view := record.task
+			view.AuthIDs = nil
+			if result, ok := view.Result.(map[string]any); ok {
+				summary := make(map[string]any, len(result))
+				for key, value := range result {
+					if key != "items" && key != "samples" {
+						summary[key] = value
+					}
+				}
+				view.Result = summary
+			}
+			tasks = append(tasks, view)
 		}
 	}
 	sort.Slice(tasks, func(i, j int) bool { return tasks[i].CreatedAt.After(tasks[j].CreatedAt) })

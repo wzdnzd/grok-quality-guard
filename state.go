@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	proxy "grok-quality-guard/internal/proxy"
 )
 
 type Metrics struct {
@@ -95,6 +97,9 @@ type ResinLeaseDelete struct {
 	AdminToken    string    `json:"admin_token,omitempty"`
 	PlatformID    string    `json:"platform_id,omitempty"`
 	Account       string    `json:"account"`
+	SnapshotID    string    `json:"snapshot_id,omitempty"`
+	Paused        bool      `json:"paused,omitempty"`
+	Status        string    `json:"status,omitempty"`
 	CreatedAt     time.Time `json:"created_at,omitempty"`
 	Attempts      int       `json:"attempts,omitempty"`
 	NextAttemptAt time.Time `json:"next_attempt_at,omitempty"`
@@ -102,30 +107,32 @@ type ResinLeaseDelete struct {
 }
 
 type AccountState struct {
-	AuthID                       string           `json:"auth_id"`
-	State                        string           `json:"state"`
-	LastReason                   string           `json:"last_reason,omitempty"`
-	LastAttempt                  *AttemptEvidence `json:"last_attempt,omitempty"`
-	LastEvidence                 *QualityEvidence `json:"last_evidence,omitempty"`
-	FirstSeenAt                  time.Time        `json:"first_seen_at,omitzero"`
-	LastObservedAt               time.Time        `json:"last_observed_at,omitzero"`
-	LastProbeAt                  time.Time        `json:"last_probe_at,omitzero"`
-	CooldownUntil                time.Time        `json:"cooldown_until,omitzero"`
-	QualityStrikeMissingThinking bool             `json:"quality_strike_missing_thinking,omitempty"`
-	QualityFailureAt             time.Time        `json:"quality_failure_at,omitzero"`
-	HealthyStreak                int              `json:"healthy_streak,omitempty"`
-	HealthyStreakStartedAt       time.Time        `json:"healthy_streak_started_at,omitzero"`
-	SoftStrikes                  int              `json:"soft_strikes,omitempty"`
-	ErrorStrikes                 int              `json:"error_strikes,omitempty"`
-	ThinkingStrikes              int              `json:"thinking_strikes,omitempty"`
-	ProbeBackoffUntil            time.Time        `json:"probe_backoff_until,omitzero"`
-	DisableKind                  string           `json:"disable_kind,omitempty"`
-	DisableReason                string           `json:"disable_reason,omitempty"`
-	PreviousDisabled             bool             `json:"previous_disabled,omitempty"`
-	AuthDisabledIntent           *bool            `json:"auth_disabled_intent,omitempty"`
-	CatalogMissingSince          time.Time        `json:"catalog_missing_since,omitzero"`
-	Resin                        ResinState       `json:"resin"`
-	Metrics                      Metrics          `json:"metrics"`
+	AuthID                       string                     `json:"auth_id"`
+	State                        string                     `json:"state"`
+	LastReason                   string                     `json:"last_reason,omitempty"`
+	LastAttempt                  *AttemptEvidence           `json:"last_attempt,omitempty"`
+	LastEvidence                 *QualityEvidence           `json:"last_evidence,omitempty"`
+	FirstSeenAt                  time.Time                  `json:"first_seen_at,omitzero"`
+	LastObservedAt               time.Time                  `json:"last_observed_at,omitzero"`
+	LastProbeAt                  time.Time                  `json:"last_probe_at,omitzero"`
+	CooldownUntil                time.Time                  `json:"cooldown_until,omitzero"`
+	QualityStrikeMissingThinking bool                       `json:"quality_strike_missing_thinking,omitempty"`
+	QualityFailureAt             time.Time                  `json:"quality_failure_at,omitzero"`
+	HealthyStreak                int                        `json:"healthy_streak,omitempty"`
+	HealthyStreakStartedAt       time.Time                  `json:"healthy_streak_started_at,omitzero"`
+	SoftStrikes                  int                        `json:"soft_strikes,omitempty"`
+	ErrorStrikes                 int                        `json:"error_strikes,omitempty"`
+	ThinkingStrikes              int                        `json:"thinking_strikes,omitempty"`
+	ProbeBackoffUntil            time.Time                  `json:"probe_backoff_until,omitzero"`
+	DisableKind                  string                     `json:"disable_kind,omitempty"`
+	DisableReason                string                     `json:"disable_reason,omitempty"`
+	PreviousDisabled             bool                       `json:"previous_disabled,omitempty"`
+	AuthDisabledIntent           *bool                      `json:"auth_disabled_intent,omitempty"`
+	CatalogMissingSince          time.Time                  `json:"catalog_missing_since,omitzero"`
+	Resin                        ResinState                 `json:"resin"`
+	Proxy                        proxy.Binding              `json:"proxy_binding,omitempty"`
+	AutoBind                     proxy.AutoBindAccountState `json:"auto_bind,omitempty"`
+	Metrics                      Metrics                    `json:"metrics"`
 }
 type AccountStateSummary struct {
 	State             string
@@ -136,6 +143,8 @@ type AccountStateSummary struct {
 	CooldownUntil     time.Time
 	ProbeBackoffUntil time.Time
 	Resin             ResinState
+	Proxy             proxy.Binding
+	AutoBind          proxy.AutoBindAccountState
 	Metrics           Metrics
 }
 
@@ -158,6 +167,8 @@ type State struct {
 	Events             []Event                  `json:"events"`
 	ResinLeaseDeletes  []ResinLeaseDelete       `json:"resin_lease_deletes,omitempty"`
 	ResinAdminTokens   map[string]string        `json:"resin_admin_tokens,omitempty"`
+	Proxy              proxy.ProxyState         `json:"proxy,omitempty"`
+	ResinSnapshots     map[string]ResinSettings `json:"resin_snapshots,omitempty"`
 }
 
 type StateStore struct {
@@ -165,9 +176,22 @@ type StateStore struct {
 	path  string
 	state State
 
-	flushMu    sync.Mutex
-	flushTimer *time.Timer
-	dirty      bool
+	flushMu               sync.Mutex
+	flushTimer            *time.Timer
+	dirty                 bool
+	proxyCounts           map[string]int
+	proxyBySource         map[string]map[string]struct{}
+	proxyPending          map[string]string
+	proxySourcesEpoch     uint64
+	proxyChangeIndex      map[string]map[string]int
+	proxyLeaseAccounts    map[string]int
+	proxyPendingCounts    map[string]int
+	proxyPendingReserved  map[string]string
+	proxyOperationLeases  map[string]string
+	proxyTerminalOps      map[string]struct{}
+	proxyCleanupIndex     map[string]int
+	proxyLastGC           time.Time
+	proxyRecoveredChanges []string
 }
 
 const stateFlushInterval = time.Second
@@ -257,6 +281,18 @@ func (s *StateStore) setPath(path string, overwrite bool) error {
 	}
 	oldPath := s.path
 	oldUpdatedAt := s.state.UpdatedAt
+	if !overwrite {
+		if _, err := os.Stat(path + ".proxy-journal"); err == nil {
+			return fmt.Errorf("%w: target proxy journal already exists", os.ErrExist)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if s.dirty {
+		if err := s.saveLocked(); err != nil {
+			return err
+		}
+	}
 	s.path = path
 	s.state.UpdatedAt = time.Now().UTC()
 	if errSave := s.saveLocked(); errSave != nil {
@@ -337,13 +373,8 @@ func writeStatePathPointer(bootstrapPath, activePath string) error {
 	if errClose := temp.Close(); errClose != nil {
 		return fmt.Errorf("close state path pointer: %w", errClose)
 	}
-	if errRename := os.Rename(tempName, pointerPath); errRename != nil {
-		if errRemove := os.Remove(pointerPath); errRemove != nil && !errors.Is(errRemove, os.ErrNotExist) {
-			return fmt.Errorf("replace state path pointer: %w", errRename)
-		}
-		if errRetry := os.Rename(tempName, pointerPath); errRetry != nil {
-			return fmt.Errorf("replace state path pointer: %w", errRetry)
-		}
+	if errReplace := replaceStateFile(tempName, pointerPath); errReplace != nil {
+		return fmt.Errorf("replace state path pointer: %w", errReplace)
 	}
 	return nil
 }
@@ -360,6 +391,9 @@ func (s *StateStore) Load(defaultPolicy Policy, revision string) error {
 		if !errors.Is(errRead, os.ErrNotExist) {
 			return fmt.Errorf("read state file: %w", errRead)
 		}
+		if journal, err := os.Stat(s.path + ".proxy-journal"); err == nil && journal.Size() > 0 {
+			return errors.New("state checkpoint is missing while a proxy journal exists; restore the matching checkpoint")
+		}
 		s.state = State{
 			SchemaVersion:      stateSchemaVersion,
 			UpdatedAt:          time.Now().UTC(),
@@ -368,15 +402,22 @@ func (s *StateStore) Load(defaultPolicy Policy, revision string) error {
 			Accounts:           make(map[string]*AccountState),
 			Events:             []Event{},
 		}
+		s.rebuildProxyIndexesLocked()
+		if errJournal := s.replayProxyJournalLocked(); errJournal != nil {
+			return errJournal
+		}
+		s.rebuildProxyIndexesLocked()
 		return s.saveLocked()
 	}
 	var state State
 	if errUnmarshal := json.Unmarshal(raw, &state); errUnmarshal != nil {
 		return fmt.Errorf("decode state file: %w", errUnmarshal)
 	}
-	if state.SchemaVersion != stateSchemaVersion {
+	if state.SchemaVersion < 1 || state.SchemaVersion > stateSchemaVersion {
 		return fmt.Errorf("unsupported state schema version %d", state.SchemaVersion)
 	}
+	migratedSchema := state.SchemaVersion < stateSchemaVersion
+	state.SchemaVersion = stateSchemaVersion
 	if state.Accounts == nil {
 		state.Accounts = make(map[string]*AccountState)
 	}
@@ -391,6 +432,9 @@ func (s *StateStore) Load(defaultPolicy Policy, revision string) error {
 	if state.PolicyYAMLRevision == "" {
 		state.PolicyYAMLRevision = revision
 	}
+	if migratedSchema {
+		state.Policy.ProxyAutoRotateAfterQualityFail = state.Policy.ResinAutoRotateAfterQualityFail
+	}
 	migrateResinAdminTokens(&state)
 	for authID, account := range state.Accounts {
 		if account == nil {
@@ -399,6 +443,9 @@ func (s *StateStore) Load(defaultPolicy Policy, revision string) error {
 		}
 		if account.AuthID == "" {
 			account.AuthID = authID
+		}
+		if account.Proxy.SourceID == "" && (account.Resin.Managed || strings.TrimSpace(account.Resin.Account) != "") {
+			account.Proxy = proxy.Binding{AuthID: authID, SourceID: resinSourceID, SourceKind: proxy.SourceResin, Generation: uint64(maxInt64(account.Resin.Generation, 0)), Lease: &proxy.LeaseRef{Provider: "resin", Account: account.Resin.Account}}
 		}
 		if account.State == "" {
 			account.State = StateUnknown
@@ -411,6 +458,19 @@ func (s *StateStore) Load(defaultPolicy Policy, revision string) error {
 		}
 	}
 	s.state = state
+	s.rebuildProxyIndexesLocked()
+	if errJournal := s.replayProxyJournalLocked(); errJournal != nil {
+		return errJournal
+	}
+	s.rebuildProxyIndexesLocked()
+	for _, change := range s.state.Proxy.Changes {
+		if change.Status == "pending" || change.Status == "running" {
+			s.proxyRecoveredChanges = append(s.proxyRecoveredChanges, change.ID)
+		}
+	}
+	if migratedSchema {
+		return s.saveLocked()
+	}
 	return nil
 }
 
@@ -504,6 +564,8 @@ func (s *StateStore) AccountStateSummariesForIDs(authIDs []string) []AccountStat
 			CooldownUntil:     account.CooldownUntil,
 			ProbeBackoffUntil: account.ProbeBackoffUntil,
 			Resin:             account.Resin,
+			Proxy:             proxy.CloneBinding(account.Proxy),
+			AutoBind:          account.AutoBind,
 			Metrics:           account.Metrics,
 		}
 		if account.LastAttempt != nil {
@@ -684,6 +746,7 @@ func (s *StateStore) updateAccount(authID string, fn func(*AccountState) (*Event
 	} else {
 		s.dirty = true
 	}
+	s.indexProxyAccountLocked(authID, previousCopy, account)
 	s.mu.Unlock()
 	if !persist {
 		s.scheduleFlush()
@@ -746,6 +809,7 @@ func (s *StateStore) Update(fn func(*State) error) error {
 		s.state = previous
 		return errSave
 	}
+	s.rebuildProxyIndexesLocked()
 	return nil
 }
 
@@ -768,6 +832,7 @@ func (s *StateStore) UpdateIfChanged(fn func(*State) (bool, error)) error {
 	}
 	s.state.UpdatedAt = time.Now().UTC()
 	s.dirty = true
+	s.rebuildProxyIndexesLocked()
 	return s.saveLocked()
 }
 
@@ -803,6 +868,7 @@ func (s *StateStore) saveLocked() error {
 		s.state.Events = []Event{}
 	}
 	trimEvents(&s.state, s.state.Policy.EventsLimit)
+	s.maybeGCProxyHistoryLocked()
 	dir := filepath.Dir(s.path)
 	if errMkdir := os.MkdirAll(dir, 0o700); errMkdir != nil {
 		return fmt.Errorf("create state directory: %w", errMkdir)
@@ -829,15 +895,11 @@ func (s *StateStore) saveLocked() error {
 	if errClose := temp.Close(); errClose != nil {
 		return fmt.Errorf("close state temp file: %w", errClose)
 	}
-	if errRename := os.Rename(tempName, s.path); errRename != nil {
-		if errRemove := os.Remove(s.path); errRemove != nil && !errors.Is(errRemove, os.ErrNotExist) {
-			return fmt.Errorf("replace state file: %w", errRename)
-		}
-		if errRetry := os.Rename(tempName, s.path); errRetry != nil {
-			return fmt.Errorf("replace state file: %w", errRetry)
-		}
+	if errReplace := replaceStateFile(tempName, s.path); errReplace != nil {
+		return fmt.Errorf("replace state file: %w", errReplace)
 	}
 	s.dirty = false
+	s.checkpointProxyJournalLocked()
 	return nil
 }
 
@@ -852,6 +914,13 @@ func cloneState(state State) State {
 			continue
 		}
 		clone.Accounts[key] = cloneAccountState(account)
+	}
+	clone.Proxy = proxy.CloneProxyState(state.Proxy)
+	if state.ResinSnapshots != nil {
+		clone.ResinSnapshots = make(map[string]ResinSettings, len(state.ResinSnapshots))
+		for id, settings := range state.ResinSnapshots {
+			clone.ResinSnapshots[id] = settings
+		}
 	}
 	if state.Events != nil {
 		clone.Events = append([]Event{}, state.Events...)
@@ -885,6 +954,7 @@ func cloneAccountState(account *AccountState) *AccountState {
 		intent := *account.AuthDisabledIntent
 		copied.AuthDisabledIntent = &intent
 	}
+	copied.Proxy = proxy.CloneBinding(account.Proxy)
 	return &copied
 }
 

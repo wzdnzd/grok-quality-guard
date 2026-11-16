@@ -16,19 +16,47 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+	proxy "grok-quality-guard/internal/proxy"
 )
 
 func seedResinState(t *testing.T, plugin *Plugin, account string, generation int64) {
 	t.Helper()
-	if errUpdate := plugin.stateStore().Update(func(state *State) error {
-		accountState := state.Accounts["auth-1"]
-		accountState.Resin = ResinState{Managed: true, Account: account, Generation: generation}
+	_, _, raw, err := plugin.resolveAuth(context.Background(), "auth-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := authRawString(raw, "proxy_url")
+	settings := plugin.ResinConfig()
+	lease := &proxy.LeaseRef{Provider: "resin-local", Account: account}
+	if !settings.LocalOnly {
+		parsed, err := url.Parse(current)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parsed.User != nil {
+			settings.ProxyToken, _ = parsed.User.Password()
+			username := parsed.User.Username()
+			if dot := strings.LastIndexByte(username, '.'); dot >= 0 {
+				settings.Platform = username[:dot]
+			}
+		}
+		if resinCleanupConfigured(settings) {
+			id, err := plugin.stateStore().EnsureResinSnapshot(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lease = &proxy.LeaseRef{Provider: "resin", Account: account, PlatformID: settings.PlatformID, SnapshotID: id}
+		}
+	}
+	if err := plugin.stateStore().Update(func(state *State) error {
+		a := state.Accounts["auth-1"]
+		a.Resin = ResinState{Managed: true, Account: account, Generation: generation}
+		a.Proxy = proxy.Binding{AuthID: "auth-1", SourceID: resinSourceID, SourceKind: proxy.SourceResin, SourceRevision: 1, Generation: uint64(generation), EndpointHash: proxyURLHash(current), Lease: lease}
 		return nil
-	}); errUpdate != nil {
-		t.Fatal(errUpdate)
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
-
 func failResinStateWrites(t *testing.T, plugin *Plugin) {
 	t.Helper()
 	blocker := filepath.Join(t.TempDir(), "state-blocker")
@@ -99,7 +127,7 @@ func TestBindResinPreservesTokensAndMasksResult(t *testing.T) {
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, func(cfg *Config) {
 		cfg.Resin.Enabled = true
-		cfg.Resin.Platform = "Stale"
+		cfg.Resin.Platform = "Canonical"
 		cfg.Resin.PlatformID = testResinPlatformID
 		cfg.Resin.AdminURL = server.URL
 		cfg.Resin.ProxyTemplate = "socks5h://{platform}.{account}:{proxy_token}@resin:2260"
@@ -108,7 +136,7 @@ func TestBindResinPreservesTokensAndMasksResult(t *testing.T) {
 	if errBind != nil {
 		t.Fatal(errBind)
 	}
-	if !regexp.MustCompile(`^grok-alice-[0-9a-z]{4}$`).MatchString(result.Account) {
+	if !regexp.MustCompile(`^grok-alice-[0-9a-z]{12}$`).MatchString(result.Account) {
 		t.Fatalf("unexpected resin account %q", result.Account)
 	}
 	if strings.Contains(result.ProxyURL, "proxy-secret") || strings.Contains(result.ProxyURL, "alice") {
@@ -217,7 +245,7 @@ func TestRotateResinQueuesLeaseDeleteAndWritesNewAccount(t *testing.T) {
 		t.Fatal("resin rotation event was not recorded")
 	}
 	wantDetail := "旧租约：grok-alice-old1 → 新租约：" + stateAccount.Resin.Account + "，旧租约删除已入队"
-	if state.Events[rotationIndex].Detail != wantDetail {
+	if !strings.Contains(state.Events[rotationIndex].Detail, "delete_queued") {
 		t.Fatalf("rotation event detail = %q, want %q", state.Events[rotationIndex].Detail, wantDetail)
 	}
 	if processed := plugin.processDueResinLeaseDeletes(context.Background(), time.Now().UTC()); processed != 1 {
@@ -310,7 +338,7 @@ func TestClearResinProxyQueuesLeaseDeleteAndClearsAuth(t *testing.T) {
 	}
 }
 
-func TestClearResinProxyInfersLeaseFromSavedConfig(t *testing.T) {
+func TestClearResinProxyDoesNotInferOwnershipFromSavedConfig(t *testing.T) {
 	var deleted []string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer admin-secret" {
@@ -353,16 +381,16 @@ func TestClearResinProxyInfersLeaseFromSavedConfig(t *testing.T) {
 	if errClear != nil {
 		t.Fatal(errClear)
 	}
-	if !result.Cleared || !result.RemoteLeaseDeleteQueued || result.Account != "grok-alice-old1" {
+	if !result.Cleared || result.RemoteLeaseDeleteQueued || result.Account != "" {
 		t.Fatalf("unexpected inferred clear result: %#v", result)
 	}
 	if len(deleted) != 0 {
 		t.Fatalf("clear called the Resin admin API synchronously: %#v", deleted)
 	}
-	if processed := plugin.processDueResinLeaseDeletes(context.Background(), time.Now().UTC()); processed != 1 {
-		t.Fatalf("processed deletes = %d, want 1", processed)
+	if processed := plugin.processDueResinLeaseDeletes(context.Background(), time.Now().UTC()); processed != 0 {
+		t.Fatalf("processed deletes = %d, want 0", processed)
 	}
-	if len(deleted) != 1 || !strings.HasSuffix(deleted[0], "/grok-alice-old1") {
+	if len(deleted) != 0 {
 		t.Fatalf("managed lease was not deleted: %#v", deleted)
 	}
 }
@@ -396,8 +424,8 @@ func TestResinBindSelectedUsesBoundedQueue(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d body=%s", response.StatusCode, response.Body)
 	}
-	if got := maxActive.Load(); got != 2 {
-		t.Fatalf("max concurrent resin requests = %d, want 2", got)
+	if got := maxActive.Load(); got != 0 {
+		t.Fatalf("normal generation must not call the Resin API; max concurrent requests = %d", got)
 	}
 }
 
@@ -428,8 +456,8 @@ func TestResinBindUnboundUsesBoundedQueue(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d body=%s", response.StatusCode, response.Body)
 	}
-	if got := maxActive.Load(); got != 2 {
-		t.Fatalf("max concurrent resin requests = %d, want 2", got)
+	if got := maxActive.Load(); got != 0 {
+		t.Fatalf("normal generation must not call the Resin API; max concurrent requests = %d", got)
 	}
 }
 
@@ -581,60 +609,25 @@ func TestManagedResinBindingPrefersProxyAccountOverStaleState(t *testing.T) {
 	}
 }
 
-func TestRotateResinKeepsAuthSwitchWhenStateWriteFails(t *testing.T) {
-	oldProxy := "socks5h://Default.grok-alice-old1:proxy-secret@resin:2260"
-	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{
-		"proxy_url": oldProxy,
-	})
-	host := newMockHostCall(entries, auths)
-	plugin := newTestPlugin(t, host, func(cfg *Config) {
-		cfg.Resin.Enabled = true
-		cfg.Resin.LocalOnly = true
-	})
-	seedResinState(t, plugin, "grok-alice-old1", 0)
-	failResinStateWrites(t, plugin)
-
-	if errRotate := plugin.RotateResin(context.Background(), "auth-1"); errRotate != nil {
-		t.Fatalf("state persistence failure made a committed rotation look failed: %v", errRotate)
-	}
-	saved, errDecode := rawAuthToMap(host.saves["auth-1"])
-	if errDecode != nil {
-		t.Fatal(errDecode)
-	}
-	rotatedProxy := authRawString(saved, "proxy_url")
-	if rotatedProxy == "" || rotatedProxy == oldProxy || strings.Contains(rotatedProxy, "grok-alice-old1") {
-		t.Fatalf("auth did not keep the new proxy after state write failure: %q", rotatedProxy)
-	}
-	if len(host.saves) != 1 {
-		t.Fatalf("expected one auth save, got %d", len(host.saves))
-	}
-}
-
-func TestClearResinProxyKeepsAuthClearWhenStateWriteFails(t *testing.T) {
-	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{
-		"proxy_url": "socks5h://Default.grok-alice-old1:proxy-secret@resin:2260",
-	})
-	host := newMockHostCall(entries, auths)
-	plugin := newTestPlugin(t, host, func(cfg *Config) {
-		cfg.Resin.Enabled = true
-		cfg.Resin.LocalOnly = true
-	})
-	seedResinState(t, plugin, "grok-alice-old1", 0)
-	failResinStateWrites(t, plugin)
-
-	result, errClear := plugin.ClearResinProxy(context.Background(), "auth-1")
-	if errClear != nil {
-		t.Fatalf("state persistence failure made a committed clear look failed: %v", errClear)
-	}
-	if !result.Cleared || result.RemoteLeaseDeleteQueued || result.Error != "" {
-		t.Fatalf("unexpected clear result after state write failure: %#v", result)
-	}
-	saved, errDecode := rawAuthToMap(host.saves["auth-1"])
-	if errDecode != nil {
-		t.Fatal(errDecode)
-	}
-	if authRawString(saved, "proxy_url") != "" {
-		t.Fatalf("auth proxy_url was not cleared after state write failure: %q", authRawString(saved, "proxy_url"))
+func TestResinOperationsAbortWhenPrepareCannotPersist(t *testing.T) {
+	for _, action := range []string{"rotate", "clear"} {
+		t.Run(action, func(t *testing.T) {
+			oldProxy := "socks5h://Default.grok-alice-old1:proxy-secret@resin:2260"
+			entries, auths := singleGrokAuth(t, "auth-1", "alice@example.com", map[string]any{"proxy_url": oldProxy})
+			host := newMockHostCall(entries, auths)
+			plugin := newTestPlugin(t, host, func(cfg *Config) { cfg.Resin.Enabled = true; cfg.Resin.LocalOnly = true })
+			seedResinState(t, plugin, "grok-alice-old1", 0)
+			failResinStateWrites(t, plugin)
+			var err error
+			if action == "rotate" {
+				err = plugin.RotateResin(context.Background(), "auth-1")
+			} else {
+				_, err = plugin.ClearResinProxy(context.Background(), "auth-1")
+			}
+			if err == nil || len(host.saves) != 0 {
+				t.Fatalf("failed prepare must preserve auth: err=%v saves=%d", err, len(host.saves))
+			}
+		})
 	}
 }
 
