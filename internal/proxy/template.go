@@ -179,7 +179,8 @@ func (t Template) URLForDisplay() string {
 }
 
 // URLForReveal returns the same URL shape as URLForDisplay with the literal
-// password included. Callers expose this only through an explicit reveal action.
+// password included. Callers expose this only through an explicit reveal action
+// or the edit_fields response used to populate the source editor.
 func (t Template) URLForReveal() string {
 	return t.displayURL(true)
 }

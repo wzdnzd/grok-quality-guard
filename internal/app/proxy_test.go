@@ -486,6 +486,57 @@ func TestProxySourceDetailsRedactCredentials(t *testing.T) {
 	}
 }
 
+func TestProxyEditFieldsRevealURLForEditor(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	node, errCreate := plugin.createProxyNode(proxyapp.NodeInput{URL: "http://private-user:private-pass@proxy.example:8080"})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	nodeResponse := actionManagementForTest(t, plugin, "proxy.sources.get", map[string]any{
+		"source_id": node.ID, "edit_fields": true,
+	})
+	if nodeResponse.StatusCode != http.StatusOK {
+		t.Fatalf("node edit detail status = %d body=%s", nodeResponse.StatusCode, nodeResponse.Body)
+	}
+	var nodeDetail struct {
+		Data struct {
+			EditURL string `json:"edit_url"`
+		} `json:"data"`
+	}
+	if errUnmarshal := json.Unmarshal(nodeResponse.Body, &nodeDetail); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	if nodeDetail.Data.EditURL != "http://private-user:private-pass@proxy.example:8080" {
+		t.Fatalf("node edit_url = %q", nodeDetail.Data.EditURL)
+	}
+
+	template, errCreate := plugin.createProxyTemplate(proxyapp.TemplateInput{
+		Name: "region", URL: "http://user-{region}:template-secret@proxy.example:8080",
+		Placeholders: []proxy.Placeholder{{Name: "region", Kind: proxy.PlaceholderEnum, Enum: &proxy.EnumSpec{Separator: ",", Input: "us,cn"}}},
+	})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	templateResponse := actionManagementForTest(t, plugin, "proxy.sources.get", map[string]any{
+		"source_id": template.ID, "edit_fields": true,
+	})
+	if templateResponse.StatusCode != http.StatusOK {
+		t.Fatalf("template edit detail status = %d body=%s", templateResponse.StatusCode, templateResponse.Body)
+	}
+	var templateDetail struct {
+		Data struct {
+			EditURL string `json:"edit_url"`
+		} `json:"data"`
+	}
+	if errUnmarshal := json.Unmarshal(templateResponse.Body, &templateDetail); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	if templateDetail.Data.EditURL != "http://user-{region}:template-secret@proxy.example:8080" {
+		t.Fatalf("template edit_url = %q", templateDetail.Data.EditURL)
+	}
+}
+
 func TestProxyTemplatePreviewSupportsEditingWithoutRetypingURL(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
 	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)

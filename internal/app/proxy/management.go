@@ -930,6 +930,7 @@ func (s *Service) proxySourceDetailsForEdit(id string, edit bool) (any, error) {
 	var port int
 	var placeholders []proxy.Placeholder
 	var groups []proxy.ValueGroup
+	var editURL string
 	if entry.Node != nil {
 		n := entry.Node
 		view = proxyNodeView(*n, count)
@@ -939,6 +940,8 @@ func (s *Service) proxySourceDetailsForEdit(id string, edit bool) (any, error) {
 		username = n.Endpoint.Username
 		if !edit {
 			username = ""
+		} else {
+			editURL = n.Endpoint.CanonicalURL()
 		}
 	} else {
 		t := entry.Template
@@ -950,7 +953,12 @@ func (s *Service) proxySourceDetailsForEdit(id string, edit bool) (any, error) {
 		encoding = t.UsernamePatternEncoding
 		placeholders = t.Placeholders
 		groups = t.ValueGroups
+		if edit {
+			editURL = t.URLForReveal()
+		}
 	}
+	// edit_url is only populated for the explicit edit_fields request so the
+	// editor can round-trip the URL without a separate password control.
 	return struct {
 		proxySourceView
 		Protocol                proxy.Protocol      `json:"protocol"`
@@ -960,7 +968,8 @@ func (s *Service) proxySourceDetailsForEdit(id string, edit bool) (any, error) {
 		UsernamePatternEncoding string              `json:"username_pattern_encoding,omitempty"`
 		Placeholders            []proxy.Placeholder `json:"placeholders,omitempty"`
 		ValueGroups             []proxy.ValueGroup  `json:"value_groups,omitempty"`
-	}{view, protocol, host, port, username, encoding, placeholders, groups}, nil
+		EditURL                 string              `json:"edit_url,omitempty"`
+	}{view, protocol, host, port, username, encoding, placeholders, groups, editURL}, nil
 }
 
 // Bulk readers copy only proxy metadata; quality metrics and generated values

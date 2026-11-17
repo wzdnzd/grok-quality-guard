@@ -483,7 +483,7 @@ curl -X POST \
 
 任务状态为 `queued`、`running`、`succeeded` 或 `failed`。失败时 `error` 包含脱敏后的原因，`error_status` 保留可用的上游 HTTP 状态。内嵌管理页已经自动轮询并展示进度。
 
-API 只接受 POST，并由 CPA management 层完成认证。插件不要求自定义 Header 或请求体 UI 标记，避免管理网关剥离 Header 时页面请求失败。响应中的 email、proxy URL、token 和密码均会脱敏；账号列表同时提供 `auth_id_display` 供展示，操作 API 使用稳定的 `auth_id` 作为标识。`proxy_url` 可能内嵌 Proxy Token，因此管理页只显示 `scheme://host`，不会展示完整凭据。
+API 只接受 POST，并由 CPA management 层完成认证。插件不要求自定义 Header 或请求体 UI 标记，避免管理网关剥离 Header 时页面请求失败。普通列表、绑定响应和任务响应中的 email、proxy URL、token 与密码均脱敏；节点和模板编辑器通过 `proxy.sources.get` 的 `edit_fields:true` 显式回显完整 URL。账号列表同时提供 `auth_id_display` 供展示，操作 API 使用稳定的 `auth_id` 作为标识。`proxy_url` 可能内嵌 Proxy Token，因此普通列表只显示 `scheme://host`。
 
 ## 状态文件与 Docker 持久化
 
@@ -515,7 +515,7 @@ services:
 
 代理写入使用相邻的 `state.json.proxy-journal` 保存准备与提交记录，主 state 定期原子 checkpoint 后截断日志。备份或恢复应停止插件，并保留匹配的 state、journal 和 `.location` 指针；不可在运行时只覆盖其中一份。
 
-来源编辑须传 `expected_version`。节点端点变化自动同步绑定；模板默认保持旧绑定，选择 `rerender_bound` 才回溯。失败任务保留成功结果，调用方应检查 `counts`、`committed` 和 `needs_reconcile`。普通详情不返回密码，节点编辑通过 `edit_fields:true` 获取用户名字段，密码使用 keep/set/clear 更新。
+来源编辑须传 `expected_version`。节点端点变化自动同步绑定；模板默认保持旧绑定，选择 `rerender_bound` 才回溯。失败任务保留成功结果，调用方应检查 `counts`、`committed` 和 `needs_reconcile`。节点和模板编辑通过 `edit_fields:true` 回显完整 URL，密码直接随 URL 修改；普通详情与列表仍不返回凭据。`password_update` 仅为其他 API 客户端保留兼容。
 
 依赖的 CLIProxyAPI v8.0.67 将 `socks5` 和 `socks5h` 都按远端 DNS 执行；按用户确认的兼容策略保留两种 URL，不改 scheme。HTTPS 代理在普通 HTTP/SSE 路径使用 TLS，原生 WebSocket 仍受宿主拨号器能力限制。完整实现约束与审查记录见 [代理管理设计](designs/proxy.md)。
 

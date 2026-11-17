@@ -114,7 +114,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, resinAccountFormatFromTemplate, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, resinAccountFormatFromTemplate, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -311,24 +311,21 @@ test('A stale condition preview cannot overwrite newer inputs or validation stat
   assert.match(get('proxyTemplatePreviewResults').innerHTML, /&lt;unsafe&gt;/);
 });
 
-test('Default password keep is omitted from template URL payloads', () => {
+test('Proxy URL is the sole password source for node and template editors', () => {
   const { dashboard: ui, get, placeholder } = harness();
   get('ptpl_name').value = 'region proxy';
   get('ptpl_url').value = 'socks5h://proxy-{country}-sid-{session}:test-pass@proxy.example:3010';
   get('ptpl_enabled').checked = true;
   get('ptpl_update_policy').value = 'keep_bound';
-  get('ptpl_password_action').value = 'keep';
   ui.state.proxyEditing = { groups: new Map() };
   placeholder('country', { separator: ',', input: 'US,JP,SG' });
   placeholder('session', { kind: 'random' });
 
   const source = ui.collectProxyTemplateEditor(null, {});
-  assert.equal(source.password_update, undefined);
-  assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(source)), 'password_update'), false);
-
-  get('ptpl_password_action').value = 'set';
-  get('ptpl_password_value').value = 'new-pass';
-  assert.deepEqual(plain(ui.collectProxyTemplateEditor(null, {}).password_update), { action: 'set', value: 'new-pass' });
+  assert.equal(Object.hasOwn(source, 'password_update'), false);
+  assert.match(html, /node\.edit_url \|\| ''/);
+  assert.match(html, /template\.edit_url \|\| ''/);
+  assert.doesNotMatch(html, /proxyPasswordFields|readProxyPasswordUpdate|_password_action/);
 });
 
 test('Partial sync results distinguish committed failures and skipped accounts', async () => {
@@ -394,6 +391,22 @@ test('Selected proxy clear explicitly allows external configurations', async () 
   assert.equal(requests[0].action, 'proxy.bindings.clear');
   assert.equal(requests[0].params.allow_external, true);
   assert.deepEqual(plain(requests[0].params.auth_ids), ['auth-external']);
+});
+
+test('Auto-bind scan runtime is shown in the status bar instead of settings', () => {
+  const { dashboard: ui, get } = harness();
+  ui.state.proxy = {
+    auto_bind: { enabled: false },
+    auto_bind_runtime: {
+      last_scan_at: '2026-11-17T05:17:13Z', bound_total: 2, failed_total: 1,
+      skipped_total: 3, excluded_count: 4, last_error: 'catalog unavailable'
+    }
+  };
+  ui.renderProxyAutoBind();
+  assert.match(get('proxyAutoBindText').textContent, /最近扫描：2026\/11\/17/);
+  assert.match(get('proxyAutoBindText').title, /累计成功：2 · 失败：1 · 跳过：3 · 排除：4 个账号/);
+  assert.match(get('proxyAutoBindText').title, /最近错误：catalog unavailable/);
+  assert.doesNotMatch(html, /id="proxyAutoBindDetails"/);
 });
 
 test('Binding source candidates use a bounded labeled picker', async () => {
