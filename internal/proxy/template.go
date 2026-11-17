@@ -129,7 +129,7 @@ func ParseTemplateURL(raw string) (Template, error) {
 		if strings.ContainsAny(scheme+rest, "{}") {
 			return Template{}, invalid("placeholder_outside_username", "url", "placeholders are only allowed in the username")
 		}
-		endpoint, err := ParseEndpoint(raw, ParseOptions{})
+		endpoint, err := ParseEndpoint(raw)
 		if err != nil {
 			return Template{}, err
 		}
@@ -162,7 +162,7 @@ func ParseTemplateURL(raw string) (Template, error) {
 	if hasPassword {
 		safeUser += ":" + rawPassword
 	}
-	endpoint, err := ParseEndpoint(scheme+"://"+safeUser+"@"+rest[at+1:], ParseOptions{})
+	endpoint, err := ParseEndpoint(scheme + "://" + safeUser + "@" + rest[at+1:])
 	if err != nil {
 		return Template{}, err
 	}

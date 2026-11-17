@@ -62,18 +62,18 @@
 
 | 当前文件或入口 | 已确认行为 | 重构要求 |
 | --- | --- | --- |
-| `internal/app/proxy/resin.go` | 绑定、清除、轮换直接调用 Environment、Host、StateStore | 移入通用 Manager 与 Resin adapter，`internal/app`保留装配 |
-| `commitResinProxyChange` | auth 保存成功后，state 失败不撤销实际代理切换 | 保留已生效结果，并通过操作意图恢复元数据 |
+| `internal/app/proxy/resin.go` | 通用绑定路径调用 Environment、Host、StateStore | 移入通用 Manager 与 Resin adapter，`internal/app`保留装配 |
+
 | `internal/app/proxy/resin.go`、`internal/app/proxy/resin/client.go` | Admin API、平台解析、SOCKS5 认证验证 | 分离配置验证和连通性检测，复用通用端点能力 |
-| `internal/app/proxy/resin.go`、`internal/app/proxy/resin/cleanup.go` | 持久化租约删除队列、token 引用、重试 | 保留去重与恢复能力，清理使用旧绑定快照 |
+| `internal/app/proxy/resin.go`、`internal/app/proxy/resin/cleanup.go` | 持久化租约删除队列、不可变快照、重试 | 保留去重与恢复能力，清理只使用 job 绑定的快照 |
 | `internal/app/host_bridge.go:saveAuth` | 发送 Name 与完整 JSON，未传入条件版本 | 本地账号锁与最新读取能保护插件内修改；不能声称具备宿主原子 CAS |
 | `internal/app/state/store.go`、`internal/app/state/proxy_store.go` | Update、UpdateIfChanged、观测延迟落盘有不同失败语义 | 代理关键提交必须明确使用同步持久化路径 |
 | `internal/app/plugin.go`、`internal/app/catalog/catalog.go` | 定期刷新 catalog，支持文件代理元数据缓存 | 自动绑定复用刷新结果，不每轮重复逐 auth Host 查询 |
 | `internal/app/probe/probe.go`、`internal/app/quality/*.go` | auth 修改使用账号锁，探测可能长时间持锁 | 所有代理写入接入相同账号锁，避免嵌套加锁 |
 | `internal/app/executor/*.go` | 执行与重试读取 auth 的 `proxy_url` | 成功切换后立即失效相关缓存，不等下一轮目录刷新 |
-| `internal/app/dashboard` | 顶层为概览、账号质量、Resin 租约、事件日志、设置 | 只将 Resin 租约改名为代理管理，保留原位置和其余入口 |
+| `internal/app/dashboard` | 顶层为概览、账号质量、代理管理、事件日志、设置 | 代理管理包含账号绑定与代理来源两个子视图，保留原位置和其余入口 |
 
-现有 Resin 本地轮换也应保留：它仅改写已有代理身份，不需要 API，不参与创建新绑定。新配置使用严格格式；迁移时不擅自重写旧 auth URL。
+Resin 本地轮换是其来源的 local_only 模式：仅改写已有代理身份，不需要 API，不参与创建新绑定。配置使用严格格式；插件不会读取或重写任何未显式绑定的历史 auth URL。
 
 ## 4. 通用模型与职责划分
 
@@ -88,7 +88,7 @@ Source 表示可供绑定的配置来源，而不是一次生成的代理 URL。
 | `resin` | 连接配置与内置模板 | API 模式本地生成租约身份 | 生成新租约身份 | 异步删除旧远端租约 |
 | Resin 本地轮换 | 已有 URL 与原身份规则 | 不支持 | 仅本地改写 | 不执行远端删除 |
 
-新方案首版满足多个节点、多个普通模板，现有 Resin 配置迁为一个独立来源。以稳定 SourceID 建模，后续支持多个 Resin 实例不需要修改绑定模型。
+节点、模板和 Resin 都使用稳定 SourceID 建模，可并存多个实例；Resin 不是全局单例配置，也不存在旧配置迁移路径。
 
 Source 保存业务配置；Provider interface 只处理真正变化的生成行为。启用、配额、来源版本、分配数量、管理视图由 Manager 管理，不要求每个 adapter 重复实现。
 
@@ -168,7 +168,7 @@ type CleanupRef struct {
 
 `ResolvedValues` 只保存生成所需的占位符结果，不保存代理密码，默认不进入公共账号列表。它用于模板版本追踪、回溯计划和恢复，不用于给枚举施加使用次数均衡。
 
-Resin 的 SnapshotID 指向不可变的 Admin URL、Platform UUID 和凭据引用；ResourceID 是租约账号。清理旧租约时读取这份快照，不从当前 Resin 配置拼接目标。
+Resin 的 SnapshotID 指向不可变的 Admin URL、Platform UUID 和 Admin Token 快照；租约账号单独保存在 job 与 Binding.Lease 中。清理旧租约时读取这份快照，不从当前 Resin 配置拼接目标。
 
 绑定指纹基于完整规范端点，包括协议与认证值，只在内部比较。它不是自动接管外部代理的凭证。
 
@@ -177,10 +177,11 @@ Resin 的 SnapshotID 指向不可变的 Admin URL、Platform UUID 和凭据引�
 | 绑定状态 | 含义 |
 | --- | --- |
 | `unbound` | 实际 URL 为空 |
-| `managed` | 实际 URL 与插件绑定记录一致 |
+| `bound` | 实际 URL 与插件绑定记录一致 |
 | `external` | 实际 URL 非空，但不由插件管理 |
 | `drifted` | 插件记录与实际 URL 不一致，需核对 |
 | `unknown` | 无法确定实际 URL，例如读取失败 |
+| `reconcile_required` | 存在未完成操作，需核对后再继续 |
 
 同步进度是附加状态：`pending`、`running`、`partial`、`completed`、`needs_reconcile`。来源另有 active、disabled、deleting 等生命周期状态。
 
@@ -197,22 +198,23 @@ Resin 的 SnapshotID 指向不可变的 Admin URL、Platform UUID 和凭据引�
 | `socks5://user@host.example:1080` | 接受，仅用户名；认证是否可用另行检测 |
 | `socks5h://user:p%40ss@[2001:db8::1]:1080` | 接受，密码解码一次，IPv6 保留方括号 |
 | `HTTP://host.example:8080/` | 接受，scheme 小写化，根路径斜杠去除 |
-| `http://host.example:8080:user:pass` | 带 scheme 的兼容格式；导入时选择“地址在前”格式后解析 |
+| `socks5h://proxy.example:1080:alice:secret` | 标准解析失败后自动按 `host:port:username:password` 解析 |
+| `http://proxy.example:8080@alice:secret` | 标准解析失败后自动按 `host:port@username:password` 解析 |
 | `http://host.example` | 报错，端口缺失 |
 | `http://:pass@host.example:8080` | 报错，密码存在但用户名为空 |
 | `http://host.example:8080/path` | 报错，非根路径不支持 |
 | 含 query、fragment 的代理 URL | 报错，不静默丢掉可能有含义的数据 |
 | `socks://host.example:1080`、`socks4://…` | 报错，不自动映射到 SOCKS5 |
-| `host:1080`、`user:pass@host:1080`、`host:1080:user:pass` | 直接忽略，计入 missing_scheme |
+| `host:1080`、`user:pass@host:1080`、`host:1080:user:pass` | 直接忽略，计入 missing_scheme；地址在前格式也必须带协议 |
 
 单条添加无 scheme 时提示“已忽略：缺少代理协议”，不保存。批量导入报告 `imported / skipped / invalid / duplicate`，无 scheme 只计入 skipped，不阻断其他行。
 
-兼容格式必须仍带 scheme。普通 URL 优先；多冒号位置不明确时要求选择导入格式，避免凭据被误当成地址。特殊字符复杂的凭据建议使用分字段表单或标准百分号编码 URL。
+支持标准 URL、地址在前格式和 `host:port@user:pass` 格式：始终先按标准 URL 解析，失败后才依次尝试两种非标准形式。所有回退都由解析器自动完成，不要求用户选择格式。特殊字符复杂的凭据使用分字段表单或百分号编码。
 
 ### 5.2 实现顺序
 
 1. 去掉整行首尾空白；检测 scheme，先处理 missing_scheme。
-2. 标准 URL 用 `net/url` 解析；兼容导入格式经显式解析后也转为标准结构。
+2. 先使用 net/url 解析标准 URL；若标准解析失败，再尝试 host:port:username:password 与 host:port@username:password。
 3. 验证四种 scheme、主机、显式端口、认证形式和禁止字段。
 4. 使用 `net.SplitHostPort` 或等价标准逻辑处理 IPv6，不以“最后一个冒号”自行拆主机。
 5. 用户名与密码只解码一次。分字段输入是字面量，不再次 URL 解码。
@@ -401,7 +403,7 @@ Dashboard 将输入解析成可编辑值标签，同时显示分隔符与实际�
 
 普通来源默认只要求配置有效；网络检测可按需执行。`require_healthy=true` 的自动绑定策略需要对应来源当前版本、仍新鲜的检测成功结果，unknown 不算健康。模板样本网络成功只能代表该样本，不能承诺所有地理组合均可联网。
 
-四种协议的解析与探测能力和 Host 执行能力分别验证。当前依赖 CLIProxyAPI v8.0.67：普通 HTTP/SSE 执行路径支持 HTTPS 到代理的 TLS，但将 SOCKS5 和 SOCKS5H 都交给使用远端 DNS 的 SOCKS5 拨号器。用户已确认采用兼容行为：保留 `socks5://` URL，允许按宿主的远端 DNS 方式使用，不改写为其他 scheme；`socks5h://` 同样使用远端 DNS。通用 `ProbeEndpoint` 本身可以区分两者，但不能据此宣称宿主具有 SOCKS5 本地 DNS 能力。原生 WebSocket 的 HTTPS 代理支持还受宿主拨号器限制，本次不将 HTTP/SSE 验证扩展为全部 WebSocket 传输保证。
+四种协议的解析与探测能力和 Host 执行能力分别验证。当前依赖 CLIProxyAPI v8.0.67：普通 HTTP/SSE 执行路径支持 HTTPS 到代理的 TLS，但将 SOCKS5 和 SOCKS5H 都交给使用远端 DNS 的 SOCKS5 拨号器。当前按宿主既有能力处理：保留 `socks5://` URL，允许按宿主的远端 DNS 方式使用，不改写为其他 scheme；`socks5h://` 同样使用远端 DNS。通用 `ProbeEndpoint` 本身可以区分两者，但不能据此宣称宿主具有 SOCKS5 本地 DNS 能力。原生 WebSocket 的 HTTPS 代理支持还受宿主拨号器限制，本次不将 HTTP/SSE 验证扩展为全部 WebSocket 传输保证。
 
 ### 7.5 结构化错误
 
@@ -662,7 +664,6 @@ internal/
       resin.go
       types.go
       helpers.go
-      compat.go
       exports.go
       resin/
         client.go
@@ -690,15 +691,12 @@ internal/
       store.go
       proxy_store.go
       proxy_accounts.go
-      contracts.go
       evidence.go
       constants.go
       path_api.go
       path_windows.go
       path_other.go
       resin_keys.go
-      resin_settings.go
-      resin_tokens.go
       test_helpers.go
     tasks/
       tasks.go
@@ -798,13 +796,13 @@ Host adapter 在锁内读取最新 JSON，仅修改 `proxy_url`，保留 disable
 
 State adapter 使用当前 StateStore 的同步提交能力。事务回调不做 Host 调用、网络访问或获取 Manager 锁，避免跨 interface 的锁反转。
 
-## 11. 持久化、操作意图和迁移
+## 11. 持久化与操作意图
 
 ### 11.1 状态扩展
 
-复用现有 state 文件，版本从 1 升为 2。代理来源、版本、操作、自动绑定策略和 cleanup outbox 都持久化。
+状态文件固定为 schema v1。代理来源、版本、操作、自动绑定策略和 cleanup outbox 都持久化。
 
-实现同时使用相邻的 `<state_file>.proxy-journal` 保存小型代理提交。每条记录包含单调序号和校验和，并在触碰 auth 前 fsync。主 state 原子 checkpoint 包含已应用序号，成功替换后才截断 journal；重启幂等重放完整记录，移除未完成尾行。缺少主 checkpoint 但 journal 非空时拒绝初始化，避免丢失来源配置后误恢复。迁移 state 路径先保存旧路径，再将完整状态写入新路径，并拒绝覆盖目标现有 journal。备份或恢复应在插件停止后同时处理匹配的 state、journal 和 `.location` 指针。
+实现同时使用相邻的 `<state_file>.proxy-journal` 保存小型代理提交。每条记录包含单调序号和校验和，并在触碰 auth 前 fsync。主 state 原子 checkpoint 包含已应用序号，成功替换后才截断 journal；重启幂等重放完整记录，移除未完成尾行。缺少主 checkpoint 但 journal 非空时拒绝初始化，避免丢失来源配置后误恢复。切换 state 路径时先保存当前路径，再将完整状态写入新路径，并拒绝覆盖目标现有 journal。备份或恢复应在插件停止后同时处理匹配的 state、journal 和 `.location` 指针。
 
 ~~~text
 State
@@ -877,24 +875,19 @@ State
 
 恢复与正常任务共享 gate。source 更新任务保留固定目标版本，不追着最新配置反复改写。
 
-### 11.5 v1 迁移
+### 11.5 状态不兼容策略
 
-1. 读取旧状态，保留质量、冷却、事件与策略。
-2. 将现有 Resin 配置迁为一个来源，保存平台与凭据的清理快照。
-3. 将有 Managed 标记或租约 Account 证据的 ResinState 转为通用 Binding。
-4. 对旧绑定通过读取实际 auth 补指纹；无法核对时标记 legacy/unknown，不立即清除或接管。
-5. 迁移删除队列，保持 Admin URL、Platform ID、Account、尝试次数、下次执行时间和 token 引用。
-6. 将旧 `{proxy_token}` 密码标记转换为固定密码配置，详见第 15 节。
-7. 同步写新版本；写入失败保留原文件。新状态损坏或版本超出支持范围时停止相关写操作。
-8. 迁移本身不访问 Resin 网络、不改 auth URL、不开启自动绑定。
+当前状态文件固定为 schema v1。加载时必须满足：
 
-旧配置不完整或 Resin 当前不可达，不是丢弃旧绑定和队列的理由。尤其不能仅通过“同协议、同主机、用户名有一个点”把外部代理识别为 Resin 管理租约。
-
-运行时内部类型与旧 action 可以直接迁移；仅为已有磁盘数据提供一次性迁移路径，不长期维护两套字段。
+- `schema_version` 严格等于 1。
+- JSON 严格解码，未知顶层或嵌套字段直接失败。
+- 不接受旧 schema、旧 Resin 单例字段、旧账号 `resin` 字段或旧 token 引用字段。
+- 不执行任何旧 schema 数据迁移、字段转换或兼容回退；旧 state 必须删除后重建。
+- 保存前再次校验 schema，禁止内存状态以其他版本写回。
 
 ### 11.6 版本和凭据保留
 
-旧模板版本在仍被 Binding 或 Operation 引用时保留；旧 Resin 快照在仍被 Binding、Operation、CleanupJob 引用时保留。只有全部引用释放后才 GC。
+历史模板版本在仍被 Binding 或 Operation 引用时保留；历史 Resin 快照在仍被 Binding、Operation、CleanupJob 引用时保留。只有全部引用释放后才 GC。
 
 这保证修改凭据、禁用来源、重启或删除配置后，已排队的旧租约仍有确定的清理目标。
 
@@ -969,7 +962,7 @@ proxy:
 
 保留现有质量失败分类和请求重试边界，只把动作委托给通用 Manager。统一配置使用 `proxy.auto_rotate_after_quality_failure`，不同时在 policy、Resin runtime 设置和代理模块里维护可独立变化的三个开关。
 
-迁移时从旧有效策略取值。模板和节点同样可以轮换，但不能因普通限流、流已经对客户端输出或不可重放请求而额外增加重试。
+策略只从当前 policy/YAML 读取，不再维护多个可独立变化的开关。模板和节点同样可以轮换，但不能因普通限流、流已经对客户端输出或不可重放请求而额外增加重试。
 
 ## 13. CRUD、节点同步与模板回溯
 
@@ -1115,15 +1108,9 @@ proxy:
 
 “立即扫描”在自动绑定开启时唤醒一次发现过程，不绕过开关、排除或退避。关闭状态下，“绑定全部未绑定”仍作为显式手动动作可用。
 
-## 15. Resin adapter 与旧行为迁移
+## 15. Resin 来源
 
-### 15.1 固定模板的复用方式
-
-旧表达式：
-
-~~~text
-socks5h://{platform}.{account}:{proxy_token}@resin:2260
-~~~
+### 15.1 模板形式
 
 每个 Resin 来源都以 `Template` 的 `kind=resin` 持久化，连接差异（平台、Admin URL、AccountFormat、LocalOnly 和 Admin Token）保存在按来源 ID 索引的 Resin 配置中。可以同时存在多个 Resin 来源，因此同一 Resin 服务可以按平台、Admin 地址或账号生成规则拆分。单个来源使用：
 
@@ -1135,7 +1122,7 @@ socks5h://{platform}.{account}:{proxy_token}@resin:2260
 
 平台名先由配置解析成用户名 literal；`{account}` 是保留占位符，只替换为 auth 邮箱 `@` 前的本地部分并转小写。除 `{account}` 外，账号格式可以继续使用普通模板的 enum/random 占位符和关联组，例如 `xai-{account}-{region}`。Proxy Token 是固定密码，不是模板变量。
 
-旧密码位置 {proxy_token} 仅由一次性迁移识别并抽出，不在新的通用模板语法中保留例外。普通用户变量仍只有 enum/random；`{account}` 的 reserved kind 只允许 Resin 模板使用，不出现在普通模板编辑器的生成方式下拉中。
+通用模板语法不保留 `{proxy_token}` 特殊变量；Resin Proxy Token 保存在来源配置中，并在构建模板时作为固定密码写入。普通用户变量仍只有 enum/random；`{account}` 的 reserved kind 只允许 Resin 模板使用，不出现在普通模板编辑器的生成方式下拉中。
 
 管理页只暴露平台名之后的 username 后缀，用户不需要也不能重复填写平台前缀。协议固定为 SOCKS5H，密码固定引用 Proxy Token，代理主机和端口从 Admin API URL 解析；完整的 username template 仍作为内部持久化形式，用于生成、预览和租约清理。
 
@@ -1182,19 +1169,19 @@ Resin 停用不自动停止已授权的历史清理。需要暂停清理时用�
 | `proxy.sources.validate/preview/test` | 配置验证、条件预览、网络检测 |
 | `proxy.sources.test_selected/delete_selected` | 来源页多选后的异步队列式批量检测与清理删除，逐项返回结果 |
 | `proxy.sources.create/update/delete` | 来源 CRUD，kind 判别具体配置 |
-| `proxy.sources.import_nodes` | 带 scheme 节点批量导入，最多 100000 条且内容不超过 16 MiB |
+| `proxy.sources.import_nodes` | 带 scheme 节点批量导入，自动回退识别地址在前与 host:port@user:pass；最多 100000 条且内容不超过 16 MiB |
 | `proxy.bindings.list` | 账号绑定、external、drifted、unknown 筛选 |
 | `proxy.bindings.bind/clear/rotate/adopt` | 手动绑定、清除、轮换、接管 |
 | `proxy.bindings.set_auto_bind` | 批量排除或恢复自动绑定 |
 | `proxy.bind_unbound` | 显式批量绑定未绑定账号 |
-| `proxy.templates.apply_bound` | 显式应用当前模板，支持 dry_run |
+| `proxy.template.apply` | 显式应用当前模板，支持 dry_run |
 | `proxy.auto_bind.get/update/run` | 策略、开关与发现唤醒 |
 | `proxy.changes.list/get/retry/cancel` | 同步与回溯任务进度 |
 | `resin.cleanup.list/retry/pause` | Resin 远端清理管理 |
 
 类型专用编辑器向来源 action 提交明确 kind DTO，服务端拒绝无关字段。共用 CRUD 不等于把所有类型字段堆进一个自由 map。
 
-旧 `resin.bind/clear/rotate/bind_unbound` 随 Dashboard 迁入通用 action。长期只维护一套绑定路径。
+旧版 Resin 专用 action 已删除；绑定、清除、轮换和批量绑定统一使用 `proxy.bindings.*` 与 `proxy.bind_unbound`。
 
 ### 16.2 请求与保存
 
@@ -1212,7 +1199,7 @@ Dashboard 的节点和模板编辑器不提供独立的密码状态或 keep/set/
 
 `proxy.sources.get` 仅在显式传入 `edit_fields:true` 时返回 `edit_url`。普通列表、普通详情、绑定响应、tasks/events 仍不显示凭据。Resin 的 Admin Token 与 Proxy Token 继续不回填。
 
-`password_update` 保留给非 Dashboard API 客户端兼容使用；URL 含认证时仍以 URL 解析结果为准，Dashboard 不再发送该字段。
+密码只来自完整 URL；不存在 `password_update` 或独立的 keep/set/clear 密码协议。
 
 Dashboard 的账号绑定列表默认只显示脱敏端点。用户点击眼睛时才调用 `proxy.bindings.endpoint` 按单个 auth 读取完整端点；完整值仅用于该行展开显示和鼠标悬浮标题，不进入普通列表响应。
 
@@ -1444,7 +1431,7 @@ Repository 的事务回调不获取账号 gate，也不调用 Manager；定期 c
 | 范围 | 关键断言 |
 | --- | --- |
 | URL | 四种 scheme、仅用户名/空密码、编码一次、IPv6、保留端口、根斜杠规范化 |
-| 批量导入 | 无 scheme 跳过；兼容格式显式解析；错误不回显整行凭据；100000 条与 16 MiB 边界准确；本地文件只保留有效去重项 |
+| 批量导入 | 无 scheme 跳过；标准 URL 优先，失败后自动尝试地址在前与 host:port@user:pass 并正确处理 IPv4、IPv6 与百分号编码凭据；错误不回显整行凭据；100000 条与 16 MiB 边界准确；本地文件只保留有效去重项 |
 | 自定义变量 | 英文、连字符、Unicode 名称均按相同规则处理，无 country/state 名字分支 |
 | 枚举 | 按字面分隔符拆分，空项报错，重复规范化，大小写原样，单值合法 |
 | 随机 | 36/62 字符集、指定长度、无取模偏差，不声称全局唯一 |
@@ -1458,14 +1445,14 @@ Repository 的事务回调不获取账号 gate，也不调用 Manager；定期 c
 | 同步/回溯 | 目标版本固定，成功项不回滚，失败重试复用已生成值 |
 | 清除 | 全局默认、单次覆盖、已排除账号保持；finalize 失败也不抢先重新绑定 |
 | 恢复 | prepared 前失败、auth 后失败、回执未知、重启、外部漂移分别处理 |
-| Resin | 密码旧标记迁为固定字段；旧平台/地址/Token 快照准确；删除去重和引用保护 |
+| Resin | 密码来自模板 URL/Proxy Token；清理使用不可变快照；删除去重和引用保护 |
 | 自动绑定 | queued/running 同时去重，unknown 不当空值，满队列公平续扫，无来源不烧重试 |
 | 生命周期 | 关闭停止新派发，已提交操作完成，重启继续恢复 |
 | UI | 旧刷新不覆盖草稿，旧预览不覆盖新条件，任务结果与配置保存区分；大列表不按行创建 DOM，文件过滤结果与实际提交一致 |
 
 国家/州例子的 `us+ZJ` 禁止，只因为它没有出现在该测试配置的合法表中。另用自定义 vendor/plan/profile、mode/pool 和中文变量测试，以防实现误写固定地理规则。
 
-现有 Resin 回归保留有效语义。状态写入故障测试按 prepared 与 finalize 两阶段重新注入，不能再要求“前置 state 已不可写时仍先改 auth”。
+Resin 回归保留有效语义。状态写入故障测试按 prepared 与 finalize 两阶段重新注入，不能再要求“前置 state 已不可写时仍先改 auth”。
 
 运行时协议支持需要 Host 集成测试：HTTP CONNECT、HTTPS 到代理的 TLS、SOCKS5/SOCKS5H DNS 路径、真实 auth 保存与缓存失效。配置单元测试无法代替这些验证。
 
@@ -1474,14 +1461,14 @@ Repository 的事务回调不获取账号 gate，也不调用 Manager；定期 c
 ## 21. 推荐实施顺序
 
 1. Endpoint、用户变量和合法关系表：先实现纯编译/生成与边界测试。
-2. Resin adapter 抽取：`internal/app`装配 Provider 和 CleanupHandler，修正旧密码标记映射。
-3. 状态 v2、来源版本、prepared 操作与恢复：建立可靠单账号提交，再接入通用绑定。
+2. Resin adapter 抽取：`internal/app` 装配 TemplateProvider 和 CleanupHandler，使用通用模板密码。
+3. 状态 v1、来源版本、prepared 操作与恢复：建立可靠单账号提交，再接入通用绑定。
 4. 节点/模板 CRUD、前向同步和可配置模板回溯：复用同一提交路径。
 5. Dashboard：先完成通用来源列表和手动绑定，再接入层级编辑、CSV 与条件预览。
 6. 自动绑定 worker：复用已验证的发现、来源选择、配额与提交，补全排除与退避。
-7. 租约清理、生命周期和迁移故障验收；更新 README、注册配置、管理 action。
+7. 租约清理、生命周期和故障恢复验收；更新 README、注册配置、管理 action。
 
-Dashboard 与自动绑定按共用能力逐步集成，不等完成整个 UI 后才发现绑定模型缺字段。最终删除旧重复 Resin 绑定实现，保留一次性磁盘迁移。
+Dashboard 与自动绑定按共用能力逐步集成，不等完成整个 UI 后才发现绑定模型缺字段。最终只保留通用绑定实现，不保留旧数据迁移或旧 action。
 
 ## 22. 验收标准
 
@@ -1668,13 +1655,13 @@ Dashboard 用两个任务入口承载绑定和配置，三种来源可同时存�
 
 | 需求 | 实现与验收重点 |
 | --- | --- |
-| 多个节点、多种 URL、统一端点 | `internal/proxy/endpoint.go` 统一解析、IDNA/IPv6/认证校验、编码和脱敏；无 scheme 忽略；批量导入一次保存并报告 invalid/skipped/duplicate |
+| 多个节点、多种 URL、统一端点 | `internal/proxy/endpoint.go` 统一解析、IDNA/IPv6/认证校验、编码和脱敏；标准 URL 优先，失败后自动回退地址在前与 host:port@user:pass；无 scheme 忽略；批量导入一次保存并报告 invalid/skipped/duplicate |
 | 用户定义的模板变量 | 用户名内编译变量，枚举必须有分隔符与范围，随机使用无偏英文字母和数字；支持仅用户名、空密码及无认证模板 |
 | 任意级联关系 | 用户指定组、列顺序和合法组合，按前缀索引逐级随机；没有国家/省份数据库或名称特判；Dashboard 支持多父路径、批量子项和 CSV/TSV |
 | 完整验证后保存 | 保存重新执行静态校验，全部行和最坏用户名长度均验证；条件预览独立，不代替保存校验；错误带 code/path |
 | Resin 复用与清理 | Resin Provider 共用编译模板；普通生成不访问平台 API；生成配置保存时验证平台和认证；旧租约按不可变快照清理 |
 | CRUD、绑定、清除、轮换 | 来源 ID 稳定，编辑要求 expected_version；节点端点变化自动同步；删除失败保留来源；操作意图防止重复生成和跨动作误用 operation_id |
-| 模板回溯 | 默认 keep_bound，显式 rerender_bound 或 apply_bound 建立固定 revision 的任务；成功项不回滚，失败项保留原生成目标 |
+| 模板回溯 | 默认 keep_bound，显式 rerender_bound 或 proxy.template.apply 建立固定 revision 的任务；成功项不回滚，失败项保留原生成目标 |
 | 自动绑定 | 默认关闭，有界队列同时去重 queued/running；不把未知读结果当空；保存前再核对开关、范围、禁用归属、来源和健康要求 |
 | 手动清除策略 | 默认可重绑，可全局 pause 或单次 true/false/null 覆盖；已有明确排除不会因普通手动绑定被重置 |
 | Dashboard | 账号绑定/代理来源两个任务 Tab，类型并存；分页、草稿版本保护、失效预览保护、来源选择、失败重试及清理暂停保留原配色 |
@@ -1685,7 +1672,7 @@ Dashboard 用两个任务入口承载绑定和配置，三种来源可同时存�
 
 原绑定路径多次复制整个质量状态和扫描所有账号。现在负载索引增量更新，分配同时计算已绑定、内存预留及未完成持久意图，并按 auth 去除重复计数。auth 已保存而 finalize 失败时不会释放持久配额；重启后仍占用，避免超过 max_bindings。账号目录发布为不可变切片，成功写入通过观察覆盖层立即可见。
 
-绑定、清除、轮换和来源同步共用 prepare → 最新读取 → Host 保存 → 实际 URL 回读 → finalize。Host 回执损坏后先核对现实；回读未知或指纹漂移保留待核对操作，不排队删除旧租约。源同步按结果位置直接写入，成功项不重试，已有随机目标不重新生成。旧 Resin 入口复用这条路径。
+绑定、清除、轮换和来源同步共用 prepare → 最新读取 → Host 保存 → 实际 URL 回读 → finalize。Host 回执损坏后先核对现实；回读未知或指纹漂移保留待核对操作，不排队删除旧租约。源同步按结果位置直接写入，成功项不重试，已有随机目标不重新生成。Resin 来源同样走这条路径。
 
 Resin 的配置快照包含平台名称、UUID、地址和凭据；平台改名不会误复用旧用户名生成器。停用当前来源不停止历史清理。网络检测可能惰性创建测试租约，因此检测前持久化该测试身份的延迟清理任务；普通无网络预览不预留、不写 state。
 

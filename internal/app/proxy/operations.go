@@ -14,6 +14,7 @@ import (
 
 	"grok-quality-guard/internal/app/auth"
 	"grok-quality-guard/internal/app/redact"
+	appstate "grok-quality-guard/internal/app/state"
 	"grok-quality-guard/internal/app/tasks"
 	proxy "grok-quality-guard/internal/proxy"
 
@@ -21,7 +22,7 @@ import (
 )
 
 func proxyURLHash(value string) string {
-	if endpoint, err := proxy.ParseEndpoint(value, proxy.ParseOptions{}); err == nil {
+	if endpoint, err := proxy.ParseEndpoint(value); err == nil {
 		return endpoint.Fingerprint()
 	}
 	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
@@ -29,15 +30,7 @@ func proxyURLHash(value string) string {
 }
 
 func bindingMatchesURL(binding proxy.Binding, value string) bool {
-	if value == "" {
-		return false
-	}
-	if binding.EndpointHash != "" {
-		return binding.EndpointHash == proxyURLHash(value)
-	}
-	// A migrated lease has ownership evidence but no old endpoint fingerprint.
-	// Only the recorded identity may be used; never recognize a host alone.
-	return false
+	return value != "" && binding.EndpointHash != "" && binding.EndpointHash == proxyURLHash(value)
 }
 
 func (s *Service) commitProxyOperationLocked(ctx context.Context, response pluginapi.HostAuthGetResponse, raw map[string]json.RawMessage, operation proxy.Operation, automatic bool) (proxyBindingResult, error) {
@@ -189,33 +182,21 @@ func (s *Service) finalizeProxyOperation(operation proxy.Operation) (proxyBindin
 	auto.Attempts = 0
 	auto.LastError = ""
 	auto.NextAttemptAt = time.Time{}
-	legacy := current.Resin
-	if operation.Clear {
-		legacy.Managed = false
-		legacy.Account = ""
-	} else if operation.Binding.SourceKind == proxy.SourceResin {
-		legacy = ResinState{Managed: true, Generation: int64(operation.Binding.Generation)}
-		if operation.Binding.Lease != nil {
-			legacy.Account = operation.Binding.Lease.Account
-		}
-	} else {
-		legacy = ResinState{}
-	}
 	now := time.Now().UTC()
 	operation.Status = "finalized"
 	operation.NextAttemptAt = time.Time{}
 	operation.Error = ""
 	operation.UpdatedAt = now
-	commit := proxyCommit{Operation: &operation, Account: &proxyAccountCommit{AuthID: operation.AuthID, Binding: operation.Binding, AutoBind: auto, Resin: legacy}, DeleteOperations: store.PrunableProxyOperations()}
+	commit := proxyCommit{Operation: &operation, Account: &proxyAccountCommit{AuthID: operation.AuthID, Binding: operation.Binding, AutoBind: auto}, DeleteOperations: store.PrunableProxyOperations()}
 	status := "succeeded"
 	if operation.Clear {
 		commit.Account.Binding = proxy.Binding{Generation: current.Proxy.Generation}
 		status = "cleared"
 	}
 	switch operation.Action {
-	case "proxy_bind", "resin_bind":
+	case "proxy_bind":
 		status = "bound"
-	case "proxy_rotate", "resin_rotate":
+	case "proxy_rotate":
 		status = "rotated"
 	}
 	if operation.OldLease != nil && (operation.Clear || operation.Binding.Lease == nil || operation.OldLease.SnapshotID != operation.Binding.Lease.SnapshotID || operation.OldLease.Account != operation.Binding.Lease.Account) {
@@ -236,7 +217,7 @@ func (s *Service) finalizeProxyOperation(operation proxy.Operation) (proxyBindin
 			detail += " remote_lease=not_queued"
 		}
 	}
-	commit.Event = &Event{Time: now, AuthID: operation.AuthID, Action: operation.Action, Result: status, Detail: detail}
+	commit.Event = &appstate.Event{Time: now, AuthID: operation.AuthID, Action: operation.Action, Result: status, Detail: detail}
 	if operation.ChangeID != "" {
 		item := proxy.ChangeItem{AuthID: operation.AuthID, Generation: operation.ExpectedGeneration, EndpointHash: operation.ExpectedHash, OperationID: operation.ID, Status: "succeeded"}
 		commit.ChangeID = operation.ChangeID
@@ -273,7 +254,7 @@ func (s *Service) resumeProxyOperationLocked(ctx context.Context, authID string,
 		status := "succeeded"
 		if operation.Clear {
 			status = "cleared"
-		} else if operation.Action == "proxy_bind" || operation.Action == "resin_bind" {
+		} else if operation.Action == "proxy_bind" {
 			status = "bound"
 		} else if strings.Contains(operation.Action, "rotate") {
 			status = "rotated"
@@ -399,19 +380,13 @@ func (s *Service) clearProxy(ctx context.Context, authID string, opts proxyBindO
 	if current == "" && !managed {
 		if state.AutoBind.Excluded != exclude {
 			state.AutoBind.Excluded = exclude
-			if err := s.env.ProxyStore().CommitProxy(proxyCommit{Account: &proxyAccountCommit{AuthID: authID, Binding: state.Proxy, Resin: state.Resin, AutoBind: state.AutoBind}}); err != nil {
+			if err := s.env.ProxyStore().CommitProxy(proxyCommit{Account: &proxyAccountCommit{AuthID: authID, Binding: state.Proxy, AutoBind: state.AutoBind}}); err != nil {
 				return failedProxyResult(authID, "failed", err), err
 			}
 		}
 		return proxyBindingResult{AuthID: authID, Status: "skipped"}, nil
 	}
 	lease := binding.Lease
-	if managed && binding.SourceKind == proxy.SourceResin && lease != nil && lease.SnapshotID == "" {
-		lease, err = s.captureLegacyLease(binding, current)
-		if err != nil {
-			return failedProxyResult(authID, "failed", err), err
-		}
-	}
 	now := time.Now().UTC()
 	operation := proxy.Operation{ID: firstNonEmptyString(opts.OperationID, newProxyID("op")), AuthID: authID, Action: firstNonEmptyString(opts.Action, "proxy_clear"), ChangeID: opts.ChangeID, ExpectedHash: proxyURLHash(current), ExpectedGeneration: binding.Generation, PreviousSourceID: binding.SourceID, Clear: true, Binding: proxy.Binding{Generation: binding.Generation}, OldLease: lease, ExcludeAutoBind: exclude, Status: "prepared", CreatedAt: now, UpdatedAt: now}
 	return s.commitProxyOperationLocked(ctx, response, raw, operation, false)
@@ -508,18 +483,9 @@ func (s *Service) rotateProxy(ctx context.Context, authID string, opts proxyBind
 		return proxyBindingResult{AuthID: authID, SourceID: candidate.ID, SourceKind: candidate.Kind, Status: "dry_run", ProxyURL: rendered.MaskedURL, DryRun: true}, nil
 	}
 	oldLease := binding.Lease
-	if oldLease != nil && oldLease.SnapshotID == "" {
-		oldLease, err = s.captureLegacyLease(binding, current)
-		if err != nil {
-			return failedProxyResult(authID, "failed", err), err
-		}
-	}
 	now := time.Now().UTC()
 	next := proxy.Binding{AuthID: authID, SourceID: candidate.ID, SourceKind: candidate.Kind, SourceRevision: candidate.Revision, Generation: binding.Generation + 1, EndpointHash: proxyURLHash(rendered.URL), ResolvedValues: rendered.Values, Lease: lease, BoundAt: binding.BoundAt, UpdatedAt: now}
 	action := "proxy_rotate"
-	if candidate.Kind == proxy.SourceResin {
-		action = "resin_rotate"
-	}
 	operation := proxy.Operation{ID: firstNonEmptyString(opts.OperationID, newProxyID("op")), AuthID: authID, Action: action, ExpectedHash: proxyURLHash(current), ExpectedGeneration: binding.Generation, PreviousSourceID: binding.SourceID, DesiredURL: rendered.URL, Binding: next, OldLease: oldLease, ExcludeAutoBind: state.AutoBind.Excluded, Status: "prepared", CreatedAt: now, UpdatedAt: now}
 	return s.commitProxyOperationLocked(ctx, response, raw, operation, false)
 }
@@ -575,91 +541,10 @@ func (s *Service) replaceProxyEndpoint(ctx context.Context, authID string, kind 
 	return s.commitProxyOperationLocked(ctx, response, raw, operation, false)
 }
 
-func resinTemplateBindingMatches(entry *proxySourceCandidate, current, account string) error {
-	if entry == nil || entry.Template == nil || entry.ResinSettings == nil {
-		return proxyError("proxy_legacy_unknown", 409, "legacy proxy binding requires explicit reconciliation")
-	}
-	endpoint, err := proxy.ParseEndpoint(current, proxy.ParseOptions{})
-	if err != nil || !endpoint.HasPassword || strings.TrimSpace(account) == "" {
-		return proxyError("proxy_legacy_unknown", 409, "legacy proxy endpoint is invalid")
-	}
-	if entry.ResinSettings.LocalOnly {
-		if resinAccountFromProxyURL(current) != account {
-			return proxyError("proxy_legacy_unknown", 409, "legacy proxy identity does not match its recorded lease")
-		}
-		return nil
-	}
-	prefix := strings.TrimSpace(entry.ResinSettings.Platform)
-	username := endpoint.Username
-	if prefix != "" {
-		if !strings.HasPrefix(username, prefix+".") || strings.TrimPrefix(username, prefix+".") != account {
-			return proxyError("proxy_legacy_unknown", 409, "legacy proxy identity does not match its recorded lease")
-		}
-	} else if !strings.HasSuffix(username, "."+account) {
-		return proxyError("proxy_legacy_unknown", 409, "legacy proxy identity does not match its recorded lease")
-	}
-	if endpoint.Protocol != entry.Template.Protocol || !strings.EqualFold(endpoint.Host, entry.Template.Host) ||
-		endpoint.Port != entry.Template.Port || endpoint.Password != entry.Template.Password {
-		return proxyError("proxy_legacy_unknown", 409, "legacy proxy endpoint does not match its configured Resin connection")
-	}
-	return nil
-}
-
-// Migration only fills a fingerprint after the recorded identity and the
-// complete configured endpoint agree. It never adopts an unrecorded proxy.
-func (s *Service) verifiedProxyBinding(state AccountState, current string, dryRun bool) (proxy.Binding, bool, error) {
+func (s *Service) verifiedProxyBinding(state AccountState, _ string, _ bool) (proxy.Binding, bool, error) {
 	binding, managed := bindingForAccount(state)
-	if !managed || binding.EndpointHash != "" || current == "" {
-		return binding, managed, nil
-	}
-	if binding.SourceKind != proxy.SourceResin || binding.Lease == nil || binding.Lease.Account == "" {
-		return binding, managed, proxyError("proxy_legacy_unknown", 409, "legacy proxy binding requires explicit reconciliation")
-	}
-	settings := s.ResinConfig()
-	if binding.Lease.SnapshotID != "" {
-		if snapshot, ok := s.env.ProxyStore().ResinSnapshot(binding.Lease.SnapshotID); ok {
-			settings = snapshot
-		}
-	}
-	templateBacked := false
-	if binding.SourceID != "" {
-		if entry := s.proxyCatalog().ByID[binding.SourceID]; entry != nil && entry.Template != nil && entry.ResinSettings != nil {
-			if errMatch := resinTemplateBindingMatches(entry, current, binding.Lease.Account); errMatch != nil {
-				return binding, managed, errMatch
-			}
-			templateBacked = true
-		}
-	}
-	if !templateBacked && settings.LocalOnly {
-		endpoint, err := proxy.ParseEndpoint(current, proxy.ParseOptions{})
-		if err != nil {
-			return binding, managed, err
-		}
-		settings.ProxyToken = endpoint.Password
-	}
-	expected := ""
-	var err error
-	if !templateBacked {
-		expected, err = renderResinProxy(settings, binding.Lease.Account)
-		if err != nil || proxyURLHash(expected) != proxyURLHash(current) {
-			return binding, managed, proxyError("proxy_legacy_unknown", 409, "legacy proxy does not match its recorded integration; explicit reconciliation is required")
-		}
-	}
-	binding.EndpointHash = proxyURLHash(current)
-	binding.SourceRevision = max(1, binding.SourceRevision)
-	if !dryRun {
-		lease, err := s.captureLegacyLease(binding, current)
-		if err != nil {
-			return binding, managed, err
-		}
-		binding.Lease = lease
-		if err := s.env.ProxyStore().CommitProxy(proxyCommit{Account: &proxyAccountCommit{AuthID: state.AuthID, Binding: binding, Resin: state.Resin, AutoBind: state.AutoBind}}); err != nil {
-			return binding, managed, err
-		}
-	}
 	return binding, managed, nil
 }
-
 func (s *Service) adoptProxy(ctx context.Context, authID string, opts proxyBindOptions) (proxyBindingResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -716,34 +601,36 @@ func (s *Service) adoptProxy(ctx context.Context, authID string, opts proxyBindO
 		}
 		rendered = proxy.RenderedProxy{URL: current, Endpoint: entry.Node.Endpoint}
 	} else if entry.Kind == proxy.SourceResin && !opts.Replace {
+		if entry.Template == nil || entry.ResinConfig == nil {
+			err := proxyError("proxy_source_invalid", 409, "Resin source configuration is missing")
+			return failedProxyResult(authID, "conflict", err), err
+		}
+		parsedURL, errParse := url.Parse(strings.TrimSpace(current))
+		if errParse != nil || parsedURL.User == nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+			err := proxyError("proxy_binding_conflict", 409, "existing proxy URL is invalid")
+			return failedProxyResult(authID, "conflict", err), err
+		}
+		parsedEndpoint, errEndpoint := proxy.ParseEndpoint(current)
+		if errEndpoint != nil || !parsedEndpoint.HasPassword {
+			err := proxyError("proxy_binding_conflict", 409, "existing proxy URL is invalid")
+			return failedProxyResult(authID, "conflict", err), err
+		}
+		config := *entry.ResinConfig
+		prefix := strings.TrimSpace(config.Platform)
+		username := parsedURL.User.Username()
 		account := resinAccountFromProxyURL(current)
-		if entry.Template != nil {
-			parsedURL, errParse := url.Parse(strings.TrimSpace(current))
-			if errParse != nil || parsedURL.User == nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-				err := proxyError("proxy_binding_conflict", 409, "existing proxy URL is invalid")
+		if prefix != "" {
+			if !strings.HasPrefix(username, prefix+".") {
+				err := proxyError("proxy_binding_conflict", 409, "proxy does not match the selected Resin platform")
 				return failedProxyResult(authID, "conflict", err), err
 			}
-			parsedEndpoint, errEndpoint := proxy.ParseEndpoint(current, proxy.ParseOptions{})
-			if errEndpoint != nil || !parsedEndpoint.HasPassword {
-				err := proxyError("proxy_binding_conflict", 409, "existing proxy URL is invalid")
-				return failedProxyResult(authID, "conflict", err), err
-			}
-			config := s.env.ProxyStore().ProxySourcesSnapshot().ResinSources[entry.ID]
-			prefix := strings.TrimSpace(config.Platform)
-			username := parsedURL.User.Username()
-			if prefix != "" {
-				if !strings.HasPrefix(username, prefix+".") {
-					err := proxyError("proxy_binding_conflict", 409, "proxy does not match the selected Resin platform")
-					return failedProxyResult(authID, "conflict", err), err
-				}
-				account = strings.TrimPrefix(username, prefix+".")
-			}
-			if !config.LocalOnly && (parsedEndpoint.Protocol != entry.Template.Protocol ||
-				!strings.EqualFold(parsedEndpoint.Host, entry.Template.Host) || parsedEndpoint.Port != entry.Template.Port ||
-				!parsedEndpoint.HasPassword || parsedEndpoint.Password != entry.Template.Password) {
-				err := proxyError("proxy_binding_conflict", 409, "proxy does not match the selected Resin connection")
-				return failedProxyResult(authID, "conflict", err), err
-			}
+			account = strings.TrimPrefix(username, prefix+".")
+		}
+		if !config.LocalOnly && (parsedEndpoint.Protocol != entry.Template.Protocol ||
+			!strings.EqualFold(parsedEndpoint.Host, entry.Template.Host) || parsedEndpoint.Port != entry.Template.Port ||
+			parsedEndpoint.Password != entry.Template.Password) {
+			err := proxyError("proxy_binding_conflict", 409, "proxy does not match the selected Resin connection")
+			return failedProxyResult(authID, "conflict", err), err
 		}
 		usage := s.env.ProxyStore().ProxyLeaseUsage(account)
 		if old.Lease != nil && old.Lease.Account == account {
@@ -753,30 +640,23 @@ func (s *Service) adoptProxy(ctx context.Context, authID string, opts proxyBindO
 			err := proxyError("resin_lease_in_use", 409, "Resin lease is referenced by another binding or cleanup operation")
 			return failedProxyResult(authID, "conflict", err), err
 		}
-		expected, renderErr := "", error(nil)
-		if entry.Template == nil {
-			expected, renderErr = renderResinProxy(*entry.ResinSettings, account)
-		}
-		if account == "" || renderErr != nil || (entry.Template == nil && proxyURLHash(expected) != proxyURLHash(current)) {
+		if account == "" {
 			err := proxyError("proxy_binding_conflict", 409, "proxy does not match the selected Resin integration")
 			return failedProxyResult(authID, "conflict", err), err
 		}
 		if !opts.DryRun {
-			if entry.ResinSettings.LocalOnly {
+			if config.LocalOnly {
 				lease = &proxy.LeaseRef{Provider: "resin-local", Account: account}
 			} else {
-				id, err := s.env.ProxyStore().EnsureResinSnapshot(*entry.ResinSettings)
+				snapshot := proxy.ResinSnapshot{AdminURL: config.AdminURL, PlatformID: config.PlatformID, AdminToken: config.AdminToken}
+				id, err := s.env.ProxyStore().EnsureResinSnapshot(snapshot)
 				if err != nil {
 					return failedProxyResult(authID, "failed", err), err
 				}
-				lease = &proxy.LeaseRef{Provider: "resin", Account: account, SnapshotID: id, PlatformID: entry.ResinSettings.PlatformID}
+				lease = &proxy.LeaseRef{Provider: "resin", Account: account, SnapshotID: id, PlatformID: config.PlatformID}
 			}
 		}
-		e, errEndpoint := proxy.ParseEndpoint(current, proxy.ParseOptions{})
-		if errEndpoint != nil {
-			return failedProxyResult(authID, "conflict", errEndpoint), errEndpoint
-		}
-		rendered = proxy.RenderedProxy{URL: current, Endpoint: e}
+		rendered = proxy.RenderedProxy{URL: current, Endpoint: parsedEndpoint}
 	} else {
 		if !opts.Replace {
 			err := proxyError("proxy_replace_required", 400, "template adoption requires replace=true")
@@ -815,8 +695,7 @@ func (s *Service) retryProxyAction(ctx context.Context, authID string, opts prox
 	if !ok {
 		return proxyBindingResult{}, false, nil
 	}
-	normalize := func(name string) string { return strings.TrimPrefix(strings.TrimPrefix(name, "proxy_"), "resin_") }
-	if operation.AuthID != authID || normalize(operation.Action) != normalize(action) {
+	if operation.AuthID != authID || operation.Action != action {
 		err := proxyError("proxy_operation_conflict", 409, "operation_id belongs to another auth or action")
 		return failedProxyResult(authID, "conflict", err), true, err
 	}
@@ -1048,11 +927,6 @@ func (s *Service) runProxyChange(ctx context.Context, id string) (map[string]any
 							}
 						}
 						delete(state.Proxy.ResinSources, change.SourceID)
-						if change.SourceID == resinSourceID {
-							state.Resin = ResinSettings{Configured: true}
-							state.Proxy.ResinSource.Enabled = false
-							state.Proxy.ResinSource.Deleted = true
-						}
 						delete(state.Proxy.SourceRuntime, change.SourceID)
 					}
 				} else if runtime.ChangeID == id {
@@ -1080,9 +954,6 @@ func (s *Service) runProxyChange(ctx context.Context, id string) (map[string]any
 }
 
 func (s *Service) proxyKindFromState(state State, id string) string {
-	if id == resinSourceID {
-		return "resin"
-	}
 	for _, n := range state.Proxy.Nodes {
 		if n.ID == id {
 			return "node"

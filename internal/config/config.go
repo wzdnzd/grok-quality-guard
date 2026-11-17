@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -114,18 +115,6 @@ type ProbeConfig struct {
 	ExitProtocol    string   `yaml:"exit_protocol" json:"exit_protocol"`
 }
 
-type ResinConfig struct {
-	Enabled                       bool   `yaml:"enabled" json:"enabled"`
-	LocalOnly                     bool   `yaml:"local_only" json:"local_only"`
-	Platform                      string `yaml:"platform" json:"platform"`
-	PlatformID                    string `yaml:"platform_id" json:"platform_id"`
-	AdminURL                      string `yaml:"admin_url" json:"admin_url"`
-	AdminTokenEnv                 string `yaml:"admin_token_env" json:"admin_token_env"`
-	ProxyTokenEnv                 string `yaml:"proxy_token_env" json:"proxy_token_env"`
-	ProxyTemplate                 string `yaml:"proxy_template" json:"proxy_template"`
-	AutoRotateAfterQualityFailure bool   `yaml:"auto_rotate_after_quality_failure" json:"auto_rotate_after_quality_failure"`
-}
-
 type RoutingConfig struct {
 	SelectionStrategy      string   `yaml:"selection_strategy" json:"selection_strategy"`
 	PreferLastSuccess      bool     `yaml:"prefer_last_success" json:"prefer_last_success"`
@@ -144,24 +133,24 @@ type Config struct {
 	Routing          RoutingConfig `yaml:"routing" json:"routing"`
 	Quality          QualityConfig `yaml:"quality" json:"quality"`
 	Probe            ProbeConfig   `yaml:"probe" json:"probe"`
-	Resin            ResinConfig   `yaml:"resin" json:"resin"`
-	Proxy            ProxyConfig   `yaml:"proxy" json:"proxy"`
-	StateFile        string        `yaml:"state_file" json:"state_file"`
-	EventsLimit      int           `yaml:"events_limit" json:"events_limit"`
+
+	Proxy       ProxyConfig `yaml:"proxy" json:"proxy"`
+	StateFile   string      `yaml:"state_file" json:"state_file"`
+	EventsLimit int         `yaml:"events_limit" json:"events_limit"`
 }
 
 // Policy is the runtime-editable subset persisted in state.json
 type Policy struct {
-	PassiveGuard                    bool          `json:"passive_guard"`
-	TransparentGuard                bool          `json:"transparent_guard"`
-	AutoAction                      string        `json:"auto_action"`
-	ModelPrefixes                   []string      `json:"model_prefixes"`
-	Routing                         RoutingConfig `json:"routing"`
-	Quality                         QualityConfig `json:"quality"`
-	Probe                           ProbeConfig   `json:"probe"`
-	ResinAutoRotateAfterQualityFail bool          `json:"resin_auto_rotate_after_quality_failure"`
-	ProxyAutoRotateAfterQualityFail bool          `json:"proxy_auto_rotate_after_quality_failure"`
-	EventsLimit                     int           `json:"events_limit"`
+	PassiveGuard     bool          `json:"passive_guard"`
+	TransparentGuard bool          `json:"transparent_guard"`
+	AutoAction       string        `json:"auto_action"`
+	ModelPrefixes    []string      `json:"model_prefixes"`
+	Routing          RoutingConfig `json:"routing"`
+	Quality          QualityConfig `json:"quality"`
+	Probe            ProbeConfig   `json:"probe"`
+
+	ProxyAutoRotateAfterQualityFail bool `json:"proxy_auto_rotate_after_quality_failure"`
+	EventsLimit                     int  `json:"events_limit"`
 }
 
 func DefaultRoutingConfig() RoutingConfig {
@@ -230,12 +219,7 @@ func DefaultConfig() Config {
 		Quality:          DefaultQualityConfig(),
 		Probe:            DefaultProbeConfig(),
 		Proxy:            DefaultProxyConfig(),
-		Resin: ResinConfig{
-			Enabled:                       false,
-			Platform:                      "Default",
-			ProxyTemplate:                 "socks5h://{platform}.{account}:{proxy_token}@resin:2260",
-			AutoRotateAfterQualityFailure: true,
-		},
+
 		EventsLimit: defaultEventsLimit,
 	}
 }
@@ -243,7 +227,9 @@ func DefaultConfig() Config {
 func decodeConfig(raw []byte) (Config, error) {
 	cfg := DefaultConfig()
 	if len(strings.TrimSpace(string(raw))) > 0 {
-		if errUnmarshal := yaml.Unmarshal(raw, &cfg); errUnmarshal != nil {
+		decoder := yaml.NewDecoder(bytes.NewReader(raw))
+		decoder.KnownFields(true)
+		if errUnmarshal := decoder.Decode(&cfg); errUnmarshal != nil {
 			return Config{}, fmt.Errorf("decode plugin config: %w", errUnmarshal)
 		}
 	}
@@ -288,18 +274,7 @@ func normalizeConfig(cfg *Config) error {
 	if errProxy := normalizeProxyConfig(&cfg.Proxy); errProxy != nil {
 		return errProxy
 	}
-	if cfg.Resin.Platform == "" {
-		cfg.Resin.Platform = "Default"
-	}
-	if cfg.Resin.ProxyTemplate == "" {
-		cfg.Resin.ProxyTemplate = "socks5h://{platform}.{account}:{proxy_token}@resin:2260"
-	}
-	if cfg.Resin.AdminTokenEnv == "" {
-		cfg.Resin.AdminTokenEnv = "RESIN_ADMIN_TOKEN"
-	}
-	if cfg.Resin.ProxyTokenEnv == "" {
-		cfg.Resin.ProxyTokenEnv = "RESIN_PROXY_TOKEN"
-	}
+
 	return nil
 }
 
@@ -310,7 +285,7 @@ func (q *QualityConfig) UnmarshalJSON(data []byte) error {
 	defaults := DefaultQualityConfig()
 	type qualityAlias QualityConfig
 	decoded := qualityAlias(defaults)
-	if errUnmarshal := json.Unmarshal(data, &decoded); errUnmarshal != nil {
+	if errUnmarshal := decodeStrictJSON(data, &decoded); errUnmarshal != nil {
 		return errUnmarshal
 	}
 	*q = QualityConfig(decoded)
@@ -468,7 +443,7 @@ func (p *Policy) UnmarshalJSON(data []byte) error {
 	}
 	type policyAlias Policy
 	decoded := policyAlias(PolicyFromConfig(DefaultConfig()))
-	if errUnmarshal := json.Unmarshal(data, &decoded); errUnmarshal != nil {
+	if errUnmarshal := decodeStrictJSON(data, &decoded); errUnmarshal != nil {
 		return errUnmarshal
 	}
 	*p = Policy(decoded)
@@ -477,14 +452,14 @@ func (p *Policy) UnmarshalJSON(data []byte) error {
 
 func PolicyFromConfig(cfg Config) Policy {
 	return Policy{
-		PassiveGuard:                    cfg.PassiveGuard,
-		TransparentGuard:                cfg.TransparentGuard,
-		AutoAction:                      cfg.AutoAction,
-		ModelPrefixes:                   append([]string(nil), cfg.ModelPrefixes...),
-		Routing:                         cfg.Routing,
-		Quality:                         cfg.Quality,
-		Probe:                           cfg.Probe,
-		ResinAutoRotateAfterQualityFail: cfg.Resin.AutoRotateAfterQualityFailure,
+		PassiveGuard:     cfg.PassiveGuard,
+		TransparentGuard: cfg.TransparentGuard,
+		AutoAction:       cfg.AutoAction,
+		ModelPrefixes:    append([]string(nil), cfg.ModelPrefixes...),
+		Routing:          cfg.Routing,
+		Quality:          cfg.Quality,
+		Probe:            cfg.Probe,
+
 		ProxyAutoRotateAfterQualityFail: cfg.Proxy.AutoRotateAfterQualityFailure,
 		EventsLimit:                     cfg.EventsLimit,
 	}
@@ -501,7 +476,7 @@ func ApplyPolicy(cfg *Config, policy Policy) error {
 	cfg.Routing = policy.Routing
 	cfg.Quality = policy.Quality
 	cfg.Probe = policy.Probe
-	cfg.Resin.AutoRotateAfterQualityFailure = policy.ResinAutoRotateAfterQualityFail
+
 	cfg.Proxy.AutoRotateAfterQualityFailure = policy.ProxyAutoRotateAfterQualityFail
 	cfg.EventsLimit = policy.EventsLimit
 	return normalizeConfig(cfg)
@@ -516,7 +491,7 @@ func normalizePolicy(policy Policy) (Policy, error) {
 	cfg.Routing = policy.Routing
 	cfg.Quality = policy.Quality
 	cfg.Probe = policy.Probe
-	cfg.Resin.AutoRotateAfterQualityFailure = policy.ResinAutoRotateAfterQualityFail
+
 	cfg.Proxy.AutoRotateAfterQualityFailure = policy.ProxyAutoRotateAfterQualityFail
 	cfg.EventsLimit = policy.EventsLimit
 	if errNormalize := normalizeConfig(&cfg); errNormalize != nil {
@@ -564,4 +539,10 @@ func writableStateDir(dir string) bool {
 	}
 	_ = os.Remove(probe)
 	return true
+}
+
+func decodeStrictJSON(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(target)
 }

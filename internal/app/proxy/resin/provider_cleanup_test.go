@@ -14,78 +14,45 @@ import (
 	"grok-quality-guard/internal/proxy"
 )
 
-func TestProviderUsesCompiledTemplateAndImmutableCleanupIdentity(t *testing.T) {
-	platform := "平台@:/%{literal}"
-	token := "{token}@:/%+汉字"
-	account := "lease@:/%{}"
-	settings := ProviderSettings{
-		ProxyTemplate: "socks5h://{platform}.{account}:{proxy_token}@EXAMPLE.COM:2260",
-		Platform:      platform, PlatformID: "old-uuid", ProxyToken: token, SnapshotID: "old-snapshot",
+func TestTemplateProviderUsesReservedAccountAndTemplatePlaceholders(t *testing.T) {
+	template := proxy.Template{
+		ID:                      "resin-test",
+		Kind:                    proxy.TemplateResin,
+		Protocol:                proxy.ProtocolSOCKS5H,
+		Host:                    "resin",
+		Port:                    2260,
+		UsernamePattern:         "CPA.xai-{account}-{region}",
+		UsernamePatternEncoding: "literal",
+		HasUser:                 true,
+		Password:                "proxy-secret",
+		HasPassword:             true,
+		Placeholders: []proxy.Placeholder{
+			{Name: proxy.ReservedAccountPlaceholder, Kind: proxy.PlaceholderReserved},
+			{Name: "region", Kind: proxy.PlaceholderEnum, Enum: &proxy.EnumSpec{Separator: ",", Input: "us,jp"}},
+		},
 	}
-	identityCalls := 0
-	provider, err := NewProvider(settings, func(context.Context, proxy.GenerateRequest) (string, error) {
-		identityCalls++
-		return account, nil
-	})
+	provider, err := NewTemplateProvider(template, ProviderSettings{Platform: "CPA"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings.PlatformID, settings.SnapshotID, settings.ProxyToken = "new-uuid", "new-snapshot", "new-token"
-	result, err := provider.Generate(context.Background(), proxy.GenerateRequest{AuthID: "auth-one"})
+	rendered, err := provider.Generate(context.Background(), proxy.GenerateRequest{AccountBase: "alice"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint, err := proxy.ParseEndpoint(result.URL, proxy.ParseOptions{})
-	if err != nil || endpoint.Username != platform+"."+account || endpoint.Password != token || endpoint.Host != "example.com" {
-		t.Fatalf("provider literals did not round-trip: %#v %v", endpoint, err)
+	if !strings.HasPrefix(rendered.Endpoint.Username, "CPA.xai-alice-") {
+		t.Fatalf("unexpected username: %q", rendered.Endpoint.Username)
 	}
-	if identityCalls != 1 || result.Cleanup == nil || result.Cleanup.PlatformID != "old-uuid" || result.Cleanup.SnapshotID != "old-snapshot" || result.Cleanup.Account != account {
-		t.Fatalf("provider used current mutable settings: %#v calls=%d", result.Cleanup, identityCalls)
+	if rendered.Endpoint.Password != "proxy-secret" || !rendered.Endpoint.HasPassword {
+		t.Fatalf("template password was not preserved: %#v", rendered.Endpoint)
 	}
-}
-
-func TestMigrationRecognizesOnlyTheLegacyPasswordMarker(t *testing.T) {
-	for _, raw := range []string{
-		"socks5h://{platform}.{account}-{proxy_token}:fixed@resin:2260",
-		"socks5h://{platform}.{account}:prefix{proxy_token}@resin:2260",
-		"socks5h://{platform}.{account}:fixed@{account}:2260",
-		"socks5h://{platform}.%7Baccount%7D:{proxy_token}@resin:2260",
-	} {
-		if _, err := MigrateTemplate(raw, "Default", "fixed"); err == nil {
-			t.Fatalf("invalid marker location was accepted: %q", raw)
-		}
+	if rendered.GeneratedAccount == "" || !strings.HasPrefix(rendered.GeneratedAccount, "xai-alice-") {
+		t.Fatalf("generated account = %q", rendered.GeneratedAccount)
 	}
-	template, err := MigrateTemplate("socks5h://{platform}.{account}:{proxy_token}@resin:2260", "Default", "{literal}")
-	if err != nil {
-		t.Fatal(err)
+	if rendered.Cleanup != nil {
+		t.Fatalf("provider must not invent a cleanup reference: %#v", rendered.Cleanup)
 	}
-	if template.UsernamePattern != "Default.{account}" || template.Password != "{literal}" || !template.HasPassword || len(template.Placeholders) != 1 || template.Placeholders[0].Name != "account" {
-		t.Fatalf("legacy markers were retained as ordinary variables: %#v", template)
-	}
-	if err := template.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	// Percent-encoded braces remain a fixed literal password.
-	if _, err := MigrateTemplate("socks5h://Default.{account}:%7Bproxy_token%7D@resin:2260", "Default", "{proxy_token}"); err != nil {
-		t.Fatalf("encoded literal password was reinterpreted: %v", err)
-	}
-	if _, err := MigrateTemplate("socks5h://Default.{account}:private-one@resin:2260", "Default", "private-two"); err == nil || strings.Contains(err.Error(), "private") {
-		t.Fatalf("conflicting passwords were silently overridden or disclosed: %v", err)
-	}
-}
-
-func TestProviderGenerationRequiresCleanupSnapshot(t *testing.T) {
-	provider, err := NewProvider(ProviderSettings{
-		ProxyTemplate: "socks5h://Default.{account}@resin:2260", Platform: "Default", ProxyToken: "token",
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.Generate(context.Background(), proxy.GenerateRequest{AuthID: "one"}); err == nil {
-		t.Fatal("new managed generation omitted its cleanup snapshot")
-	}
-	if _, err := provider.RenderAccount("preview-account"); err != nil {
-		t.Fatalf("local preview unexpectedly needs an API snapshot: %v", err)
+	if _, err := provider.Generate(context.Background(), proxy.GenerateRequest{}); err == nil {
+		t.Fatal("missing account base was accepted")
 	}
 }
 
@@ -132,7 +99,7 @@ func TestDeleteLeaseIdempotencyAndRetryInformation(t *testing.T) {
 				writer.Header().Set("Retry-After", "120")
 				writer.WriteHeader(status)
 				if status != http.StatusNoContent {
-					writer.Write([]byte("private-response-token"))
+					_, _ = writer.Write([]byte("private-response-token"))
 				}
 			}))
 			defer server.Close()
@@ -217,21 +184,5 @@ func TestResinRewritePreservesEncodedPassword(t *testing.T) {
 	password, _ := parsed.User.Password()
 	if password != "p{value}@:%" || parsed.User.Username() != "Default.lease-new" || parsed.Path != "/" {
 		t.Fatal("local account rewrite changed the static proxy structure")
-	}
-}
-
-func BenchmarkCompiledResinRender(b *testing.B) {
-	provider, err := NewProvider(ProviderSettings{
-		ProxyTemplate: "socks5h://{platform}.{account}:{proxy_token}@resin:2260",
-		Platform:      "Default", PlatformID: "uuid", ProxyToken: "token", SnapshotID: "snapshot",
-	}, nil)
-	if err != nil {
-		b.Fatal(err)
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		if _, err := provider.RenderAccount("grok-test-abcdefghijkl"); err != nil {
-			b.Fatal(err)
-		}
 	}
 }

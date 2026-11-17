@@ -451,15 +451,13 @@ func TestProxySourceDeleteFailureRetainsSourceAndBinding(t *testing.T) {
 	}
 }
 
-func TestAccountSummaryDoesNotAdoptExternalProxyAsResin(t *testing.T) {
+func TestAccountSummaryDoesNotAdoptExternalProxyAsManaged(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
 	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
 	account := appmodel.Account{ID: "auth-1", Type: "xai", Provider: "xai", Email: "user@example.com"}
-	summary := plugin.accountSummary(account, statepkg.AccountState{AuthID: "auth-1"}, statepkg.ResinSettings{
-		Platform: "Default", ProxyTemplate: "socks5h://{platform}.{account}:{proxy_token}@resin:2260",
-	}, "socks5h://Default.external:secret@resin:2260")
-	if summary.ResinManaged {
-		t.Fatalf("external proxy was incorrectly adopted as Resin: %#v", summary)
+	summary := plugin.accountSummary(account, statepkg.AccountState{AuthID: "auth-1"}, "socks5h://Default.external:secret@resin:2260")
+	if summary.ProxyManaged {
+		t.Fatalf("external proxy was incorrectly adopted as managed: %#v", summary)
 	}
 	if summary.ProxyStatus != "external" {
 		t.Fatalf("external proxy must remain external, got %q", summary.ProxyStatus)
@@ -578,7 +576,7 @@ func TestProxyImportAcceptsMultipleNodeStrings(t *testing.T) {
 	}
 }
 
-func TestProxyImportAllowsMoreThanLegacyTenThousandNodes(t *testing.T) {
+func TestProxyImportAllowsMoreThanTenThousandNodes(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
 	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
 	nodes := make([]any, 10001)
@@ -895,49 +893,6 @@ func TestProxyVersionTracksEndpointAndGenerationChanges(t *testing.T) {
 	}
 }
 
-func TestStateMigrationV1MovesResinBindingToGenericProxy(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.json")
-	legacy := statepkg.State{
-		SchemaVersion: 1,
-		UpdatedAt:     time.Now().UTC(),
-		Accounts: map[string]*statepkg.AccountState{
-			"auth-1": {
-				AuthID: "auth-1",
-				State:  statepkg.StateUnknown,
-				Resin:  statepkg.ResinState{Managed: true, Account: "grok-old", Generation: 3},
-			},
-		},
-		Events: []statepkg.Event{},
-	}
-	encoded, errMarshal := json.Marshal(legacy)
-	if errMarshal != nil {
-		t.Fatal(errMarshal)
-	}
-	if errWrite := os.WriteFile(path, encoded, 0o600); errWrite != nil {
-		t.Fatal(errWrite)
-	}
-	store := statepkg.NewStore(path)
-	if errLoad := store.Load(appconfig.PolicyFromConfig(appconfig.DefaultConfig()), "test-revision"); errLoad != nil {
-		t.Fatal(errLoad)
-	}
-	snapshot := store.Snapshot()
-	if snapshot.SchemaVersion != 2 {
-		t.Fatalf("state schema was not migrated: %d", snapshot.SchemaVersion)
-	}
-	account := snapshot.Accounts["auth-1"]
-	if account == nil || account.Proxy.SourceID != resinSourceID || account.Proxy.SourceKind != proxy.SourceResin || account.Proxy.Lease == nil || account.Proxy.Lease.Account != "grok-old" {
-		t.Fatalf("legacy Resin binding was not migrated: %#v", account)
-	}
-	persisted, errRead := os.ReadFile(path)
-	if errRead != nil {
-		t.Fatal(errRead)
-	}
-	var decoded statepkg.State
-	if errUnmarshal := json.Unmarshal(persisted, &decoded); errUnmarshal != nil || decoded.SchemaVersion != 2 {
-		t.Fatalf("migrated schema was not persisted: err=%v schema=%d", errUnmarshal, decoded.SchemaVersion)
-	}
-}
-
 func TestProxySourceUpdateCanResetPriorityAndQuotaToZero(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
 	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
@@ -1144,7 +1099,7 @@ func TestProxyAuthenticationCannotDisappearDuringPartialEdit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = plugin.updateProxyNode(proxyapp.NodeInput{ID: node.ID, UsernameSet: true, Username: "", PasswordUpdate: &proxyapp.PasswordUpdate{Action: "keep"}})
+	_, _, err = plugin.updateProxyNode(proxyapp.NodeInput{ID: node.ID, UsernameSet: true, Username: ""})
 	if err == nil {
 		t.Fatal("empty username silently discarded retained password")
 	}
@@ -1316,11 +1271,9 @@ func TestProxySourceListFiltersEnabledAndConnectivity(t *testing.T) {
 		t.Fatalf("unknown filter unexpectedly matched tested sources: %#v", items)
 	}
 }
-func TestProxySourceListHidesUnconfiguredResin(t *testing.T) {
+func TestProxySourceListHasNoImplicitResinSource(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
-	plugin := newTestPlugin(t, newMockHostCall(entries, auths), func(cfg *appconfig.Config) {
-		cfg.Resin.Enabled = true
-	})
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
 	response := actionManagementForTest(t, plugin, "proxy.sources.list", nil)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("source list status = %d body=%s", response.StatusCode, response.Body)
@@ -1335,6 +1288,51 @@ func TestProxySourceListHidesUnconfiguredResin(t *testing.T) {
 		t.Fatal(errDecode)
 	}
 	if envelope.Data.Total != 0 || len(envelope.Data.Items) != 0 {
-		t.Fatalf("unconfigured Resin leaked into the source list: %#v", envelope.Data)
+		t.Fatalf("implicit Resin source leaked into the source list: %#v", envelope.Data)
+	}
+}
+
+func TestProxyImportRecognizesAddressFirstFormat(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	value, status, errImport := plugin.actionProxyImportNodes(map[string]any{
+		"nodes": []any{"socks5h://proxy.example:1080:u%40x:p%253A%40"},
+	})
+	if errImport != nil || status != 200 {
+		t.Fatalf("import failed: status=%d err=%v", status, errImport)
+	}
+	result, ok := value.(map[string]any)
+	if !ok || result["created"] != 1 {
+		t.Fatalf("unexpected import result: %#v", value)
+	}
+	state := plugin.stateStore().Snapshot()
+	if len(state.Proxy.Nodes) != 1 {
+		t.Fatalf("unexpected nodes: %#v", state.Proxy.Nodes)
+	}
+	endpoint := state.Proxy.Nodes[0].Endpoint
+	if endpoint.Host != "proxy.example" || endpoint.Username != "u@x" || endpoint.Password != "p%3A@" {
+		t.Fatalf("unexpected imported endpoint: %#v", endpoint)
+	}
+}
+func TestProxyImportRecognizesHostPortAtCredentialsFormat(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	value, status, errImport := plugin.actionProxyImportNodes(map[string]any{
+		"nodes": []any{"http://proxy.example:8080@u%40x:p%253A%40"},
+	})
+	if errImport != nil || status != 200 {
+		t.Fatalf("import failed: status=%d err=%v", status, errImport)
+	}
+	result, ok := value.(map[string]any)
+	if !ok || result["created"] != 1 {
+		t.Fatalf("unexpected import result: %#v", value)
+	}
+	state := plugin.stateStore().Snapshot()
+	if len(state.Proxy.Nodes) != 1 {
+		t.Fatalf("unexpected nodes: %#v", state.Proxy.Nodes)
+	}
+	endpoint := state.Proxy.Nodes[0].Endpoint
+	if endpoint.Host != "proxy.example" || endpoint.Port != 8080 || endpoint.Username != "u@x" || endpoint.Password != "p%3A@" {
+		t.Fatalf("unexpected imported endpoint: %#v", endpoint)
 	}
 }

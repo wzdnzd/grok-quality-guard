@@ -19,10 +19,6 @@ import (
 	domain "grok-quality-guard/internal/quality"
 )
 
-type ResinBindResult = proxyapp.ResinBindResult
-type ResinClearResult = proxyapp.ResinClearResult
-type ResinConfigView = proxyapp.ResinConfigView
-
 const (
 	StateUnknown            = appstate.StateUnknown
 	StateHealthy            = appstate.StateHealthy
@@ -53,9 +49,7 @@ func maskAccountIdentity(value string) string { return proxyapp.MaskAccountIdent
 func maskEmail(value string) string           { return proxyapp.MaskEmail(value) }
 func maskAuthID(value string) string          { return proxyapp.MaskAuthID(value) }
 func maskProxyURL(value string) string        { return proxyapp.MaskProxyURL(value) }
-func managedResinBindingForState(proxyURL string, resinState appstate.ResinState, cfg ResinSettings) (string, bool) {
-	return proxyapp.ManagedResinBindingForState(proxyURL, resinState, cfg)
-}
+
 func jsonError(code, message string) []byte {
 	raw, _ := json.Marshal(map[string]any{"ok": false, "error": map[string]any{"code": code, "message": message}})
 	return raw
@@ -98,19 +92,7 @@ func (s *Service) ManualDisable(ctx context.Context, authID, reason string) erro
 func (s *Service) ManualRestore(ctx context.Context, authID string) error {
 	return s.env.Quality().ManualRestore(ctx, authID)
 }
-func (s *Service) ResinConfig() ResinSettings { return s.env.Proxy().ResinConfig() }
-func (s *Service) BindResin(ctx context.Context, authID string, dryRun bool) (ResinBindResult, error) {
-	return s.env.Proxy().BindResin(ctx, authID, dryRun)
-}
-func (s *Service) BindUnboundResin(ctx context.Context, dryRun bool) ([]ResinBindResult, error) {
-	return s.env.Proxy().BindUnboundResin(ctx, dryRun)
-}
-func (s *Service) ClearResinProxy(ctx context.Context, authID string) (ResinClearResult, error) {
-	return s.env.Proxy().ClearResinProxy(ctx, authID)
-}
-func (s *Service) RotateResin(ctx context.Context, authID string) error {
-	return s.env.Proxy().RotateResin(ctx, authID)
-}
+
 func (s *Service) proxyBindingForAccount(account AccountState) (proxy.Binding, bool) {
 	return s.env.Proxy().BindingForAccount(account)
 }
@@ -201,15 +183,6 @@ func (s *Service) actionProxyChange(params map[string]any, action string) (any, 
 }
 func (s *Service) actionResinCleanup(params map[string]any, action string) (any, int, error) {
 	return s.env.Proxy().ActionResinCleanup(params, action)
-}
-func (s *Service) actionResinConfigGet() (any, int, error) {
-	return s.env.Proxy().ActionResinConfigGet()
-}
-func (s *Service) actionResinConfigValidate(ctx context.Context, params map[string]any) (any, int, error) {
-	return s.env.Proxy().ActionResinConfigValidate(ctx, params)
-}
-func (s *Service) actionResinConfigSave(ctx context.Context, params map[string]any) (any, int, error) {
-	return s.env.Proxy().ActionResinConfigSave(ctx, params)
 }
 
 func normalizePolicy(policy Policy) (Policy, error) { return config.NormalizePolicy(policy) }

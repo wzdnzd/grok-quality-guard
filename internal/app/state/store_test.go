@@ -5,11 +5,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"grok-quality-guard/internal/config"
+	proxy "grok-quality-guard/internal/proxy"
 )
 
 const testResinPlatformID = "11111111-1111-1111-1111-111111111111"
@@ -30,12 +32,15 @@ func TestStateStorePersistsAndReloads(t *testing.T) {
 			CooldownUntil:      time.Now().UTC().Add(time.Hour),
 			AuthDisabledIntent: &intent,
 		}
+		state.ResinSnapshots = map[string]proxy.ResinSnapshot{
+			"snapshot-1": {AdminURL: "http://resin.test", PlatformID: "platform-1", AdminToken: "admin-token"},
+		}
 		state.ResinLeaseDeletes = []ResinLeaseDelete{{
 			AuthID:        "auth-1",
 			AdminURL:      "http://resin.test",
-			AdminToken:    "admin-secret",
 			PlatformID:    "platform-1",
 			Account:       "grok-alice-old1",
+			SnapshotID:    "snapshot-1",
 			CreatedAt:     time.Now().UTC(),
 			NextAttemptAt: time.Now().UTC().Add(time.Minute),
 		}}
@@ -145,40 +150,50 @@ func TestStateStoreUpdateIfChangedSkipsNoopWrites(t *testing.T) {
 	}
 }
 
-func TestStateStorePersistsResinSettings(t *testing.T) {
+func TestStateStorePersistsResinSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	store := NewStore(path)
 	if errLoad := store.Load(config.PolicyFromConfig(config.DefaultConfig()), "revision"); errLoad != nil {
 		t.Fatal(errLoad)
 	}
-	validatedAt := time.Now().UTC().Truncate(time.Second)
-	if errUpdate := store.Update(func(state *State) error {
-		state.Resin = ResinSettings{
-			Configured:                    true,
-			Enabled:                       true,
-			Platform:                      "Default",
-			PlatformID:                    testResinPlatformID,
-			AdminURL:                      "http://resin.test",
-			ProxyTemplate:                 "socks5h://{platform}.{account}:{proxy_token}@resin:2260",
-			AutoRotateAfterQualityFailure: true,
-			AdminToken:                    "admin-secret",
-			ProxyToken:                    "proxy-secret",
-			ValidatedAt:                   validatedAt,
-		}
-		return nil
-	}); errUpdate != nil {
-		t.Fatal(errUpdate)
+	snapshot := proxy.ResinSnapshot{
+		AdminURL:   "http://resin.test",
+		PlatformID: testResinPlatformID,
+		AdminToken: "admin" + "-" + "token",
+	}
+	id, errEnsure := store.EnsureResinSnapshot(snapshot)
+	if errEnsure != nil {
+		t.Fatal(errEnsure)
 	}
 	reloaded := NewStore(path)
 	if errLoad := reloaded.Load(config.PolicyFromConfig(config.DefaultConfig()), "revision"); errLoad != nil {
 		t.Fatal(errLoad)
 	}
-	settings := reloaded.Snapshot().Resin
-	if !settings.Configured || settings.AdminToken != "admin-secret" || settings.ProxyToken != "proxy-secret" {
-		t.Fatalf("reloaded resin settings mismatch: %#v", settings)
+	got, ok := reloaded.ResinSnapshot(id)
+	if !ok || got != snapshot {
+		t.Fatalf("reloaded resin snapshot = %#v ok=%t, want %#v", got, ok, snapshot)
 	}
-	if !settings.ValidatedAt.Equal(validatedAt) {
-		t.Fatalf("validated_at mismatch: got %s want %s", settings.ValidatedAt, validatedAt)
+}
+
+func TestStateStoreRejectsUnsupportedSchemaVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	raw := []byte("{\"schema_version\":2,\"updated_at\":\"2026-01-01T00:00:00Z\",\"policy\":{},\"accounts\":{},\"events\":[]}")
+	if errWrite := os.WriteFile(path, raw, 0o600); errWrite != nil {
+		t.Fatal(errWrite)
+	}
+	if errLoad := NewStore(path).Load(config.PolicyFromConfig(config.DefaultConfig()), "revision"); errLoad == nil || !strings.Contains(errLoad.Error(), "unsupported state schema version 2") {
+		t.Fatalf("unsupported schema load error = %v", errLoad)
+	}
+}
+
+func TestStateStoreRejectsUnknownFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	raw := []byte("{\"schema_version\":1,\"updated_at\":\"2026-01-01T00:00:00Z\",\"policy\":{},\"accounts\":{},\"events\":[],\"resin\":{}}")
+	if errWrite := os.WriteFile(path, raw, 0o600); errWrite != nil {
+		t.Fatal(errWrite)
+	}
+	if errLoad := NewStore(path).Load(config.PolicyFromConfig(config.DefaultConfig()), "revision"); errLoad == nil || !strings.Contains(errLoad.Error(), "unknown field") {
+		t.Fatalf("unknown field load error = %v", errLoad)
 	}
 }
 func TestStateStoreUpdateAccountRollbackAndEventAppend(t *testing.T) {

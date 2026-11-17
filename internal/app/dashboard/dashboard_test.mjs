@@ -114,7 +114,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openProxyResinEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -335,7 +335,7 @@ test('Proxy event filter includes proxy and provider-specific actions', () => {
   ui.state.eventType = 'proxy';
   ui.state.eventQuery = '';
   assert.equal(ui.eventMatches({ action: 'proxy_bind' }), true);
-  assert.equal(ui.eventMatches({ action: 'resin_rotate' }), true);
+  assert.equal(ui.eventMatches({ action: 'resin_lease_delete' }), true);
   assert.equal(ui.eventMatches({ action: 'probe' }), false);
 });
 test('Closing a dirty editor preserves input until discard is confirmed', async () => {
@@ -468,6 +468,9 @@ test('Bulk proxy import filters invalid and duplicate lines and stays bounded', 
   assert.equal(parsed.comments, 1);
   assert.deepEqual(plain(parsed.valid), ['http://user:pass@proxy.example:8080', 'SOCKS5H://user:pass@[2001:db8::1]:1080']);
   assert.equal(parsed.invalidSamples.length, 3);
+  assert.match(html, /标准 URL 优先，失败后自动尝试地址在前或 host:port@user:pass/);
+  assert.match(html, /socks5h:\/\/proxy\.example:1080:user:pass/);
+  assert.match(html, /http:\/\/proxy\.example:8080@user:pass/);
   const many = Array.from({ length: 100_000 }, (_, index) => 'http://user:pass@proxy-' + index + '.example:' + (8000 + index % 1000)).join('\n');
   const batch = ui.parseProxyImportText(many);
   assert.equal(batch.validCount, 100_000);
@@ -574,15 +577,16 @@ test('Saving cannot silently discard pending bulk or CSV relation input', async 
   assert.deepEqual(plain(ui.collectProxyTemplateGroups()[0].rows), [['A', 'basic'], ['C', 'pro']]);
 });
 
-test('Current and legacy binding statuses keep the same visible metrics', () => {
+test('Binding status metrics use canonical names only', () => {
   const { dashboard: ui } = harness();
-  assert.equal(ui.normalizeBindingStatus('managed'), 'bound');
-  assert.equal(ui.normalizeBindingStatus('needs_reconcile'), 'reconcile_required');
+  assert.equal(ui.normalizeBindingStatus('bound'), 'bound');
+  assert.equal(ui.normalizeBindingStatus('reconcile_required'), 'reconcile_required');
   assert.equal(ui.normalizeBindingStatus('unknown'), 'unknown');
-  const counts = ui.proxySummaryCounts({ binding_counts: { managed: 12, needs_reconcile: 3, external: 2 } });
+  const counts = ui.proxySummaryCounts({ binding_counts: { bound: 12, reconcile_required: 3, external: 2, unknown: 4 } });
   assert.equal(counts.bound, 12);
   assert.equal(counts.reconcile_required, 3);
   assert.equal(counts.external, 2);
+  assert.equal(counts.unknown, 4);
 });
 
 test('A flat source detail response preserves existing template relations', async () => {
@@ -924,6 +928,66 @@ test('Deep relations show two ancestors and a child with breadcrumb navigation',
   assert.equal((rendered.match(/data-group-breadcrumb=/g) || []).length, 4);
 });
 
+test('Bulk proxy import editor explains automatic URL shape parsing', async () => {
+  const { dashboard: ui, get } = harness();
+  await ui.openProxyImportEditor();
+  assert.equal(get('proxySourceDrawer').hidden, false);
+  assert.match(get('proxySourceEditor').innerHTML, /host:port@user:pass/);
+  assert.match(get('proxySourceEditor').innerHTML, /socks5h:\/\/proxy\.example:1080:user:pass/);
+  assert.match(get('proxySourceEditor').innerHTML, /http:\/\/proxy\.example:8080@user:pass/);
+});
+
+test('Bulk proxy import supports automatic address-first fallback', () => {
+  const { dashboard: ui } = harness();
+  const text = [
+    '# node list',
+    'socks5h://proxy.example:1080:alice:secret',
+    'http://proxy.example:8080:u%40x:p%253A%40',
+    'SOCKS5H://[2001:db8::1]:1080:alice:secret',
+    'socks5h://proxy.example:1080:alice:secret',
+    'http://proxy.example:8080:alice',
+    'http://[2001:db8::1:1080:alice:secret',
+    'http://proxy.example:8080:u:p:with:colons'
+  ].join('\n');
+  const parsed = ui.parseProxyImportText(text);
+  assert.equal(parsed.lineCount, 8);
+  assert.equal(parsed.validCount, 4);
+  assert.equal(parsed.invalid, 2);
+  assert.equal(parsed.duplicate, 1);
+  assert.equal(parsed.comments, 1);
+  assert.deepEqual(plain(parsed.valid), [
+    'socks5h://proxy.example:1080:alice:secret',
+    'http://proxy.example:8080:u%40x:p%253A%40',
+    'SOCKS5H://[2001:db8::1]:1080:alice:secret',
+    'http://proxy.example:8080:u:p:with:colons'
+  ]);
+  assert.equal(ui.proxyImportLine('socks5h://proxy.example:1080:alice:secret').valid, true);
+  assert.equal(ui.proxyImportLine('http://alice:secret@proxy.example:8080').valid, true);
+});
+
+test('Bulk proxy import supports host-port-at-credentials fallback', () => {
+  const { dashboard: ui } = harness();
+  const text = [
+    '# proxy list',
+    'http://proxy.example:8080@alice:secret',
+    'socks5h://[2001:db8::1]:1080@u%40x:p%253A%40',
+    'http://proxy.example:8080@alice',
+    'http://proxy.example:8080@:secret'
+  ].join('\n');
+  const parsed = ui.parseProxyImportText(text);
+  assert.equal(parsed.lineCount, 5);
+  assert.equal(parsed.validCount, 2);
+  assert.equal(parsed.invalid, 2);
+  assert.equal(parsed.comments, 1);
+  assert.deepEqual(plain(parsed.valid), [
+    'http://proxy.example:8080@alice:secret',
+    'socks5h://[2001:db8::1]:1080@u%40x:p%253A%40'
+  ]);
+  assert.equal(ui.proxyImportLine('http://proxy.example:8080@user:pass').valid, true);
+  assert.equal(ui.proxyImportLine('http://[2001:db8::1]:1080@user:pass').valid, true);
+  assert.equal(ui.proxyImportLine('http://2001:db8::1:1080@user:pass').valid, false);
+});
+
 for (const { name, run } of cases) {
   await run();
   console.log('PASS ' + name);
@@ -944,5 +1008,3 @@ if (process.argv.includes('--benchmark')) {
   const visible = (card.querySelector('[data-group-body]').innerHTML.match(/data-group-cell-row=/g) || []).length / 2;
   console.log('BENCH append 10,000 children to 100,000 rows: ' + elapsed.toFixed(1) + ' ms; visible rows: ' + visible + '.');
 }
-
-

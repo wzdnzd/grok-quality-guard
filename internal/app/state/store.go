@@ -1,9 +1,11 @@
 package state
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -70,20 +72,12 @@ type AttemptEvidence struct {
 	Class  string    `json:"class,omitempty"`
 	Reason string    `json:"reason,omitempty"`
 }
-type ResinState struct {
-	Managed    bool   `json:"managed,omitempty"`
-	Account    string `json:"account,omitempty"`
-	Generation int64  `json:"generation,omitempty"`
-}
-
 type ResinLeaseDelete struct {
 	AuthID        string    `json:"auth_id,omitempty"`
 	AdminURL      string    `json:"admin_url,omitempty"`
-	AdminTokenRef string    `json:"admin_token_ref,omitempty"`
-	AdminToken    string    `json:"admin_token,omitempty"`
 	PlatformID    string    `json:"platform_id,omitempty"`
 	Account       string    `json:"account"`
-	SnapshotID    string    `json:"snapshot_id,omitempty"`
+	SnapshotID    string    `json:"snapshot_id"`
 	Paused        bool      `json:"paused,omitempty"`
 	Status        string    `json:"status,omitempty"`
 	CreatedAt     time.Time `json:"created_at,omitempty"`
@@ -115,7 +109,6 @@ type AccountState struct {
 	PreviousDisabled             bool                       `json:"previous_disabled,omitempty"`
 	AuthDisabledIntent           *bool                      `json:"auth_disabled_intent,omitempty"`
 	CatalogMissingSince          time.Time                  `json:"catalog_missing_since,omitzero"`
-	Resin                        ResinState                 `json:"resin"`
 	Proxy                        proxy.Binding              `json:"proxy_binding,omitempty"`
 	AutoBind                     proxy.AutoBindAccountState `json:"auto_bind,omitempty"`
 	Metrics                      Metrics                    `json:"metrics"`
@@ -128,7 +121,6 @@ type AccountStateSummary struct {
 	LastObservedAt    time.Time
 	CooldownUntil     time.Time
 	ProbeBackoffUntil time.Time
-	Resin             ResinState
 	Proxy             proxy.Binding
 	AutoBind          proxy.AutoBindAccountState
 	Metrics           Metrics
@@ -144,17 +136,15 @@ type Event struct {
 }
 
 type State struct {
-	SchemaVersion      int                      `json:"schema_version"`
-	UpdatedAt          time.Time                `json:"updated_at"`
-	Policy             Policy                   `json:"policy"`
-	PolicyYAMLRevision string                   `json:"policy_yaml_revision,omitempty"`
-	Resin              ResinSettings            `json:"resin,omitempty"`
-	Accounts           map[string]*AccountState `json:"accounts"`
-	Events             []Event                  `json:"events"`
-	ResinLeaseDeletes  []ResinLeaseDelete       `json:"resin_lease_deletes,omitempty"`
-	ResinAdminTokens   map[string]string        `json:"resin_admin_tokens,omitempty"`
-	Proxy              proxy.ProxyState         `json:"proxy,omitempty"`
-	ResinSnapshots     map[string]ResinSettings `json:"resin_snapshots,omitempty"`
+	SchemaVersion      int                            `json:"schema_version"`
+	UpdatedAt          time.Time                      `json:"updated_at"`
+	Policy             config.Policy                  `json:"policy"`
+	PolicyYAMLRevision string                         `json:"policy_yaml_revision,omitempty"`
+	Accounts           map[string]*AccountState       `json:"accounts"`
+	Events             []Event                        `json:"events"`
+	ResinLeaseDeletes  []ResinLeaseDelete             `json:"resin_lease_deletes,omitempty"`
+	Proxy              proxy.ProxyState               `json:"proxy,omitempty"`
+	ResinSnapshots     map[string]proxy.ResinSnapshot `json:"resin_snapshots,omitempty"`
 }
 
 type Store struct {
@@ -198,9 +188,9 @@ func (s *Store) Path() string {
 	return s.path
 }
 
-func (s *Store) PolicySnapshot() Policy {
+func (s *Store) PolicySnapshot() config.Policy {
 	if s == nil {
-		return Policy{}
+		return config.Policy{}
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -209,21 +199,6 @@ func (s *Store) PolicySnapshot() Policy {
 		policy.ModelPrefixes = append([]string(nil), s.state.Policy.ModelPrefixes...)
 	}
 	return policy
-}
-
-func (s *Store) ResinAccounts() map[string]struct{} {
-	if s == nil {
-		return nil
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	accounts := make(map[string]struct{})
-	for _, account := range s.state.Accounts {
-		if account != nil && account.Resin.Account != "" {
-			accounts[account.Resin.Account] = struct{}{}
-		}
-	}
-	return accounts
 }
 
 func (s *Store) UpdatedAt() time.Time {
@@ -365,7 +340,7 @@ func writeStatePathPointer(bootstrapPath, activePath string) error {
 	return nil
 }
 
-func (s *Store) Load(defaultPolicy Policy, revision string) error {
+func (s *Store) Load(defaultPolicy config.Policy, revision string) error {
 	if s == nil {
 		return errors.New("state store is nil")
 	}
@@ -396,14 +371,16 @@ func (s *Store) Load(defaultPolicy Policy, revision string) error {
 		return s.saveLocked()
 	}
 	var state State
-	if errUnmarshal := json.Unmarshal(raw, &state); errUnmarshal != nil {
+	if errUnmarshal := decodeStrictJSON(raw, &state); errUnmarshal != nil {
 		return fmt.Errorf("decode state file: %w", errUnmarshal)
 	}
-	if state.SchemaVersion < 1 || state.SchemaVersion > stateSchemaVersion {
-		return fmt.Errorf("unsupported state schema version %d", state.SchemaVersion)
+	if state.SchemaVersion != stateSchemaVersion {
+		return fmt.Errorf("unsupported state schema version %d; create a fresh schema v%d state file", state.SchemaVersion, stateSchemaVersion)
 	}
-	migratedSchema := state.SchemaVersion < stateSchemaVersion
-	state.SchemaVersion = stateSchemaVersion
+	if errValidate := validateLoadedState(&state); errValidate != nil {
+		return errValidate
+	}
+
 	if state.Accounts == nil {
 		state.Accounts = make(map[string]*AccountState)
 	}
@@ -418,10 +395,6 @@ func (s *Store) Load(defaultPolicy Policy, revision string) error {
 	if state.PolicyYAMLRevision == "" {
 		state.PolicyYAMLRevision = revision
 	}
-	if migratedSchema {
-		state.Policy.ProxyAutoRotateAfterQualityFail = state.Policy.ResinAutoRotateAfterQualityFail
-	}
-	migrateResinAdminTokens(&state)
 	for authID, account := range state.Accounts {
 		if account == nil {
 			delete(state.Accounts, authID)
@@ -429,9 +402,6 @@ func (s *Store) Load(defaultPolicy Policy, revision string) error {
 		}
 		if account.AuthID == "" {
 			account.AuthID = authID
-		}
-		if account.Proxy.SourceID == "" && (account.Resin.Managed || strings.TrimSpace(account.Resin.Account) != "") {
-			account.Proxy = proxy.Binding{AuthID: authID, SourceID: resinSourceID, SourceKind: proxy.SourceResin, Generation: uint64(max(account.Resin.Generation, 0)), Lease: &proxy.LeaseRef{Provider: "resin", Account: account.Resin.Account}}
 		}
 		if account.State == "" {
 			account.State = StateUnknown
@@ -454,8 +424,54 @@ func (s *Store) Load(defaultPolicy Policy, revision string) error {
 			s.proxyRecoveredChanges = append(s.proxyRecoveredChanges, change.ID)
 		}
 	}
-	if migratedSchema {
-		return s.saveLocked()
+	return nil
+}
+
+func decodeStrictJSON(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("unexpected trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func validateLoadedState(state *State) error {
+	if state == nil {
+		return errors.New("state is nil")
+	}
+	for id, snapshot := range state.ResinSnapshots {
+		if strings.TrimSpace(id) == "" || strings.TrimSpace(snapshot.AdminURL) == "" || strings.TrimSpace(snapshot.PlatformID) == "" || strings.TrimSpace(snapshot.AdminToken) == "" {
+			return fmt.Errorf("resin snapshot %q is incomplete; delete the old state file and recreate it", id)
+		}
+	}
+	for _, job := range state.ResinLeaseDeletes {
+		if strings.TrimSpace(job.Account) == "" || strings.TrimSpace(job.AdminURL) == "" || strings.TrimSpace(job.PlatformID) == "" || strings.TrimSpace(job.SnapshotID) == "" {
+			return fmt.Errorf("resin cleanup job for account %q is incomplete; delete the old state file and recreate it", job.Account)
+		}
+		if _, ok := state.ResinSnapshots[job.SnapshotID]; !ok {
+			return fmt.Errorf("resin cleanup job references missing snapshot %q; delete the old state file and recreate it", job.SnapshotID)
+		}
+	}
+	for authID, account := range state.Accounts {
+		if account == nil || account.Proxy.Lease == nil {
+			continue
+		}
+		lease := account.Proxy.Lease
+		if lease.Provider == "resin" && strings.TrimSpace(lease.SnapshotID) == "" {
+			return fmt.Errorf("account %q has a Resin lease without a snapshot; delete the old state file and recreate it", authID)
+		}
+		if strings.TrimSpace(lease.SnapshotID) != "" {
+			if _, ok := state.ResinSnapshots[lease.SnapshotID]; !ok {
+				return fmt.Errorf("account %q references missing Resin snapshot %q; delete the old state file and recreate it", authID, lease.SnapshotID)
+			}
+		}
 	}
 	return nil
 }
@@ -467,15 +483,6 @@ func (s *Store) ResinLeaseDeletesSnapshot() []ResinLeaseDelete {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return append([]ResinLeaseDelete(nil), s.state.ResinLeaseDeletes...)
-}
-
-func (s *Store) ResinAdminToken(ref string) string {
-	if s == nil || ref == "" {
-		return ""
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.state.ResinAdminTokens[ref]
 }
 
 func (s *Store) Snapshot() State {
@@ -515,21 +522,6 @@ func (s *Store) AccountStateValuesForIDs(authIDs []string) []string {
 	return states
 }
 
-func (s *Store) AccountResinStatesForIDs(authIDs []string) []ResinState {
-	states := make([]ResinState, len(authIDs))
-	if s == nil {
-		return states
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for index, authID := range authIDs {
-		if account := s.state.Accounts[authID]; account != nil {
-			states[index] = account.Resin
-		}
-	}
-	return states
-}
-
 func (s *Store) AccountStateSummariesForIDs(authIDs []string) []AccountStateSummary {
 	summaries := make([]AccountStateSummary, len(authIDs))
 	if s == nil {
@@ -549,7 +541,6 @@ func (s *Store) AccountStateSummariesForIDs(authIDs []string) []AccountStateSumm
 			LastObservedAt:    account.LastObservedAt,
 			CooldownUntil:     account.CooldownUntil,
 			ProbeBackoffUntil: account.ProbeBackoffUntil,
-			Resin:             account.Resin,
 			Proxy:             proxy.CloneBinding(account.Proxy),
 			AutoBind:          account.AutoBind,
 			Metrics:           account.Metrics,
@@ -635,15 +626,6 @@ func (s *Store) RecentEventCount(since time.Time) int {
 	return count
 }
 
-func (s *Store) ResinSettings() (ResinSettings, bool) {
-	if s == nil {
-		return ResinSettings{}, false
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.state.Resin, s.state.Resin.Configured
-}
-
 func (s *Store) CatalogMatches(accounts []model.Account) bool {
 	if s == nil {
 		return false
@@ -667,7 +649,7 @@ func (s *Store) UpdateAccount(authID string, fn func(*AccountState) (*Event, err
 
 // RecordObservation applies an observation-only mutation in memory and
 // coalesces the durable write. Use UpdateAccount for guard, probe, admin, and
-// Resin mutations that must be durable before the caller continues.
+// proxy mutations that must be durable before the caller continues.
 func (s *Store) RecordObservation(authID string, fn func(*AccountState) (*Event, error)) error {
 	return s.updateAccount(authID, fn, false)
 }
@@ -799,7 +781,7 @@ func (s *Store) Update(fn func(*State) error) error {
 	return nil
 }
 
-// UpdateIfChanged applies a periodic catalog or Resin sync mutation. The
+// UpdateIfChanged applies a periodic catalog or proxy-source mutation. The
 // callback must report whether it changed the state. Callers validate before
 // mutating; a save failure leaves the in-memory state authoritative so the next
 // flush can retry instead of paying for a full clone on every invocation.
@@ -844,8 +826,8 @@ func (s *Store) saveLocked() error {
 	if s.path == "" {
 		return errors.New("state path is empty")
 	}
-	if s.state.SchemaVersion == 0 {
-		s.state.SchemaVersion = stateSchemaVersion
+	if s.state.SchemaVersion != stateSchemaVersion {
+		return fmt.Errorf("state schema version %d is not writable; expected %d", s.state.SchemaVersion, stateSchemaVersion)
 	}
 	if s.state.Accounts == nil {
 		s.state.Accounts = make(map[string]*AccountState)
@@ -903,9 +885,9 @@ func cloneState(state State) State {
 	}
 	clone.Proxy = proxy.CloneProxyState(state.Proxy)
 	if state.ResinSnapshots != nil {
-		clone.ResinSnapshots = make(map[string]ResinSettings, len(state.ResinSnapshots))
-		for id, settings := range state.ResinSnapshots {
-			clone.ResinSnapshots[id] = settings
+		clone.ResinSnapshots = make(map[string]proxy.ResinSnapshot, len(state.ResinSnapshots))
+		for id, snapshot := range state.ResinSnapshots {
+			clone.ResinSnapshots[id] = snapshot
 		}
 	}
 	if state.Events != nil {
@@ -914,12 +896,7 @@ func cloneState(state State) State {
 	if state.ResinLeaseDeletes != nil {
 		clone.ResinLeaseDeletes = append([]ResinLeaseDelete{}, state.ResinLeaseDeletes...)
 	}
-	if state.ResinAdminTokens != nil {
-		clone.ResinAdminTokens = make(map[string]string, len(state.ResinAdminTokens))
-		for ref, token := range state.ResinAdminTokens {
-			clone.ResinAdminTokens[ref] = token
-		}
-	}
+
 	return clone
 }
 

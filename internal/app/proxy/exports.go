@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"time"
 
@@ -21,8 +20,6 @@ type (
 	CatalogRow      = proxyCatalogRow
 	Observation     = proxyObservation
 	SourceCandidate = proxySourceCandidate
-	PasswordUpdate  = passwordUpdate
-	ResinConfigView = resinConfigView
 	ManagementError = proxyManagementError
 )
 
@@ -30,14 +27,14 @@ func URLHash(value string) string { return proxyURLHash(value) }
 func LeaseDeleteKey(adminURL, platformID, account string) string {
 	return resinLeaseDeleteKey(adminURL, platformID, account)
 }
-func NewResinLeaseDelete(authID string, settings ResinSettings, account string) ResinLeaseDelete {
-	return newResinLeaseDelete(authID, settings, account)
+func NewResinLeaseDelete(authID string, snapshot proxy.ResinSnapshot, account string) ResinLeaseDelete {
+	return newResinLeaseDelete(authID, snapshot, account)
 }
 func BindingForAccount(account AccountState) (proxy.Binding, bool) {
 	return bindingForAccount(account)
 }
-func ResinCleanupConfigured(settings ResinSettings) bool {
-	return resinCleanupConfigured(settings)
+func ResinCleanupConfigured(snapshot proxy.ResinSnapshot) bool {
+	return resinCleanupConfigured(snapshot)
 }
 func BindOptionsFromParams(params map[string]any) (BindOptions, error) {
 	return proxyBindOptionsFromParams(params)
@@ -48,8 +45,8 @@ func (s *Service) WakeAutoBind()                               { s.wakeProxyAuto
 func (s *Service) RunAutoBindLoop(ctx context.Context)         { s.proxyAutoBindLoop(ctx) }
 func (s *Service) RunResinLeaseDeleteLoop(ctx context.Context) { s.resinLeaseDeleteLoop(ctx) }
 func (s *Service) WakeResinLeaseDeleteLoop()                   { s.wakeResinLeaseDeleteLoop() }
-func (s *Service) EnsureStateDefaults(store *statepkg.Store, autoBind proxy.AutoBindConfig, resinSettings ResinSettings) error {
-	return s.ensureProxyStateDefaults(store, autoBind, resinSettings)
+func (s *Service) EnsureStateDefaults(store *statepkg.Store, autoBind proxy.AutoBindConfig) error {
+	return s.ensureProxyStateDefaults(store, autoBind)
 }
 func (s *Service) SelectSource(opts BindOptions, excludeHash string) (*SourceCandidate, []string) {
 	return s.selectProxySource(opts, excludeHash)
@@ -60,6 +57,7 @@ func (s *Service) BindingForAccount(account AccountState) (proxy.Binding, bool) 
 func (s *Service) CreateNode(input NodeInput) (proxy.Node, error) {
 	return s.createProxyNode(input)
 }
+
 func (s *Service) ImportNodes(inputs []NodeInput, text string) (map[string]any, error) {
 	return s.importProxyNodes(inputs, text)
 }
@@ -181,18 +179,6 @@ func (s *Service) ActionChange(params map[string]any, action string) (any, int, 
 func (s *Service) ActionResinCleanup(params map[string]any, action string) (any, int, error) {
 	return s.actionResinCleanup(params, action)
 }
-func (s *Service) ActionResinConfigGet() (any, int, error) { return s.actionResinConfigGet() }
-func (s *Service) ActionResinConfigValidate(ctx context.Context, params map[string]any) (any, int, error) {
-	return s.actionResinConfigValidate(ctx, params)
-}
-func (s *Service) ActionResinConfigSave(ctx context.Context, params map[string]any) (any, int, error) {
-	return s.actionResinConfigSave(ctx, params)
-}
-
-func ResinSettingsFromConfig(cfg ResinConfig) ResinSettings { return resinSettingsFromConfig(cfg) }
-func ManagedResinBindingForState(proxyURL string, resinState ResinState, cfg ResinSettings) (string, bool) {
-	return managedResinBindingForState(proxyURL, resinState, cfg)
-}
 
 func MaskAccountIdentity(value string) string { return maskAccountIdentity(value) }
 func MaskEmail(value string) string           { return maskEmail(value) }
@@ -202,8 +188,6 @@ func (s *Service) AccountBindingView(state AccountState, value string) (string, 
 }
 
 type SourceCatalog = proxySourceCatalog
-
-const ResinSourceID = resinSourceID
 
 func (s *Service) Catalog() *SourceCatalog          { return s.proxyCatalog() }
 func (s *Service) AutoBindScan(ctx context.Context) { s.proxyAutoBindScan(ctx) }
@@ -217,9 +201,6 @@ func (s *Service) SourceDetails(id string) (any, error)      { return s.proxySou
 func (s *Service) ReconcileOperations(ctx context.Context)   { s.reconcileProxyOperations(ctx) }
 func (s *Service) ExistingNode(id string) (proxy.Node, bool) { return s.proxyExistingNode(id) }
 
-func ManagedResinBinding(raw map[string]json.RawMessage, stateAccount AccountState, cfg ResinSettings) (string, bool) {
-	return managedResinBinding(raw, stateAccount, cfg)
-}
 func RewriteResinProxyAccount(proxyURL, account string) (string, error) {
 	return rewriteResinProxyAccount(proxyURL, account)
 }
@@ -235,14 +216,4 @@ type ResinDeleteError = resinDeleteError
 func Socks5Authenticate(conn net.Conn, username, password string) error {
 	return socks5Authenticate(conn, username, password)
 }
-func RandomBase36(length int) (string, error) { return randomBase36(length) }
-func ValidateResinPlatform(ctx context.Context, settings ResinSettings) (string, error) {
-	return validateResinPlatform(ctx, settings)
-}
-func ResolveResinPlatformByName(ctx context.Context, settings ResinSettings) (ResinSettings, error) {
-	return resolveResinPlatformByName(ctx, settings)
-}
 func ResinLeaseDeleteBackoff(attempts int) time.Duration { return resinLeaseDeleteBackoff(attempts) }
-func (s *Service) EnqueueResinLeaseDelete(authID string, settings ResinSettings, account string) (bool, error) {
-	return s.enqueueResinLeaseDelete(authID, settings, account)
-}

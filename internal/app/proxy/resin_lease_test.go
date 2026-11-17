@@ -1,36 +1,46 @@
 package proxy
 
 import (
-	"strings"
 	"testing"
+	"time"
+
+	statepkg "grok-quality-guard/internal/app/state"
+	coreproxy "grok-quality-guard/internal/proxy"
 )
 
-func TestResinLeaseDeleteSharesAdminToken(t *testing.T) {
-	settings := ResinSettings{
-		Configured: true,
-		Enabled:    true,
+func TestResinLeaseDeleteUsesImmutableSnapshot(t *testing.T) {
+	snapshot := coreproxy.ResinSnapshot{
+		AdminURL:   "https://resin.example/",
 		PlatformID: "platform-1",
-		AdminURL:   "https://resin.example",
+		AdminToken: "admin-token",
 	}
-	settings.AdminToken = "shared" + "-" + "token"
-	state := State{}
-	queueResinLeaseDelete(&state, "auth-1", settings, "account-1")
-	queueResinLeaseDelete(&state, "auth-2", settings, "account-2")
-	if len(state.ResinAdminTokens) != 1 {
-		t.Fatalf("admin token copies = %d, want 1: %#v", len(state.ResinAdminTokens), state.ResinAdminTokens)
+	job := newResinLeaseDelete("auth-1", snapshot, "account-1")
+	if job.AuthID != "auth-1" || job.AdminURL != snapshot.AdminURL || job.PlatformID != snapshot.PlatformID || job.Account != "account-1" {
+		t.Fatalf("lease job did not preserve its snapshot target: %#v", job)
 	}
-	if len(state.ResinLeaseDeletes) != 2 {
-		t.Fatalf("lease delete jobs = %d, want 2", len(state.ResinLeaseDeletes))
+	if job.SnapshotID != statepkg.ResinSnapshotID(snapshot) || job.SnapshotID == "" {
+		t.Fatalf("lease job snapshot id = %q, want %q", job.SnapshotID, statepkg.ResinSnapshotID(snapshot))
 	}
-	ref := ""
-	for _, job := range state.ResinLeaseDeletes {
-		if strings.TrimSpace(job.AdminToken) != "" || job.AdminTokenRef == "" {
-			t.Fatalf("job retained a token copy: %#v", job)
-		}
-		if ref == "" {
-			ref = job.AdminTokenRef
-		} else if ref != job.AdminTokenRef {
-			t.Fatalf("jobs use different token refs: %s != %s", ref, job.AdminTokenRef)
+	if job.Status != "pending" || job.NextAttemptAt.IsZero() {
+		t.Fatalf("lease job was not scheduled: %#v", job)
+	}
+}
+
+func TestResinLeaseDeleteBackoff(t *testing.T) {
+	cases := []struct {
+		attempts int
+		want     time.Duration
+	}{
+		{attempts: 0, want: 30 * time.Second},
+		{attempts: 1, want: 30 * time.Second},
+		{attempts: 2, want: time.Minute},
+		{attempts: 3, want: 2 * time.Minute},
+		{attempts: 8, want: time.Hour},
+		{attempts: 100, want: time.Hour},
+	}
+	for _, tc := range cases {
+		if got := resinLeaseDeleteBackoff(tc.attempts); got != tc.want {
+			t.Fatalf("backoff(%d) = %s, want %s", tc.attempts, got, tc.want)
 		}
 	}
 }

@@ -26,7 +26,7 @@ func (s *Service) actionProxySummary(ctx context.Context) (any, int, error) {
 		return nil, 500, err
 	}
 	sources := s.proxySourcesView()
-	counts := map[string]int{"managed": 0, "unbound": 0, "external": 0, "drifted": 0, "unknown": 0, "needs_reconcile": 0}
+	counts := map[string]int{"bound": 0, "unbound": 0, "external": 0, "drifted": 0, "unknown": 0, "reconcile_required": 0}
 	accountTotal := s.walkProxyCatalog(func(row proxyCatalogRow) { counts[row.Status]++ })
 	sourceCounts := map[string]int{"node": 0, "template": 0, "resin": 0}
 	available := 0
@@ -39,8 +39,8 @@ func (s *Service) actionProxySummary(ctx context.Context) (any, int, error) {
 			available++
 		}
 	}
-	_, _, rotate := s.env.ProxyConfigSnapshot()
-	return map[string]any{"source_count": len(sources), "source_counts": sourceCounts, "available_source_count": available, "enabled_source_count": countEnabledProxySources(sources), "binding_counts": counts, "binding_total": accountTotal, "managed_binding_count": counts["managed"], "auto_bind": s.env.ProxyStore().ProxyAutoBindConfig(), "auto_bind_runtime": s.proxyAutoBindRuntime(), "auto_rotate_after_quality_failure": rotate}, 200, nil
+	_, rotate := s.env.ProxyConfigSnapshot()
+	return map[string]any{"source_count": len(sources), "source_counts": sourceCounts, "available_source_count": available, "enabled_source_count": countEnabledProxySources(sources), "binding_counts": counts, "binding_total": accountTotal, "auto_bind": s.env.ProxyStore().ProxyAutoBindConfig(), "auto_bind_runtime": s.proxyAutoBindRuntime(), "auto_rotate_after_quality_failure": rotate}, 200, nil
 }
 func countEnabledProxySources(sources []proxySourceView) int {
 	count := 0
@@ -97,6 +97,12 @@ func decodeProxyParams[T any](params map[string]any, nestedKey string) (T, error
 	}
 	if len(encoded) > 2<<20 {
 		return value, proxyError("proxy_config_limit", 400, "proxy configuration exceeds 2 MiB")
+	}
+	var fields map[string]json.RawMessage
+	if errFields := json.Unmarshal(encoded, &fields); errFields == nil {
+		if _, retired := fields["password_update"]; retired {
+			return value, proxyError("proxy_password_update_unsupported", 400, "password_update is not supported; provide the password in url")
+		}
 	}
 	err = json.Unmarshal(encoded, &value)
 	return value, err
@@ -189,7 +195,7 @@ func (s *Service) actionProxySourcePreview(params map[string]any) (any, int, err
 			return proxyValidationFailure(errBuild), 200, nil
 		}
 		provider, errProvider := resinpkg.NewTemplateProvider(template, resinpkg.ProviderSettings{
-			Platform: config.Platform, ProxyToken: template.Password, LocalOnly: config.LocalOnly,
+			Platform: config.Platform, LocalOnly: config.LocalOnly,
 		})
 		if errProvider != nil {
 			return proxyValidationFailure(errProvider), 200, nil
@@ -312,6 +318,7 @@ func proxyInputErrorStatus(err error) int {
 	}
 	return 500
 }
+
 func (s *Service) actionProxyImportNodes(params map[string]any) (any, int, error) {
 	inputs := []proxyNodeInput{}
 	lines := []string{}
@@ -336,21 +343,6 @@ func (s *Service) actionProxyImportNodes(params map[string]any) (any, int, error
 	}
 	if len(inputs) == 0 && len(lines) == 0 {
 		return nil, 400, errors.New("nodes or urls is required")
-	}
-	format := strings.TrimSpace(actionpkg.String(params["import_format"]))
-	if format != "" && format != "standard" && format != "address_first" {
-		return nil, 400, errors.New("import_format must be standard or address_first")
-	}
-	if format != "" {
-		for i := range inputs {
-			inputs[i].ImportFormat = format
-		}
-		for _, line := range strings.Split(strings.Join(lines, "\n"), "\n") {
-			if strings.TrimSpace(line) != "" {
-				inputs = append(inputs, proxyNodeInput{URL: strings.TrimSpace(line), ImportFormat: format})
-			}
-		}
-		lines = nil
 	}
 	result, err := s.importProxyNodes(inputs, strings.Join(lines, "\n"))
 	if err != nil {
@@ -476,7 +468,7 @@ func (s *Service) testProxySource(ctx context.Context, id, target string) (map[s
 	if entry.Provider == nil {
 		return nil, proxyError("proxy_test_unavailable", 409, "local Resin rotation has no independent endpoint")
 	}
-	if entry.Kind == proxy.SourceResin && entry.ResinSettings != nil && entry.ResinSettings.LocalOnly {
+	if entry.Kind == proxy.SourceResin && entry.ResinConfig != nil && entry.ResinConfig.LocalOnly {
 		return nil, proxyError("proxy_test_unavailable", 409, "local Resin rotation has no independent endpoint")
 	}
 	parentCtx := ctx
@@ -759,7 +751,7 @@ func stringListFromAny(value any) []string {
 	return nil
 }
 func (s *Service) actionProxyAutoBindGet() (any, int, error) {
-	_, _, rotate := s.env.ProxyConfigSnapshot()
+	_, rotate := s.env.ProxyConfigSnapshot()
 	return map[string]any{"config": s.env.ProxyStore().ProxyAutoBindConfig(), "runtime": s.proxyAutoBindRuntime(), "auto_rotate_after_quality_failure": rotate}, 200, nil
 }
 func (s *Service) actionProxyAutoBindUpdate(params map[string]any) (any, int, error) {
@@ -940,21 +932,11 @@ func (s *Service) proxySourcesView() []proxySourceView {
 		case proxy.SourceTemplate:
 			view = proxyTemplateView(*entry.Template, counts[entry.ID])
 		case proxy.SourceResin:
-			if entry.Template != nil && entry.ResinSettings != nil {
-				config, ok := s.env.ProxyStore().ProxySourcesSnapshot().ResinSources[entry.ID]
-				if ok {
-					view = s.resinSourceView(*entry.Template, config, counts[entry.ID])
-					break
-				}
-			}
-			s := *entry.ResinSettings
-			if !s.Configured && !s.LocalOnly {
+			config, ok := s.env.ProxyStore().ProxySourcesSnapshot().ResinSources[entry.ID]
+			if !ok || entry.Template == nil {
 				continue
 			}
-			view = proxySourceView{ID: entry.ID, Kind: entry.Kind, Name: entry.Name, Enabled: s.Enabled, Valid: entry.Error == nil, ConfigVersion: entry.ConfigVersion, Revision: entry.Revision, BindingCount: counts[entry.ID], LocalOnly: s.LocalOnly, Configured: s.Configured, PasswordSet: s.ProxyToken != ""}
-			if rendered, err := renderResinProxy(s, "preview"); err == nil {
-				view.Endpoint = maskProxyURL(rendered)
-			}
+			view = s.resinSourceView(*entry.Template, config, counts[entry.ID])
 		}
 		view.Valid = entry.Error == nil
 		if entry.Error != nil {
@@ -975,7 +957,6 @@ func (s *Service) proxySourcesView() []proxySourceView {
 	}
 	return views
 }
-
 func (s *Service) proxySourceDetails(id string) (any, error) {
 	return s.proxySourceDetailsForEdit(id, false)
 }
@@ -997,23 +978,20 @@ func (s *Service) proxySourceEndpoint(id string) (string, error) {
 		}
 		return entry.Template.URLForReveal(), nil
 	case proxy.SourceResin:
-		if entry.ResinSettings == nil {
+		if entry.Template == nil || entry.ResinConfig == nil {
 			return "", proxyError("proxy_source_not_found", 404, "Resin source not found")
 		}
-		if entry.Template != nil {
-			if entry.ResinSettings != nil && entry.ResinSettings.LocalOnly {
-				return "", proxyError("proxy_test_unavailable", 409, "local Resin rotation has no independent endpoint")
-			}
-			if entry.Provider == nil {
-				return "", proxyError("proxy_source_invalid", 409, "Resin source cannot generate a preview endpoint")
-			}
-			rendered, err := entry.Provider.Generate(context.Background(), proxy.GenerateRequest{SourceID: entry.ID, SourceKind: entry.Kind, Revision: entry.Revision, AccountBase: "preview"})
-			if err != nil {
-				return "", err
-			}
-			return rendered.URL, nil
+		if entry.ResinConfig.LocalOnly {
+			return "", proxyError("proxy_test_unavailable", 409, "local Resin rotation has no independent endpoint")
 		}
-		return renderResinProxy(*entry.ResinSettings, "preview")
+		if entry.Provider == nil {
+			return "", proxyError("proxy_source_invalid", 409, "Resin source cannot generate a preview endpoint")
+		}
+		rendered, err := entry.Provider.Generate(context.Background(), proxy.GenerateRequest{SourceID: entry.ID, SourceKind: entry.Kind, Revision: entry.Revision, AccountBase: "preview"})
+		if err != nil {
+			return "", err
+		}
+		return rendered.URL, nil
 	default:
 		return "", proxyError("proxy_source_not_found", 404, "proxy source not found")
 	}
@@ -1024,14 +1002,14 @@ func (s *Service) proxySourceDetailsForEdit(id string, edit bool) (any, error) {
 		return nil, proxyError("proxy_source_not_found", 404, "proxy source not found")
 	}
 	if entry.Kind == proxy.SourceResin {
-		if entry.Template != nil {
-			config, ok := s.env.ProxyStore().ProxySourcesSnapshot().ResinSources[entry.ID]
-			if !ok {
-				return nil, proxyError("proxy_source_details_missing", 409, "Resin source details are missing")
-			}
-			return s.resinSourceDetails(*entry.Template, config), nil
+		if entry.Template == nil {
+			return nil, proxyError("proxy_source_details_missing", 409, "Resin source details are missing")
 		}
-		return s.resinConfigView(*entry.ResinSettings), nil
+		config, ok := s.env.ProxyStore().ProxySourcesSnapshot().ResinSources[entry.ID]
+		if !ok {
+			return nil, proxyError("proxy_source_details_missing", 409, "Resin source details are missing")
+		}
+		return s.resinSourceDetails(*entry.Template, config), nil
 	}
 	count := s.env.ProxyStore().ProxyBindingCount(id)
 	var view proxySourceView
@@ -1098,7 +1076,7 @@ func (s *Service) proxyAccountBindingView(state AccountState, value string) (str
 	if !bindingMatchesURL(binding, value) {
 		return "drifted", binding.SourceID, binding.SourceKind, true
 	}
-	return "managed", binding.SourceID, binding.SourceKind, true
+	return "bound", binding.SourceID, binding.SourceKind, true
 }
 
 func (s *Service) proxyObservationFor(account Account) proxyObservation {
@@ -1163,16 +1141,12 @@ func (s *Service) walkProxyCatalog(visit func(proxyCatalogRow)) int {
 		if summary, ok := byID[a.ID]; ok {
 			row.Binding = summary.Proxy
 			row.AutoBind = summary.AutoBind
-			if row.Binding.SourceID == "" && (summary.Resin.Managed || summary.Resin.Account != "") {
-				row.Binding.SourceID = resinSourceID
-				row.Binding.SourceKind = proxy.SourceResin
-				row.Binding.Generation = uint64(max(summary.Resin.Generation, 0))
-			}
+
 			if summary.Pending {
-				row.Status = "needs_reconcile"
+				row.Status = "reconcile_required"
 			}
 		}
-		if row.Status != "needs_reconcile" {
+		if row.Status != "reconcile_required" {
 			if !row.Observation.Known {
 				row.Status = "unknown"
 			} else if row.Binding.SourceID != "" {
@@ -1186,7 +1160,7 @@ func (s *Service) walkProxyCatalog(visit func(proxyCatalogRow)) int {
 						hash = proxyURLHash(row.Observation.URL)
 					}
 					if hash == row.Binding.EndpointHash {
-						row.Status = "managed"
+						row.Status = "bound"
 					} else {
 						row.Status = "drifted"
 					}
@@ -1199,22 +1173,20 @@ func (s *Service) walkProxyCatalog(visit func(proxyCatalogRow)) int {
 	}
 	return len(accounts)
 }
+func proxyLeaseAccount(binding proxy.Binding) string {
+	if binding.Lease == nil {
+		return ""
+	}
+	return binding.Lease.Account
+}
+
 func proxyRowView(row proxyCatalogRow) map[string]any {
 	a, b := row.Account, row.Binding
 	displayFull := strings.TrimSpace(firstNonEmptyString(a.Email, a.Label, a.ID))
-	return map[string]any{"auth_id": a.ID, "auth_id_display": maskAuthID(a.ID), "display": maskAccountIdentity(displayFull), "display_full": displayFull, "proxy": maskProxyURL(row.Observation.URL), "proxy_status": row.Status, "source_id": b.SourceID, "source_kind": b.SourceKind, "generation": b.Generation, "source_revision": b.SourceRevision, "auto_bind_excluded": row.AutoBind.Excluded, "next_attempt_at": row.AutoBind.NextAttemptAt, "last_error": row.AutoBind.LastError}
+	return map[string]any{"auth_id": a.ID, "auth_id_display": maskAuthID(a.ID), "display": maskAccountIdentity(displayFull), "display_full": displayFull, "proxy": maskProxyURL(row.Observation.URL), "proxy_status": row.Status, "proxy_source_id": b.SourceID, "proxy_source_kind": b.SourceKind, "proxy_generation": b.Generation, "proxy_source_revision": b.SourceRevision, "proxy_lease_account": proxyLeaseAccount(b), "auto_bind_excluded": row.AutoBind.Excluded, "next_attempt_at": row.AutoBind.NextAttemptAt, "last_error": row.AutoBind.LastError}
 }
 
 func proxyStatusMatches(filter, status string) bool {
-	if filter == "bound" {
-		filter = "managed"
-	}
-	if filter == "conflict" {
-		filter = "external"
-	}
-	if filter == "reconcile_required" {
-		filter = "needs_reconcile"
-	}
 	return filter == "" || filter == "all" || filter == status
 }
 

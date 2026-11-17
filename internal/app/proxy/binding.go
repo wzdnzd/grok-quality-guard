@@ -14,60 +14,50 @@ import (
 	"time"
 
 	"grok-quality-guard/internal/app/auth"
-	resinpkg "grok-quality-guard/internal/app/proxy/resin"
 	"grok-quality-guard/internal/app/redact"
 	statepkg "grok-quality-guard/internal/app/state"
 	proxy "grok-quality-guard/internal/proxy"
 )
 
-const resinSourceID = "resin"
-
-type passwordUpdate struct {
-	Action string  `json:"action"`
-	Value  *string `json:"value,omitempty"`
-}
-
 type proxyNodeInput struct {
-	RetryExistingChange bool            `json:"-"`
-	ID                  string          `json:"id,omitempty"`
-	Name                string          `json:"name,omitempty"`
-	URL                 string          `json:"url,omitempty"`
-	Protocol            string          `json:"protocol,omitempty"`
-	Host                string          `json:"host,omitempty"`
-	Port                int             `json:"port,omitempty"`
-	Username            string          `json:"username,omitempty"`
-	Password            string          `json:"password,omitempty"`
-	HasPassword         bool            `json:"has_password,omitempty"`
-	PasswordUpdate      *passwordUpdate `json:"password_update,omitempty"`
-	ImportFormat        string          `json:"import_format,omitempty"`
-	Enabled             *bool           `json:"enabled,omitempty"`
-	Priority            int             `json:"priority,omitempty"`
-	MaxBindings         int             `json:"max_bindings,omitempty"`
-	ExpectedVersion     uint64          `json:"expected_version,omitempty"`
-	PrioritySet         bool            `json:"-"`
-	MaxBindingsSet      bool            `json:"-"`
-	UsernameSet         bool            `json:"-"`
+	RetryExistingChange bool   `json:"-"`
+	ID                  string `json:"id,omitempty"`
+	Name                string `json:"name,omitempty"`
+	URL                 string `json:"url,omitempty"`
+	Protocol            string `json:"protocol,omitempty"`
+	Host                string `json:"host,omitempty"`
+	Port                int    `json:"port,omitempty"`
+	Username            string `json:"username,omitempty"`
+	Password            string `json:"password,omitempty"`
+
+	Enabled         *bool  `json:"enabled,omitempty"`
+	Priority        int    `json:"priority,omitempty"`
+	MaxBindings     int    `json:"max_bindings,omitempty"`
+	ExpectedVersion uint64 `json:"expected_version,omitempty"`
+	PrioritySet     bool   `json:"-"`
+	MaxBindingsSet  bool   `json:"-"`
+	UsernameSet     bool   `json:"-"`
 }
 
 type proxyTemplateInput struct {
-	UsernamePatternEncoding string                     `json:"username_pattern_encoding,omitempty"`
-	ID                      string                     `json:"id,omitempty"`
-	Name                    string                     `json:"name,omitempty"`
-	URL                     string                     `json:"url,omitempty"`
-	Protocol                string                     `json:"protocol,omitempty"`
-	Host                    string                     `json:"host,omitempty"`
-	Port                    int                        `json:"port,omitempty"`
-	UsernamePattern         *string                    `json:"username_pattern,omitempty"`
-	PasswordUpdate          *passwordUpdate            `json:"password_update,omitempty"`
-	Placeholders            []proxy.Placeholder        `json:"placeholders,omitempty"`
-	ValueGroups             []proxy.ValueGroup         `json:"value_groups,omitempty"`
-	Enabled                 *bool                      `json:"enabled,omitempty"`
-	Priority                int                        `json:"priority,omitempty"`
-	MaxBindings             int                        `json:"max_bindings,omitempty"`
-	UpdatePolicy            proxy.TemplateUpdatePolicy `json:"update_policy,omitempty"`
-	ExpectedVersion         uint64                     `json:"expected_version,omitempty"`
-	PrioritySet             bool                       `json:"-"`
-	MaxBindingsSet          bool                       `json:"-"`
+	UsernamePatternEncoding string  `json:"username_pattern_encoding,omitempty"`
+	ID                      string  `json:"id,omitempty"`
+	Name                    string  `json:"name,omitempty"`
+	URL                     string  `json:"url,omitempty"`
+	Protocol                string  `json:"protocol,omitempty"`
+	Host                    string  `json:"host,omitempty"`
+	Port                    int     `json:"port,omitempty"`
+	UsernamePattern         *string `json:"username_pattern,omitempty"`
+
+	Placeholders    []proxy.Placeholder        `json:"placeholders,omitempty"`
+	ValueGroups     []proxy.ValueGroup         `json:"value_groups,omitempty"`
+	Enabled         *bool                      `json:"enabled,omitempty"`
+	Priority        int                        `json:"priority,omitempty"`
+	MaxBindings     int                        `json:"max_bindings,omitempty"`
+	UpdatePolicy    proxy.TemplateUpdatePolicy `json:"update_policy,omitempty"`
+	ExpectedVersion uint64                     `json:"expected_version,omitempty"`
+	PrioritySet     bool                       `json:"-"`
+	MaxBindingsSet  bool                       `json:"-"`
 }
 
 type proxySourceView struct {
@@ -144,8 +134,7 @@ type proxySourceCandidate struct {
 	ConfigVersion uint64
 	Node          *proxy.Node
 	Template      *proxy.Template
-	Resin         bool
-	ResinSettings *ResinSettings
+	ResinConfig   *proxy.ResinSourceConfig
 	Provider      proxy.Provider
 	Runtime       proxy.SourceRuntime
 	Error         error
@@ -235,26 +224,21 @@ func (s *Service) wakeProxyAutoBind() {
 }
 
 func bindingForAccount(account AccountState) (proxy.Binding, bool) {
-	if account.Proxy.SourceID != "" {
-		return proxy.CloneBinding(account.Proxy), true
+	if account.Proxy.SourceID == "" {
+		return proxy.CloneBinding(account.Proxy), false
 	}
-	if account.Resin.Managed || account.Resin.Account != "" {
-		return proxy.Binding{AuthID: account.AuthID, SourceID: resinSourceID, SourceKind: proxy.SourceResin,
-			Generation: uint64(max(account.Resin.Generation, 0)), Lease: &proxy.LeaseRef{Provider: "resin", Account: account.Resin.Account}}, true
-	}
-	return proxy.CloneBinding(account.Proxy), false
+	return proxy.CloneBinding(account.Proxy), true
 }
+
 func (s *Service) proxyBindingForAccount(account AccountState) (proxy.Binding, bool) {
 	return bindingForAccount(account)
 }
+
 func proxyBindingSource(account AccountState) (string, bool) {
-	if account.Proxy.SourceID != "" {
-		return account.Proxy.SourceID, true
+	if account.Proxy.SourceID == "" {
+		return "", false
 	}
-	if account.Resin.Managed || account.Resin.Account != "" {
-		return resinSourceID, true
-	}
-	return "", false
+	return account.Proxy.SourceID, true
 }
 func newProxyID(prefix string) string {
 	var raw [12]byte
@@ -319,25 +303,16 @@ func (s *Service) proxyCatalog() *proxySourceCatalog {
 		entry := proxySourceCandidate{ID: template.ID, Kind: proxy.SourceTemplate, Name: template.Name, Priority: template.Priority, Max: template.MaxBindings, Revision: template.Revision, Template: &template, Runtime: state.SourceRuntime[template.ID]}
 		if template.Kind == proxy.TemplateResin {
 			entry.Kind = proxy.SourceResin
-			entry.Resin = true
 			config, ok := state.ResinSources[template.ID]
 			if !ok {
-				settings := resinSettingsForSource(template, proxy.ResinSourceConfig{AccountFormat: template.UsernamePattern})
-				entry.ResinSettings = &settings
 				entry.Error = proxyError("proxy_source_not_found", 404, "Resin configuration is missing")
 				catalog.Sources = append(catalog.Sources, entry)
 				continue
 			}
-			settings := resinSettingsForSource(template, config)
-			entry.ResinSettings = &settings
-			cachedEntry := (*proxySourceCandidate)(nil)
-			if cached != nil && cached.Store == store {
-				cachedEntry = cached.ByID[template.ID]
-			}
-			if cachedEntry != nil && cachedEntry.Revision == template.Revision && cachedEntry.ResinSettings != nil &&
-				statepkg.ResinSnapshotID(*cachedEntry.ResinSettings) == statepkg.ResinSnapshotID(settings) {
-				entry.Provider = cachedEntry.Provider
-				entry.Error = cachedEntry.Error
+			entry.ResinConfig = &config
+			if cached != nil && cached.Store == store && cached.ByID[template.ID] != nil && cached.ByID[template.ID].Revision == template.Revision {
+				entry.Provider = cached.ByID[template.ID].Provider
+				entry.Error = cached.ByID[template.ID].Error
 			} else {
 				entry.Provider, entry.Error = resinProviderForSource(template, config)
 			}
@@ -352,27 +327,6 @@ func (s *Service) proxyCatalog() *proxySourceCatalog {
 			entry.Error = err
 			if err == nil {
 				entry.Provider = proxy.TemplateProvider{Compiled: compiled}
-			}
-		}
-		catalog.Sources = append(catalog.Sources, entry)
-	}
-	settings := s.ResinConfig()
-	if !state.ResinSourcesInitialized && !state.ResinSource.Deleted && (settings.Configured || settings.Enabled || settings.LocalOnly) {
-		revision := max(state.ResinSource.Revision, 1)
-		entry := proxySourceCandidate{ID: resinSourceID, Kind: proxy.SourceResin, Name: firstNonEmptyString(state.ResinSource.Name, "Resin"), Revision: revision, Resin: true, ResinSettings: &settings, Runtime: state.SourceRuntime[resinSourceID]}
-		entry.ConfigVersion = state.ResinSource.ConfigVersion
-		if !settings.LocalOnly {
-			previous := (*proxySourceCandidate)(nil)
-			if cached != nil && cached.Store == store {
-				previous = cached.ByID[resinSourceID]
-			}
-			if previous != nil && previous.ResinSettings != nil && statepkg.ResinSnapshotID(*previous.ResinSettings) == statepkg.ResinSnapshotID(settings) {
-				entry.Provider = previous.Provider
-				entry.Error = previous.Error
-			} else if settings.PlatformID == "" || settings.AdminURL == "" || settings.AdminToken == "" {
-				entry.Error = proxyError("resin_validation_required", 409, "validate and save the Resin connection before binding")
-			} else {
-				entry.Provider, entry.Error = resinpkg.NewProvider(resinpkg.ProviderSettings{ProxyTemplate: settings.ProxyTemplate, Platform: settings.Platform, PlatformID: settings.PlatformID, ProxyToken: settings.ProxyToken, SnapshotID: statepkg.ResinSnapshotID(settings)}, nil)
 			}
 		}
 		catalog.Sources = append(catalog.Sources, entry)
@@ -425,7 +379,7 @@ func (s *Service) selectProxySource(opts proxyBindOptions, excludeHash string) (
 				continue
 			}
 		}
-		enabled := (entry.Node != nil && entry.Node.Enabled) || (entry.Template != nil && entry.Template.Enabled) || (entry.ResinSettings != nil && entry.ResinSettings.Enabled && !entry.ResinSettings.LocalOnly)
+		enabled := (entry.Node != nil && entry.Node.Enabled) || (entry.Template != nil && entry.Template.Enabled)
 		lifecycle := entry.Runtime.Lifecycle
 		if !enabled || entry.Error != nil || (lifecycle != "" && lifecycle != "active") || entry.Runtime.RetryAt.After(time.Now()) {
 			if len(reasons) < 8 {
@@ -598,7 +552,7 @@ func (s *Service) bindProxy(ctx context.Context, authID string, opts proxyBindOp
 		return proxyBindingResult{AuthID: authID, SourceID: candidate.ID, SourceKind: candidate.Kind, Status: "dry_run", ProxyURL: rendered.Endpoint.MaskedURL(), DryRun: true, LeaseAccount: account}, nil
 	}
 	now := time.Now().UTC()
-	generation := max(binding.Generation, uint64(max(state.Resin.Generation, 0))) + 1
+	generation := binding.Generation + 1
 	next := proxy.Binding{AuthID: authID, SourceID: candidate.ID, SourceKind: candidate.Kind, SourceRevision: candidate.Revision, Generation: generation, EndpointHash: rendered.Endpoint.Fingerprint(), ResolvedValues: rendered.Values, Lease: lease, BoundAt: now, UpdatedAt: now}
 	operation := proxy.Operation{ID: firstNonEmptyString(opts.OperationID, newProxyID("op")), AuthID: authID, Action: firstNonEmptyString(opts.Action, "proxy_bind"), Auto: opts.Auto, ExpectedHash: proxyURLHash(current), ExpectedGeneration: binding.Generation, PreviousSourceID: binding.SourceID, DesiredURL: rendered.URL, Binding: next, ExcludeAutoBind: state.AutoBind.Excluded, Status: "prepared", CreatedAt: now, UpdatedAt: now}
 	return s.commitProxyOperationLocked(ctx, response, raw, operation, opts.Auto)
@@ -630,76 +584,22 @@ func (s *Service) generateProxySource(ctx context.Context, candidate proxySource
 		rendered, err := candidate.Provider.Generate(ctx, request)
 		return rendered, nil, nil, err
 	}
-	settings := *candidate.ResinSettings
+	if candidate.Template == nil || candidate.ResinConfig == nil || candidate.Provider == nil {
+		return proxy.RenderedProxy{}, nil, nil, errors.New("Resin generator is unavailable")
+	}
+	config := *candidate.ResinConfig
 	base := resinAccountBase(raw)
 	if base == "" {
 		base = "grok"
 	}
-	if candidate.Template != nil {
-		if candidate.Provider == nil {
-			return proxy.RenderedProxy{}, nil, nil, errors.New("resin generator is unavailable")
-		}
-		request.AccountBase = base
-		store := s.env.ProxyStore()
-		for attempt := 0; attempt < 16; attempt++ {
-			rendered, err := candidate.Provider.Generate(ctx, request)
-			if err != nil {
-				return proxy.RenderedProxy{}, nil, nil, err
-			}
-			identity := rendered.GeneratedAccount
-			s.mgr.mu.Lock()
-			_, reserved := s.mgr.resinReserved[identity]
-			used := store.ProxyLeaseUsage(identity) > 0
-			if !used && !reserved && !dryRun {
-				s.mgr.resinReserved[identity] = struct{}{}
-			}
-			s.mgr.mu.Unlock()
-			if used || reserved {
-				continue
-			}
-			release := func() {
-				s.mgr.mu.Lock()
-				delete(s.mgr.resinReserved, identity)
-				s.mgr.mu.Unlock()
-			}
-			if settings.LocalOnly {
-				current, err := proxyURLFromRaw(raw)
-				if err != nil {
-					release()
-					return proxy.RenderedProxy{}, nil, nil, err
-				}
-				value, err := rewriteResinProxyAccount(current, identity)
-				if err != nil {
-					release()
-					return proxy.RenderedProxy{}, nil, nil, err
-				}
-				e, err := proxy.ParseEndpoint(value, proxy.ParseOptions{})
-				if err != nil {
-					release()
-					return proxy.RenderedProxy{}, nil, nil, err
-				}
-				rendered.Endpoint = e
-				rendered.URL = e.CanonicalURL()
-				rendered.MaskedURL = e.MaskedURL()
-				return rendered, &proxy.LeaseRef{Provider: "resin-local", Account: identity}, release, nil
-			}
-			if !dryRun {
-				if _, err = store.EnsureResinSnapshot(settings); err != nil {
-					release()
-					return proxy.RenderedProxy{}, nil, nil, err
-				}
-			}
-			return rendered, rendered.Cleanup, release, nil
-		}
-		return proxy.RenderedProxy{}, nil, nil, errors.New("unable to generate a different proxy identity")
-	}
+	request.AccountBase = base
+	store := s.env.ProxyStore()
 	for attempt := 0; attempt < 16; attempt++ {
-		suffix, err := randomBase36(12)
+		rendered, err := candidate.Provider.Generate(ctx, request)
 		if err != nil {
 			return proxy.RenderedProxy{}, nil, nil, err
 		}
-		identity := "grok-" + base + "-" + suffix
-		store := s.env.ProxyStore()
+		identity := rendered.GeneratedAccount
 		s.mgr.mu.Lock()
 		_, reserved := s.mgr.resinReserved[identity]
 		used := store.ProxyLeaseUsage(identity) > 0
@@ -710,8 +610,12 @@ func (s *Service) generateProxySource(ctx context.Context, candidate proxySource
 		if used || reserved {
 			continue
 		}
-		release := func() { s.mgr.mu.Lock(); delete(s.mgr.resinReserved, identity); s.mgr.mu.Unlock() }
-		if settings.LocalOnly {
+		release := func() {
+			s.mgr.mu.Lock()
+			delete(s.mgr.resinReserved, identity)
+			s.mgr.mu.Unlock()
+		}
+		if config.LocalOnly {
 			current, err := proxyURLFromRaw(raw)
 			if err != nil {
 				release()
@@ -722,96 +626,34 @@ func (s *Service) generateProxySource(ctx context.Context, candidate proxySource
 				release()
 				return proxy.RenderedProxy{}, nil, nil, err
 			}
-			e, err := proxy.ParseEndpoint(value, proxy.ParseOptions{})
+			endpoint, err := proxy.ParseEndpoint(value)
 			if err != nil {
 				release()
 				return proxy.RenderedProxy{}, nil, nil, err
 			}
-			return proxy.RenderedProxy{Endpoint: e, URL: e.CanonicalURL(), MaskedURL: e.MaskedURL(), Values: map[string]string{"account": identity}}, &proxy.LeaseRef{Provider: "resin-local", Account: identity}, release, nil
+			rendered.Endpoint = endpoint
+			rendered.URL = endpoint.CanonicalURL()
+			rendered.MaskedURL = endpoint.MaskedURL()
+			return rendered, &proxy.LeaseRef{Provider: "resin-local", Account: identity}, release, nil
 		}
-		snapshotID := statepkg.ResinSnapshotID(settings)
+		snapshot := proxy.ResinSnapshot{AdminURL: config.AdminURL, PlatformID: config.PlatformID, AdminToken: config.AdminToken}
+		snapshotID := statepkg.ResinSnapshotID(snapshot)
 		if !dryRun {
-			snapshotID, err = store.EnsureResinSnapshot(settings)
-		}
-		if err != nil {
-			release()
-			return proxy.RenderedProxy{}, nil, nil, err
-		}
-		provider, ok := candidate.Provider.(*resinpkg.Provider)
-		if !ok {
-			provider, err = resinpkg.NewProvider(resinpkg.ProviderSettings{ProxyTemplate: settings.ProxyTemplate, Platform: settings.Platform, PlatformID: settings.PlatformID, ProxyToken: settings.ProxyToken, SnapshotID: snapshotID}, nil)
+			snapshotID, err = store.EnsureResinSnapshot(snapshot)
 			if err != nil {
 				release()
 				return proxy.RenderedProxy{}, nil, nil, err
 			}
 		}
-		rendered, err := provider.RenderAccount(identity)
-		if err != nil {
-			release()
-			return proxy.RenderedProxy{}, nil, nil, err
-		}
-		if rendered.Endpoint.Fingerprint() == avoidHash {
-			release()
-			continue
-		}
-		return rendered, rendered.Cleanup, release, nil
+		lease := &proxy.LeaseRef{Provider: "resin", PlatformID: config.PlatformID, Account: identity, SnapshotID: snapshotID}
+		return rendered, lease, release, nil
 	}
 	return proxy.RenderedProxy{}, nil, nil, errors.New("unable to generate a different proxy identity")
 }
 
-func (s *Service) captureLegacyLease(binding proxy.Binding, current string) (*proxy.LeaseRef, error) {
-	if binding.Lease == nil {
-		return nil, nil
-	}
-	lease := *binding.Lease
-	if binding.SourceID != "" {
-		if entry := s.proxyCatalog().ByID[binding.SourceID]; entry != nil && entry.Template != nil && entry.ResinSettings != nil {
-			if entry.ResinSettings.LocalOnly {
-				lease.Provider = "resin-local"
-				return &lease, nil
-			}
-			if resinCleanupConfigured(*entry.ResinSettings) {
-				id, err := s.env.ProxyStore().EnsureResinSnapshot(*entry.ResinSettings)
-				if err != nil {
-					return nil, err
-				}
-				lease.Provider = "resin"
-				lease.PlatformID = entry.ResinSettings.PlatformID
-				lease.SnapshotID = id
-				return &lease, nil
-			}
-		}
-	}
-	settings := s.ResinConfig()
-	// A shared hostname is insufficient evidence for deleting a historical lease.
-	if settings.LocalOnly {
-		lease.Provider = "resin-local"
-		return &lease, nil
-	}
-	if lease.Account == "" {
-		return &lease, nil
-	}
-	expected, err := renderResinProxy(settings, lease.Account)
-	if err != nil || proxyURLHash(expected) != proxyURLHash(current) {
-		return &lease, nil
-	}
-	if !resinCleanupConfigured(settings) {
-		return &lease, nil
-	}
-	id, err := s.env.ProxyStore().EnsureResinSnapshot(settings)
-	if err != nil {
-		return nil, err
-	}
-	lease.Provider = "resin"
-	lease.PlatformID = settings.PlatformID
-	lease.SnapshotID = id
-	return &lease, nil
+func resinCleanupConfigured(snapshot proxy.ResinSnapshot) bool {
+	return strings.TrimSpace(snapshot.AdminURL) != "" && strings.TrimSpace(snapshot.PlatformID) != "" && strings.TrimSpace(snapshot.AdminToken) != ""
 }
-
-func resinCleanupConfigured(settings ResinSettings) bool {
-	return !settings.LocalOnly && strings.TrimSpace(settings.AdminURL) != "" && strings.TrimSpace(settings.PlatformID) != "" && strings.TrimSpace(settings.AdminToken) != ""
-}
-
 func (s *Service) cleanupForLease(authID string, lease proxy.LeaseRef) (ResinLeaseDelete, bool) {
 	if lease.Provider != "resin" || lease.Account == "" || lease.SnapshotID == "" {
 		return ResinLeaseDelete{}, false
@@ -819,9 +661,9 @@ func (s *Service) cleanupForLease(authID string, lease proxy.LeaseRef) (ResinLea
 	if s.env.ProxyStore().ProxyLeaseUsage(lease.Account) > 1 {
 		return ResinLeaseDelete{}, false
 	}
-	settings, ok := s.env.ProxyStore().ResinSnapshot(lease.SnapshotID)
-	if !ok || !resinCleanupConfigured(settings) {
+	snapshot, ok := s.env.ProxyStore().ResinSnapshot(lease.SnapshotID)
+	if !ok || !resinCleanupConfigured(snapshot) {
 		return ResinLeaseDelete{}, false
 	}
-	return newResinLeaseDelete(authID, settings, lease.Account), true
+	return newResinLeaseDelete(authID, snapshot, lease.Account), true
 }

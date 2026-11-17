@@ -5,13 +5,10 @@ import (
 	"testing"
 )
 
-func TestRenderProxyAndAccountRewrite(t *testing.T) {
-	rendered, errRender := RenderProxy("socks5h://{platform}.{account}:{proxy_token}@resin:2260", "Default", "grok-alice-old1", "proxy-secret")
-	if errRender != nil {
-		t.Fatal(errRender)
-	}
-	if AccountFromProxyURL(rendered) != "grok-alice-old1" {
-		t.Fatalf("unexpected account: %q", rendered)
+func TestAccountRewritePreservesURL(t *testing.T) {
+	const rendered = "socks5h://Default.grok-alice-old1:proxy-secret@resin:2260"
+	if account := AccountFromProxyURL(rendered); account != "grok-alice-old1" {
+		t.Fatalf("unexpected account: %q", account)
 	}
 	rewritten, errRewrite := RewriteAccount(rendered, "grok-alice-new1")
 	if errRewrite != nil {

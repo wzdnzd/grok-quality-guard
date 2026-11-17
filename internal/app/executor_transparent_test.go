@@ -182,11 +182,8 @@ func TestTransparentMissingThinkingSwitchesAccountBeforeProxyRotation(t *testing
 	host.scriptStream("auth-2", goodStreamScript()...)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
-		cfg.Resin.Enabled = true
-		cfg.Resin.LocalOnly = true
-		cfg.Resin.AutoRotateAfterQualityFailure = true
 	})
-	seedResinState(t, plugin, "grok-alice-old1", 0)
+	seedResinBinding(t, plugin, "grok-alice-old1", 0)
 
 	plugin.runTransparentStreamBridge(context.Background(), streamRequestForTest(), "plugin-stream-account-switch")
 
@@ -197,7 +194,7 @@ func TestTransparentMissingThinkingSwitchesAccountBeforeProxyRotation(t *testing
 		t.Fatalf("missing-thinking request retried the same account before switching: %#v", host.modelCalls)
 	}
 	for _, event := range plugin.stateStore().Snapshot().Events {
-		if event.Action == "resin_rotate" {
+		if event.Action == "proxy_rotate" {
 			t.Fatalf("missing-thinking request rotated the same account before switching: %#v", event)
 		}
 	}

@@ -7,13 +7,12 @@ type ProxyAccountSummary struct {
 	State       string
 	DisableKind string
 	Proxy       proxy.Binding
-	Resin       ResinState
 	AutoBind    proxy.AutoBindAccountState
 	Pending     bool
 }
 
 func (s ProxyAccountSummary) Managed() bool {
-	return s.Proxy.SourceID != "" || s.Resin.Managed || s.Resin.Account != ""
+	return s.Proxy.SourceID != ""
 }
 
 func (s *Store) ProxyAccountsForIDs(ids []string) []ProxyAccountSummary {
@@ -28,7 +27,7 @@ func (s *Store) ProxyAccountsForIDs(ids []string) []ProxyAccountSummary {
 				lease := *b.Lease
 				b.Lease = &lease
 			}
-			values[i] = ProxyAccountSummary{AuthID: id, State: a.State, DisableKind: a.DisableKind, Proxy: b, Resin: a.Resin, AutoBind: a.AutoBind, Pending: s.proxyPending[id] != ""}
+			values[i] = ProxyAccountSummary{AuthID: id, State: a.State, DisableKind: a.DisableKind, Proxy: b, AutoBind: a.AutoBind, Pending: s.proxyPending[id] != ""}
 		} else {
 			values[i].AuthID = id
 		}

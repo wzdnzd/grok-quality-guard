@@ -17,7 +17,7 @@ import (
 
 func probeServerEndpoint(t *testing.T, rawURL string, protocol Protocol) Endpoint {
 	t.Helper()
-	endpoint, err := ParseEndpoint(rawURL, ParseOptions{})
+	endpoint, err := ParseEndpoint(rawURL)
 	if err != nil {
 		t.Fatal(err)
 	}

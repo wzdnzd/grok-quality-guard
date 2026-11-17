@@ -81,15 +81,13 @@ type accountSummaryView struct {
 	LastObservedAt    time.Time        `json:"last_observed_at,omitzero"`
 	CooldownUntil     time.Time        `json:"cooldown_until,omitzero"`
 	ProbeBackoffUntil time.Time        `json:"probe_backoff_until,omitzero"`
-	ResinManaged      bool             `json:"resin_managed,omitempty"`
-	ResinAccount      string           `json:"resin_account,omitempty"`
-	ResinGeneration   int64            `json:"resin_generation,omitempty"`
 	ProxyStatus       string           `json:"proxy_status"`
 	Proxy             string           `json:"proxy,omitempty"`
 	ProxySourceID     string           `json:"proxy_source_id,omitempty"`
 	ProxySourceKind   string           `json:"proxy_source_kind,omitempty"`
 	ProxyManaged      bool             `json:"proxy_managed,omitempty"`
 	ProxyGeneration   uint64           `json:"proxy_generation,omitempty"`
+	ProxyLeaseAccount string           `json:"proxy_lease_account,omitempty"`
 	AutoBindExcluded  bool             `json:"auto_bind_excluded,omitempty"`
 	TPS               float64          `json:"tps,omitempty"`
 	OutputTokens      int64            `json:"output_tokens,omitempty"`
@@ -223,7 +221,7 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 		return s.actionProxyBatch("adopt", request.Params)
 	case "proxy.bindings.set_auto_bind":
 		return s.actionProxyBindingsAutoBind(request.Params)
-	case "proxy.template.apply", "proxy.templates.apply_bound":
+	case "proxy.template.apply":
 		return s.actionProxyTemplateApply(ctx, request.Params)
 	case "proxy.bind_unbound":
 		return s.actionProxyBindUnbound(ctx, request.Params)
@@ -247,20 +245,7 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 		return s.actionResinCleanup(request.Params, "retry")
 	case "resin.cleanup.pause":
 		return s.actionResinCleanup(request.Params, "pause")
-	case "resin.bind":
-		return s.actionResinBind(ctx, request.Params)
-	case "resin.bind_unbound":
-		return s.actionResinBindUnbound(ctx, request.Params)
-	case "resin.rotate":
-		return s.actionResinRotate(ctx, request.Params)
-	case "resin.clear":
-		return s.actionResinClear(ctx, request.Params)
-	case "resin.config.get":
-		return s.actionResinConfigGet()
-	case "resin.config.validate":
-		return s.actionResinConfigValidate(ctx, request.Params)
-	case "resin.config.save":
-		return s.actionResinConfigSave(ctx, request.Params)
+
 	case "policy.get":
 		return s.actionPolicyGet()
 	case "policy.update":
@@ -286,27 +271,9 @@ func (s *Service) actionOverview(ctx context.Context) (any, int, error) {
 	_ = s.ensureCatalog(ctx)
 	catalog := s.catalogSnapshot()
 	store := s.stateStore()
-	authIDs := catalogAccountIDs(catalog)
-	resinStates := store.AccountResinStatesForIDs(authIDs)
 	counts := map[string]int{}
 	if store != nil {
 		counts = store.StateCounts()
-	}
-	resinBound := 0
-	resinUnbound := 0
-	resinConflicts := 0
-	resinCfg := s.ResinConfig()
-	allowProxyFallback := len(catalog) <= catalogProxyFallbackLimit
-	for index, account := range catalog {
-		proxy := s.accountProxyURL(ctx, account, allowProxyFallback)
-		_, managed := managedResinBindingForState(proxy, resinStates[index], resinCfg)
-		if managed {
-			resinBound++
-		} else if proxy != "" {
-			resinConflicts++
-		} else {
-			resinUnbound++
-		}
 	}
 	recentAnomalies := 0
 	if store != nil {
@@ -325,7 +292,6 @@ func (s *Service) actionOverview(ctx context.Context) (any, int, error) {
 		"updated_at":           updatedAt,
 		"auth_count":           len(catalog),
 		"states":               counts,
-		"resin":                map[string]int{"bound": resinBound, "unbound": resinUnbound, "conflict": resinConflicts},
 		"recent_anomalies_24h": recentAnomalies,
 		"policy":               policy,
 		"state_file":           stateFile,
@@ -369,7 +335,6 @@ func (s *Service) actionAccountsList(ctx context.Context, params map[string]any)
 	if end > len(filtered) {
 		end = len(filtered)
 	}
-	resinCfg := s.ResinConfig()
 	allowProxyFallback := len(catalog) <= catalogProxyFallbackLimit
 	pageAccounts := filtered[start:end]
 	pageIDs := catalogAccountIDs(pageAccounts)
@@ -378,14 +343,14 @@ func (s *Service) actionAccountsList(ctx context.Context, params map[string]any)
 		pageSummaries := store.AccountStateSummariesForIDs(pageIDs)
 		items := make([]accountSummaryView, 0, len(pageAccounts))
 		for index, account := range pageAccounts {
-			items = append(items, s.accountSummary(account, accountStateFromSummary(pageSummaries[index]), resinCfg, s.accountProxyURL(ctx, account, allowProxyFallback)))
+			items = append(items, s.accountSummary(account, accountStateFromSummary(pageSummaries[index]), s.accountProxyURL(ctx, account, allowProxyFallback)))
 		}
 		views = items
 	} else {
 		pageStates := store.AccountStatesForIDs(pageIDs)
 		items := make([]accountView, 0, len(pageAccounts))
 		for index, account := range pageAccounts {
-			items = append(items, s.accountView(account, pageStates[index], resinCfg, s.accountProxyURL(ctx, account, allowProxyFallback)))
+			items = append(items, s.accountView(account, pageStates[index], s.accountProxyURL(ctx, account, allowProxyFallback)))
 		}
 		views = items
 	}
@@ -476,5 +441,5 @@ func (s *Service) actionAccountGet(ctx context.Context, params map[string]any) (
 	}
 	stateAccount, _ := s.stateAccount(account.ID)
 	rawProxyURL := strings.TrimSpace(authRawString(raw, "proxy_url"))
-	return s.accountView(account, stateAccount, s.ResinConfig(), rawProxyURL), http.StatusOK, nil
+	return s.accountView(account, stateAccount, rawProxyURL), http.StatusOK, nil
 }

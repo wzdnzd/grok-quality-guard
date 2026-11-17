@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
 	"grok-quality-guard/internal/app/redact"
 	"grok-quality-guard/internal/app/tasks"
-	"grok-quality-guard/internal/config"
+	appconfig "grok-quality-guard/internal/config"
 	proxy "grok-quality-guard/internal/proxy"
 )
 
@@ -32,8 +33,8 @@ func (s *Service) updateProxyAutoBind(params map[string]any) (proxy.AutoBindConf
 	if err = json.Unmarshal(encoded, &config); err != nil {
 		return config, false, proxyError("auto_bind_config_invalid", 400, err.Error())
 	}
-	settings := ProxyConfig{AutoBind: config}
-	if err = normalizeProxyConfig(&settings); err != nil {
+	settings := appconfig.ProxyConfig{AutoBind: config}
+	if err = appconfig.NormalizeProxyConfig(&settings); err != nil {
 		return config, false, proxyError("auto_bind_config_invalid", 400, err.Error())
 	}
 	config = settings.AutoBind
@@ -46,21 +47,20 @@ func (s *Service) updateProxyAutoBind(params map[string]any) (proxy.AutoBindConf
 			return config, false, proxyError("auto_bind_scope_invalid", 400, "selected source is outside source_scope: "+id)
 		}
 	}
-	proxyCfg, resinCfg, rotate := s.env.ProxyConfigSnapshot()
+	proxyCfg, rotate := s.env.ProxyConfigSnapshot()
 	if _, ok := params["auto_rotate_after_quality_failure"]; ok {
 		rotate = optionalBoolParam(params, "auto_rotate_after_quality_failure", rotate)
 	}
 	err = s.env.ProxyStore().Update(func(state *State) error {
 		state.Proxy.AutoBind = config
 		state.Policy.ProxyAutoRotateAfterQualityFail = rotate
-		state.Policy.ResinAutoRotateAfterQualityFail = rotate
 		return nil
 	})
 	if err != nil {
 		return config, rotate, err
 	}
 	proxyCfg.AutoBind = config
-	s.env.ProxyApplyConfig(proxyCfg, resinCfg, rotate)
+	s.env.ProxyApplyConfig(proxyCfg, rotate)
 	if !config.Enabled {
 		s.dropProxyAutoQueue()
 	}
@@ -172,7 +172,7 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 	for i := range window {
 		window[i] = accounts[(offset+i)%len(accounts)]
 	}
-	states := s.env.ProxyStore().ProxyAccountsForIDs(catalogAccountIDs(window))
+	states := s.env.ProxyStore().ProxyAccountsForIDs(proxyCatalogAccountIDs(window))
 	observations := make([]proxyObservation, len(window))
 	unknown := make([]int, 0, min(32, len(window)))
 	for i, a := range window {
@@ -311,16 +311,16 @@ func (s *Service) recordProxyAutoResult(id string, result proxyBindingResult, er
 	state.AutoBind.NextAttemptAt = time.Now().UTC().Add(delay)
 	state.AutoBind.LastError = redact.SanitizeError(err)
 	state.AutoBind.LastSourceID = result.SourceID
-	_ = s.env.ProxyStore().CommitProxy(proxyCommit{Account: &proxyAccountCommit{AuthID: id, Binding: state.Proxy, Resin: state.Resin, AutoBind: state.AutoBind}})
+	_ = s.env.ProxyStore().CommitProxy(proxyCommit{Account: &proxyAccountCommit{AuthID: id, Binding: state.Proxy, AutoBind: state.AutoBind}})
 }
 
 func (s *Service) setProxyAutoBindForAuths(ids []string, excluded bool) (map[string]any, error) {
-	for _, id := range config.UniqueNonEmptyStrings(ids) {
+	for _, id := range appconfig.UniqueNonEmptyStrings(ids) {
 		lock := s.env.ProxyAccountLock(id)
 		lock.Lock()
 		state := s.env.ProxyStore().ProxyAccount(id)
 		state.AutoBind.Excluded = excluded
-		commit := proxyCommit{Account: &proxyAccountCommit{AuthID: id, Binding: state.Proxy, Resin: state.Resin, AutoBind: state.AutoBind}}
+		commit := proxyCommit{Account: &proxyAccountCommit{AuthID: id, Binding: state.Proxy, AutoBind: state.AutoBind}}
 		if opID := s.env.ProxyStore().ProxyPending(id); opID != "" {
 			operation, _ := s.env.ProxyStore().ProxyOperation(opID)
 			operation.ExcludeAutoBind = excluded
@@ -406,5 +406,12 @@ func (s *Service) refreshProxySourceHealth(ctx context.Context) {
 }
 
 func proxyCandidateEnabled(entry proxySourceCandidate) bool {
-	return entry.Node != nil && entry.Node.Enabled || entry.Template != nil && entry.Template.Enabled || entry.ResinSettings != nil && entry.ResinSettings.Enabled && !entry.ResinSettings.LocalOnly
+	return entry.Node != nil && entry.Node.Enabled || entry.Template != nil && entry.Template.Enabled
+}
+func proxyCatalogAccountIDs(accounts []Account) []string {
+	ids := make([]string, len(accounts))
+	for index, account := range accounts {
+		ids[index] = strings.TrimSpace(account.ID)
+	}
+	return ids
 }

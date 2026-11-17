@@ -222,19 +222,17 @@ func (p *Plugin) ProxyHasActivePrefix(prefixes ...string) bool {
 	return p != nil && p.taskMgr != nil && p.taskMgr.HasActivePrefix(prefixes...)
 }
 
-func (p *Plugin) ProxyConfigSnapshot() (appconfig.ProxyConfig, appconfig.ResinConfig, bool) {
+func (p *Plugin) ProxyConfigSnapshot() (appconfig.ProxyConfig, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	return p.cfg.Proxy, p.cfg.Resin, p.policy.ProxyAutoRotateAfterQualityFail
+	return p.cfg.Proxy, p.policy.ProxyAutoRotateAfterQualityFail
 }
 
-func (p *Plugin) ProxyApplyConfig(proxyCfg appconfig.ProxyConfig, resinCfg appconfig.ResinConfig, rotate bool) {
+func (p *Plugin) ProxyApplyConfig(proxyCfg appconfig.ProxyConfig, rotate bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.cfg.Proxy = proxyCfg
-	p.cfg.Resin = resinCfg
 	p.policy.ProxyAutoRotateAfterQualityFail = rotate
-	p.policy.ResinAutoRotateAfterQualityFail = rotate
 }
 
 func (p *Plugin) PluginID() string { return pluginID }
@@ -359,7 +357,6 @@ func (p *Plugin) SetPolicy(policy appconfig.Policy) {
 	p.cfg.Routing = policy.Routing
 	p.cfg.Quality = policy.Quality
 	p.cfg.Probe = policy.Probe
-	p.cfg.Resin.AutoRotateAfterQualityFailure = policy.ResinAutoRotateAfterQualityFail
 	p.cfg.Proxy.AutoRotateAfterQualityFailure = policy.ProxyAutoRotateAfterQualityFail
 	p.cfg.EventsLimit = policy.EventsLimit
 }

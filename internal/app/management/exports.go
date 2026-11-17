@@ -32,8 +32,8 @@ func (s *Service) ActionAccountsList(ctx context.Context, params map[string]any)
 func (s *Service) ActionAccountGet(ctx context.Context, params map[string]any) (any, int, error) {
 	return s.actionAccountGet(ctx, params)
 }
-func (s *Service) AccountSummary(account Account, stateAccount AccountState, resinCfg ResinSettings, proxyURL string) AccountSummaryView {
-	return s.accountSummary(account, stateAccount, resinCfg, proxyURL)
+func (s *Service) AccountSummary(account Account, stateAccount AccountState, proxyURL string) AccountSummaryView {
+	return s.accountSummary(account, stateAccount, proxyURL)
 }
 func (s *Service) AccountView(ctx context.Context, account Account) (AccountView, error) {
 	return s.accountViewForAccount(ctx, account)

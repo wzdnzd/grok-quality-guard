@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -32,15 +33,13 @@ func TestDecodeConfigPartialKeepsDefaults(t *testing.T) {
 	}
 }
 
-func TestDecodeConfigResinLocalOnly(t *testing.T) {
-	cfg, errDecode := Decode([]byte("resin:\n  enabled: true\n  local_only: true\n"))
-	if errDecode != nil {
-		t.Fatalf("Decode() error = %v", errDecode)
-	}
-	if !cfg.Resin.Enabled || !cfg.Resin.LocalOnly {
-		t.Fatalf("unexpected local-only resin config: %#v", cfg.Resin)
+func TestDecodeConfigRejectsRemovedResinBlock(t *testing.T) {
+	_, errDecode := Decode([]byte("resin:\n  enabled: true\n"))
+	if errDecode == nil || !strings.Contains(errDecode.Error(), "field resin not found") {
+		t.Fatalf("removed Resin config block was accepted: %v", errDecode)
 	}
 }
+
 func TestNormalizePolicyRejectsInvalidTPS(t *testing.T) {
 	policy := PolicyFromConfig(DefaultConfig())
 	policy.Quality.SoftTPS = 1000
@@ -128,13 +127,13 @@ func TestPolicyJSONWithoutRoutingUsesRoutingDefaults(t *testing.T) {
 		t.Fatal(errUnmarshal)
 	}
 	if policy.Routing.SelectionStrategy != "round_robin" || !policy.Routing.PreferLastSuccess || !policy.Routing.SessionAffinity {
-		t.Fatalf("old state policy did not inherit routing defaults: %#v", policy.Routing)
+		t.Fatalf("policy without routing did not inherit routing defaults: %#v", policy.Routing)
 	}
 	if policy.Routing.SessionAffinityTTL.Duration != time.Hour || policy.Routing.SessionAffinityMaxSize != 10000 {
-		t.Fatalf("old state policy did not inherit affinity defaults: %#v", policy.Routing)
+		t.Fatalf("policy without affinity settings did not inherit affinity defaults: %#v", policy.Routing)
 	}
 }
-func TestLegacyPolicyQualityUsesNewDefaults(t *testing.T) {
+func TestPolicyQualityMissingFieldsUseDefaults(t *testing.T) {
 	var policy Policy
 	if errUnmarshal := json.Unmarshal([]byte(`{"quality":{"soft_tps":500,"hard_tps":1000,"min_generation_ms":1000}}`), &policy); errUnmarshal != nil {
 		t.Fatal(errUnmarshal)

@@ -84,8 +84,8 @@ func TestResinSourcesUseTemplateLifecycleAndSupportMultipleEntries(t *testing.T)
 		t.Fatalf("delete status=%d body=%s", remove.StatusCode, remove.Body)
 	}
 	state := plugin.stateStore().Snapshot()
-	if len(state.Proxy.ResinSources) != 1 || !state.Proxy.ResinSourcesInitialized {
-		t.Fatalf("resin source map was not cleaned up: %#v initialized=%t", state.Proxy.ResinSources, state.Proxy.ResinSourcesInitialized)
+	if len(state.Proxy.ResinSources) != 1 {
+		t.Fatalf("resin source map was not cleaned up: %#v", state.Proxy.ResinSources)
 	}
 	resinTemplates := 0
 	for _, template := range state.Proxy.Templates {

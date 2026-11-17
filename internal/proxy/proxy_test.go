@@ -24,7 +24,7 @@ func TestParseEndpointProtocolsAndForms(t *testing.T) {
 		{"http://alice:p%40ss@proxy.example:8080/", ProtocolHTTP, "alice", "p@ss", true, true},
 	}
 	for _, test := range tests {
-		endpoint, errParse := ParseEndpoint(test.raw, ParseOptions{})
+		endpoint, errParse := ParseEndpoint(test.raw)
 		if errParse != nil {
 			t.Fatalf("ParseEndpoint(%q): %v", test.raw, errParse)
 		}
@@ -34,7 +34,7 @@ func TestParseEndpointProtocolsAndForms(t *testing.T) {
 	}
 }
 func TestParseEndpointRejectsMissingSchemeAndInvalidValues(t *testing.T) {
-	if _, errParse := ParseEndpoint("alice:secret@proxy.example:8080", ParseOptions{}); !errors.Is(errParse, ErrMissingScheme) {
+	if _, errParse := ParseEndpoint("alice:secret@proxy.example:8080"); !errors.Is(errParse, ErrMissingScheme) {
 		t.Fatalf("expected ErrMissingScheme, got %v", errParse)
 	}
 	invalid := []string{
@@ -47,7 +47,7 @@ func TestParseEndpointRejectsMissingSchemeAndInvalidValues(t *testing.T) {
 		"http://proxy.example:8080?query=1",
 	}
 	for _, raw := range invalid {
-		if _, errParse := ParseEndpoint(raw, ParseOptions{}); errParse == nil {
+		if _, errParse := ParseEndpoint(raw); errParse == nil {
 			t.Fatalf("expected ParseEndpoint(%q) to fail", raw)
 		}
 	}
@@ -168,15 +168,78 @@ func TestMaximumUsernameBytes(t *testing.T) {
 		t.Fatal(errValidate)
 	}
 }
-func TestColonFormatRequiresExplicitOptIn(t *testing.T) {
-	if _, errParse := ParseEndpoint("http://proxy.example:8080:alice:secret", ParseOptions{}); errParse == nil {
-		t.Fatal("expected colon format to be rejected by default")
+
+func TestAddressFirstFormatFallsBackAfterStandardURL(t *testing.T) {
+	raw := "http://proxy.example:8080:alice:secret"
+	endpoint, err := ParseEndpoint(raw)
+	if err != nil {
+		t.Fatal(err)
 	}
-	endpoint, errParse := ParseEndpoint("http://proxy.example:8080:alice:secret", ParseOptions{AllowColonFormat: true})
-	if errParse != nil {
-		t.Fatal(errParse)
+	if endpoint.Protocol != ProtocolHTTP || endpoint.Host != "proxy.example" || endpoint.Port != 8080 || endpoint.Username != "alice" || endpoint.Password != "secret" {
+		t.Fatalf("unexpected address-first endpoint: %#v", endpoint)
 	}
-	if endpoint.Username != "alice" || endpoint.Password != "secret" {
-		t.Fatalf("unexpected colon endpoint: %#v", endpoint)
+}
+
+func TestAddressFirstIPv6AndDecodeOnce(t *testing.T) {
+	endpoint, err := ParseEndpoint("socks5h://[2001:db8::1]:1080:u%40x:p%253A%40")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint.Host != "2001:db8::1" || endpoint.Username != "u@x" || endpoint.Password != "p%3A@" {
+		t.Fatalf("unexpected address-first endpoint: %#v", endpoint)
+	}
+}
+
+func TestAddressFirstStandardURLTakesPrecedence(t *testing.T) {
+	endpoint, err := ParseEndpoint("http://alice:secret@proxy.example:8080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint.Host != "proxy.example" || endpoint.Username != "alice" || endpoint.Password != "secret" {
+		t.Fatalf("standard URL was not parsed first: %#v", endpoint)
+	}
+	for _, raw := range []string{
+		"http://proxy.example:8080:alice:secret/path",
+		"http://proxy.example:8080:alice:secret?x=1",
+		"http://proxy.example:8080::secret",
+		"http://[2001:db8::1:1080:alice:secret",
+	} {
+		if _, err := ParseEndpoint(raw); err == nil {
+			t.Fatalf("expected address-first input to fail: %q", raw)
+		}
+	}
+}
+func TestHostPortAtCredentialsFormatFallsBackAfterStandardURL(t *testing.T) {
+	endpoint, err := ParseEndpoint("http://proxy.example:8080@alice:secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint.Protocol != ProtocolHTTP || endpoint.Host != "proxy.example" || endpoint.Port != 8080 || endpoint.Username != "alice" || endpoint.Password != "secret" {
+		t.Fatalf("unexpected host:port@user:pass endpoint: %#v", endpoint)
+	}
+}
+
+func TestHostPortAtCredentialsIPv6AndDecodeOnce(t *testing.T) {
+	endpoint, err := ParseEndpoint("socks5h://[2001:db8::1]:1080@u%40x:p%253A%40")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint.Host != "2001:db8::1" || endpoint.Username != "u@x" || endpoint.Password != "p%3A@" {
+		t.Fatalf("unexpected host:port@user:pass endpoint: %#v", endpoint)
+	}
+}
+
+func TestHostPortAtCredentialsRejectsAmbiguousShapes(t *testing.T) {
+	for _, raw := range []string{
+		"http://proxy.example:8080@alice",
+		"http://proxy.example@alice:secret",
+		"http://proxy.example:8080@:secret",
+		"http://proxy.example:8080@alice:secret/path",
+		"http://proxy.example:8080@alice:secret?x=1",
+		"http://2001:db8::1:1080@alice:secret",
+	} {
+		if _, err := ParseEndpoint(raw); err == nil {
+			t.Fatalf("expected host:port@user:pass input to fail: %q", raw)
+		}
 	}
 }

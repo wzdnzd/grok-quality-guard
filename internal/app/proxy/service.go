@@ -29,8 +29,8 @@ type Environment interface {
 	ProxyRecordEvent(*state.State, string, string, string, string, string)
 	ProxyStartTask(string, []string, string, func(context.Context) (any, error)) tasks.Task
 	ProxyHasActivePrefix(...string) bool
-	ProxyConfigSnapshot() (config.ProxyConfig, config.ResinConfig, bool)
-	ProxyApplyConfig(config.ProxyConfig, config.ResinConfig, bool)
+	ProxyConfigSnapshot() (config.ProxyConfig, bool)
+	ProxyApplyConfig(config.ProxyConfig, bool)
 }
 
 // Service owns proxy binding, source management, scheduling and Resin runtime.

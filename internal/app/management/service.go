@@ -20,7 +20,6 @@ type AccountStateSummary = appstate.AccountStateSummary
 type AttemptEvidence = appstate.AttemptEvidence
 type Event = appstate.Event
 type QualityEvidence = appstate.QualityEvidence
-type ResinSettings = appstate.ResinSettings
 type State = appstate.State
 type Store = appstate.Store
 type Policy = config.Policy

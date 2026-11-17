@@ -367,7 +367,7 @@ func streamData(payload string) pluginapi.HostModelStreamReadResponse {
 func assertNoGuardMetadata(t *testing.T, raw map[string]json.RawMessage) {
 	t.Helper()
 	if _, ok := raw["grok_quality_guard"]; ok {
-		t.Fatalf("auth file contains legacy guard metadata: %#v", raw["grok_quality_guard"])
+		t.Fatalf("auth file contains plugin-private guard metadata: %#v", raw["grok_quality_guard"])
 	}
 }
 func jsonError(code, message string) []byte {

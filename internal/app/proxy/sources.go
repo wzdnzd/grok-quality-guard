@@ -30,53 +30,27 @@ func validateSourceMetadata(name string, priority, limit int) error {
 	}
 	return nil
 }
-func passwordUpdateKeepsExisting(update *passwordUpdate) bool {
-	return update != nil && update.Action == "keep" && update.Value == nil
-}
+
 func proxyInputEndpoint(input proxyNodeInput) (proxy.Endpoint, error) {
 	if input.URL != "" {
-		if input.Protocol != "" || input.Host != "" || input.Port != 0 || input.Username != "" || input.Password != "" || (input.PasswordUpdate != nil && !passwordUpdateKeepsExisting(input.PasswordUpdate)) {
+		if input.Protocol != "" || input.Host != "" || input.Port != 0 || input.Username != "" || input.Password != "" {
 			return proxy.Endpoint{}, proxyError("proxy_endpoint_ambiguous", 400, "provide a URL or individual endpoint fields")
 		}
-		return proxy.ParseEndpoint(input.URL, proxy.ParseOptions{AllowColonFormat: input.ImportFormat == "address_first"})
+		return proxy.ParseEndpoint(input.URL)
 	}
-	endpoint := proxy.Endpoint{Protocol: proxy.Protocol(strings.ToLower(strings.TrimSpace(input.Protocol))), Host: strings.TrimSpace(input.Host), Port: input.Port, Username: input.Username, Password: input.Password, HasUser: input.Username != "", HasPassword: input.HasPassword || input.Password != ""}
-	if input.PasswordUpdate != nil {
-		if err := applyPasswordUpdate(&endpoint, input.PasswordUpdate); err != nil {
-			return proxy.Endpoint{}, err
-		}
+	endpoint := proxy.Endpoint{
+		Protocol:    proxy.Protocol(strings.ToLower(strings.TrimSpace(input.Protocol))),
+		Host:        strings.TrimSpace(input.Host),
+		Port:        input.Port,
+		Username:    input.Username,
+		Password:    input.Password,
+		HasUser:     input.Username != "",
+		HasPassword: input.Password != "",
 	}
 	if err := endpoint.Validate(); err != nil {
 		return proxy.Endpoint{}, err
 	}
-	return proxy.ParseEndpoint(endpoint.CanonicalURL(), proxy.ParseOptions{})
-}
-func applyPasswordUpdate(endpoint *proxy.Endpoint, update *passwordUpdate) error {
-	if update == nil {
-		return nil
-	}
-	switch update.Action {
-	case "keep":
-		if update.Value != nil {
-			return proxyError("password_update_invalid", 400, "keep does not accept a password value")
-		}
-	case "clear":
-		if update.Value != nil {
-			return proxyError("password_update_invalid", 400, "clear does not accept a password value")
-		}
-		endpoint.Password = ""
-		endpoint.HasPassword = false
-	case "set":
-		if update.Value == nil {
-			return proxyError("password_update_invalid", 400, "set requires a password value")
-		}
-		endpoint.Password = *update.Value
-		endpoint.HasPassword = true
-		endpoint.HasUser = endpoint.Username != ""
-	default:
-		return proxyError("password_update_invalid", 400, "password action must be keep, set, or clear")
-	}
-	return nil
+	return proxy.ParseEndpoint(endpoint.CanonicalURL())
 }
 func proxyNodeName(input proxyNodeInput, endpoint proxy.Endpoint) string {
 	if strings.TrimSpace(input.Name) != "" {
@@ -87,7 +61,7 @@ func proxyNodeName(input proxyNodeInput, endpoint proxy.Endpoint) string {
 func buildProxyNodeUpdate(input proxyNodeInput, current proxy.Node) (proxy.Node, bool, bool, bool, error) {
 	next := current
 	changedEndpoint := false
-	syncRequested := input.URL != "" || input.Protocol != "" || input.Host != "" || input.Port != 0 || input.UsernameSet || input.PasswordUpdate != nil
+	syncRequested := input.URL != "" || input.Protocol != "" || input.Host != "" || input.Port != 0 || input.UsernameSet
 	if syncRequested {
 		var endpoint proxy.Endpoint
 		var err error
@@ -108,10 +82,7 @@ func buildProxyNodeUpdate(input proxyNodeInput, current proxy.Node) (proxy.Node,
 				endpoint.Username = input.Username
 				endpoint.HasUser = input.Username != ""
 			}
-			err = applyPasswordUpdate(&endpoint, input.PasswordUpdate)
-			if err == nil {
-				endpoint, err = endpoint.Normalize()
-			}
+			endpoint, err = endpoint.Normalize()
 		}
 		if err != nil {
 			return proxy.Node{}, false, false, syncRequested, err
@@ -173,12 +144,7 @@ func proxySourceNameTaken(state *State, name, exceptID string) bool {
 			return true
 		}
 	}
-	if resinSourceID != exceptID && !state.Proxy.ResinSource.Deleted && (state.Resin.Configured || state.Resin.LocalOnly) {
-		resinName := firstNonEmptyString(state.Proxy.ResinSource.Name, "Resin")
-		if strings.EqualFold(strings.TrimSpace(resinName), name) {
-			return true
-		}
-	}
+
 	return false
 }
 
@@ -217,13 +183,12 @@ func (s *Service) createProxyNode(input proxyNodeInput) (proxy.Node, error) {
 	}
 	return node, err
 }
+
 func (s *Service) importProxyNodes(inputs []proxyNodeInput, text string) (map[string]any, error) {
 	inputBytes := len(text)
 	for _, input := range inputs {
 		inputBytes += len(input.URL) + len(input.Name) + len(input.Host) + len(input.Username) + len(input.Password)
-		if input.PasswordUpdate != nil && input.PasswordUpdate.Value != nil {
-			inputBytes += len(*input.PasswordUpdate.Value)
-		}
+
 		if inputBytes > maxProxyImportBytes {
 			return nil, proxyError("proxy_import_limit", 400, "proxy import exceeds 16 MiB")
 		}
@@ -256,7 +221,7 @@ func (s *Service) importProxyNodes(inputs []proxyNodeInput, text string) (map[st
 		if source.Node != nil {
 			seen[source.Node.Endpoint.Fingerprint()] = struct{}{}
 		}
-		visible := source.Node != nil || source.Template != nil || (source.ResinSettings != nil && (source.ResinSettings.Configured || source.ResinSettings.LocalOnly))
+		visible := source.Node != nil || source.Template != nil
 		if name := strings.ToLower(strings.TrimSpace(source.Name)); visible && name != "" {
 			names[name] = struct{}{}
 		}
@@ -434,7 +399,6 @@ func (s *Service) updateProxyNodeContext(ctx context.Context, input proxyNodeInp
 
 func buildProxyTemplate(input proxyTemplateInput, current *proxy.Template) (proxy.Template, error) {
 	var template proxy.Template
-	passwordUpdate := input.PasswordUpdate
 	if current != nil {
 		template = proxy.CloneTemplate(*current)
 	}
@@ -443,10 +407,7 @@ func buildProxyTemplate(input proxyTemplateInput, current *proxy.Template) (prox
 		if err != nil {
 			return proxy.Template{}, err
 		}
-		if parsed.HasPassword {
-			// A complete template URL is authoritative for its credentials.
-			passwordUpdate = nil
-		}
+
 		if current != nil {
 			parsed.ID = current.ID
 			parsed.Name = current.Name
@@ -478,14 +439,6 @@ func buildProxyTemplate(input proxyTemplateInput, current *proxy.Template) (prox
 			template.UsernamePatternEncoding = current.UsernamePatternEncoding
 		}
 		template.HasUser = template.UsernamePattern != ""
-	}
-	if passwordUpdate != nil {
-		endpoint := proxy.Endpoint{Username: "configured", HasUser: true, Password: template.Password, HasPassword: template.HasPassword}
-		if err := applyPasswordUpdate(&endpoint, passwordUpdate); err != nil {
-			return proxy.Template{}, err
-		}
-		template.Password = endpoint.Password
-		template.HasPassword = endpoint.HasPassword
 	}
 	if input.Name != "" {
 		template.Name = strings.TrimSpace(input.Name)

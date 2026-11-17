@@ -129,7 +129,7 @@ func TestManagementResourceAndActionAccess(t *testing.T) {
 	}
 	for _, removed := range []string{"代理（脱敏）", "选择全部筛选结果", "const strikeBadge = strikes.length", "badge('连续 ' + strikes.join", "id=\"refreshBtn\"", "window.confirm("} {
 		if strings.Contains(string(response.Body), removed) {
-			t.Fatalf("dashboard still contains legacy label %q", removed)
+			t.Fatalf("dashboard still contains obsolete label %q", removed)
 		}
 	}
 	if strings.Contains(string(response.Body), "X-Grok-Quality-Guard-UI") {
@@ -200,7 +200,7 @@ func TestAccountsListMasksSecrets(t *testing.T) {
 	}
 }
 
-func TestResinClearBatchManagement(t *testing.T) {
+func TestProxyClearBatchManagement(t *testing.T) {
 	entries1, auths1 := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{
 		"proxy_url": "socks5h://user:secret-one@example.com:1080",
 	})
@@ -217,8 +217,9 @@ func TestResinClearBatchManagement(t *testing.T) {
 	}
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, nil)
-	response := actionManagementForTest(t, plugin, "resin.clear", map[string]any{
-		"auth_ids": []any{"auth-1", "auth-2", "auth-1"},
+	response := actionManagementForTest(t, plugin, "proxy.bindings.clear", map[string]any{
+		"allow_external": true,
+		"auth_ids":       []any{"auth-1", "auth-2", "auth-1"},
 	})
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d body=%s", response.StatusCode, response.Body)

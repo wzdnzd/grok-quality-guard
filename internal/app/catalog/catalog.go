@@ -362,8 +362,8 @@ func (s *Service) syncCatalogState(accounts []Account) error {
 			}
 			binding, managed := proxyapp.BindingForAccount(*account)
 			if managed && binding.Lease != nil && binding.Lease.Provider == "resin" && binding.Lease.SnapshotID != "" {
-				if settings, ok := state.ResinSnapshots[binding.Lease.SnapshotID]; ok && proxyapp.ResinCleanupConfigured(settings) {
-					job := proxyapp.NewResinLeaseDelete(authID, settings, binding.Lease.Account)
+				if snapshot, ok := state.ResinSnapshots[binding.Lease.SnapshotID]; ok && proxyapp.ResinCleanupConfigured(snapshot) {
+					job := proxyapp.NewResinLeaseDelete(authID, snapshot, binding.Lease.Account)
 					key := proxyapp.LeaseDeleteKey(job.AdminURL, job.PlatformID, job.Account)
 					if _, exists := cleanupKeys[key]; !exists {
 						state.ResinLeaseDeletes = append(state.ResinLeaseDeletes, job)

@@ -12,8 +12,8 @@ func (p *Plugin) actionPolicyUpdate(params map[string]any) (any, int, error) {
 	return p.managementSvc.ActionPolicyUpdate(params)
 }
 
-func (p *Plugin) accountSummary(account appmodel.Account, stateAccount appstate.AccountState, resinCfg appstate.ResinSettings, proxyURL string) managementapp.AccountSummaryView {
-	return p.managementSvc.AccountSummary(account, stateAccount, resinCfg, proxyURL)
+func (p *Plugin) accountSummary(account appmodel.Account, stateAccount appstate.AccountState, proxyURL string) managementapp.AccountSummaryView {
+	return p.managementSvc.AccountSummary(account, stateAccount, proxyURL)
 }
 
 func jsonHeaders() http.Header {

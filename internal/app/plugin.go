@@ -132,7 +132,7 @@ func (p *Plugin) Configure(raw []byte) error {
 		}
 	}
 	p.stateBootstrapPath = bootstrapPath
-	if errProxyDefaults := p.proxySvc.EnsureStateDefaults(p.store, cfg.Proxy.AutoBind, proxyapp.ResinSettingsFromConfig(cfg.Resin)); errProxyDefaults != nil {
+	if errProxyDefaults := p.proxySvc.EnsureStateDefaults(p.store, cfg.Proxy.AutoBind); errProxyDefaults != nil {
 		p.mu.Unlock()
 		return errProxyDefaults
 	}

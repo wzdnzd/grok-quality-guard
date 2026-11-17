@@ -18,11 +18,9 @@ func TestProbeProxyErrorsRotateManagedProxyAtThreshold(t *testing.T) {
 	host.scriptStreamStatus("auth-1", http.StatusProxyAuthRequired)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		cfg.AutoAction = "cooldown_only"
-		cfg.Resin.Enabled = true
-		cfg.Resin.LocalOnly = true
 		cfg.Proxy.AutoRotateAfterQualityFailure = true
 	})
-	seedResinState(t, plugin, "grok-alice-old1", 0)
+	seedResinBinding(t, plugin, "grok-alice-old1", 0)
 
 	for attempt := 0; attempt < 2; attempt++ {
 		if errProbe := plugin.ProbeAccount(context.Background(), "auth-1", true, ""); errProbe != nil {
@@ -47,7 +45,7 @@ func TestProbeProxyErrorsRotateManagedProxyAtThreshold(t *testing.T) {
 	recoveries := 0
 	for _, event := range plugin.stateStore().Snapshot().Events {
 		switch event.Action {
-		case "resin_rotate":
+		case "proxy_rotate":
 			rotations++
 		case "guard_disable":
 			disables++
@@ -69,12 +67,9 @@ func TestProbeProxyErrorsKeepCooldownWhenAutoRotateDisabled(t *testing.T) {
 	host.scriptStreamStatus("auth-1", http.StatusProxyAuthRequired)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		cfg.AutoAction = "cooldown_only"
-		cfg.Resin.Enabled = true
-		cfg.Resin.LocalOnly = true
 		cfg.Proxy.AutoRotateAfterQualityFailure = false
-		cfg.Resin.AutoRotateAfterQualityFailure = false
 	})
-	seedResinState(t, plugin, "grok-alice-old1", 0)
+	seedResinBinding(t, plugin, "grok-alice-old1", 0)
 
 	for attempt := 0; attempt < 2; attempt++ {
 		if errProbe := plugin.ProbeAccount(context.Background(), "auth-1", true, ""); errProbe != nil {
@@ -87,7 +82,7 @@ func TestProbeProxyErrorsKeepCooldownWhenAutoRotateDisabled(t *testing.T) {
 		t.Fatalf("disabled auto-rotation did not keep the cooldown fallback: %#v", account)
 	}
 	for _, event := range plugin.stateStore().Snapshot().Events {
-		if event.Action == "resin_rotate" || event.Action == "proxy_error_rotation" {
+		if event.Action == "proxy_rotate" || event.Action == "proxy_error_rotation" {
 			t.Fatalf("disabled auto-rotation still rotated the proxy: %#v", event)
 		}
 	}
@@ -104,11 +99,9 @@ func TestTransparentProxyErrorRotatesManagedProxyAtThreshold(t *testing.T) {
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
 		cfg.AutoAction = "cooldown_only"
-		cfg.Resin.Enabled = true
-		cfg.Resin.LocalOnly = true
 		cfg.Proxy.AutoRotateAfterQualityFailure = true
 	})
-	seedResinState(t, plugin, "grok-alice-old1", 0)
+	seedResinBinding(t, plugin, "grok-alice-old1", 0)
 
 	plugin.runTransparentStreamBridge(context.Background(), streamRequestForTest(), "plugin-stream-proxy-rotation-1")
 	account, okAccount := plugin.stateAccount("auth-1")
@@ -131,7 +124,7 @@ func TestTransparentProxyErrorRotatesManagedProxyAtThreshold(t *testing.T) {
 	}
 	rotations := 0
 	for _, event := range plugin.stateStore().Snapshot().Events {
-		if event.Action == "resin_rotate" {
+		if event.Action == "proxy_rotate" {
 			rotations++
 		}
 	}
@@ -146,11 +139,9 @@ func TestProbeTransportErrorsRotateManagedProxyAtThreshold(t *testing.T) {
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		cfg.AutoAction = "cooldown_only"
-		cfg.Resin.Enabled = true
-		cfg.Resin.LocalOnly = true
 		cfg.Proxy.AutoRotateAfterQualityFailure = true
 	})
-	seedResinState(t, plugin, "grok-alice-old1", 0)
+	seedResinBinding(t, plugin, "grok-alice-old1", 0)
 
 	for attempt := 0; attempt < 2; attempt++ {
 		if errProbe := plugin.ProbeAccount(context.Background(), "auth-1", true, ""); errProbe != nil {
@@ -171,7 +162,7 @@ func TestProbeTransportErrorsRotateManagedProxyAtThreshold(t *testing.T) {
 	}
 	rotations := 0
 	for _, event := range plugin.stateStore().Snapshot().Events {
-		if event.Action == "resin_rotate" {
+		if event.Action == "proxy_rotate" {
 			rotations++
 		}
 	}
@@ -199,11 +190,9 @@ func TestTransparentProxyFailureSwitchesAccountBeforeAsyncRotation(t *testing.T)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
 		cfg.AutoAction = "cooldown_only"
-		cfg.Resin.Enabled = true
-		cfg.Resin.LocalOnly = true
 		cfg.Proxy.AutoRotateAfterQualityFailure = true
 	})
-	seedResinState(t, plugin, "grok-alice-old1", 0)
+	seedResinBinding(t, plugin, "grok-alice-old1", 0)
 	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
 		account := plugin.ensureStateAccount(state, "auth-1")
 		account.ErrorStrikes = 1
@@ -241,7 +230,7 @@ func TestTransparentProxyFailureSwitchesAccountBeforeAsyncRotation(t *testing.T)
 	}
 	rotations := 0
 	for _, event := range plugin.stateStore().Snapshot().Events {
-		if event.Action == "resin_rotate" {
+		if event.Action == "proxy_rotate" {
 			rotations++
 		}
 		if event.Action == "guard_disable" {

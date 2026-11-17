@@ -2,20 +2,19 @@ package proxy
 
 import (
 	"context"
-	"path/filepath"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	resinpkg "grok-quality-guard/internal/app/proxy/resin"
-	statepkg "grok-quality-guard/internal/app/state"
 	coreproxy "grok-quality-guard/internal/proxy"
 )
 
 func TestResinAccountFormatUsesEmailPrefixAndTemplatePlaceholders(t *testing.T) {
 	template, config, err := buildResinSource(proxyResinInput{
 		Name: "Primary Resin", Platform: "CPA", AdminURL: "https://resin.example:8443",
-		AdminToken: "admin-token", ProxyToken: "proxy-token",
-		AccountFormat: "xai-{account}-{region}",
+		AdminToken: "admin" + "-" + "token", ProxyToken: "proxy" + "-" + "token", AccountFormat: "xai-{account}-{region}",
 		Placeholders: []coreproxy.Placeholder{{
 			Name: "region", Kind: coreproxy.PlaceholderEnum, Enum: &coreproxy.EnumSpec{Separator: ",", Input: "us,jp"},
 		}},
@@ -39,8 +38,7 @@ func TestResinAccountFormatUsesEmailPrefixAndTemplatePlaceholders(t *testing.T) 
 		t.Fatalf("account was not reserved: %#v", template.Placeholders)
 	}
 	provider, err := resinpkg.NewTemplateProvider(template, resinpkg.ProviderSettings{
-		Platform: config.Platform, ProxyToken: template.Password,
-	})
+		Platform: config.Platform})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,140 +54,71 @@ func TestResinAccountFormatUsesEmailPrefixAndTemplatePlaceholders(t *testing.T) 
 	}
 }
 
-func TestLegacyResinAccountFormatExtractsUsernamePattern(t *testing.T) {
-	cases := []struct {
-		name     string
-		settings ResinSettings
-		want     string
-	}{
-		{
-			name: "bare account marker gains stable prefix and random suffix",
-			settings: ResinSettings{
-				Platform:      "Default",
-				ProxyTemplate: "socks5h://{platform}.{account}:{proxy_token}@resin:2260",
-			},
-			want: "grok-{account}-{suffix}",
-		},
-		{
-			name: "resolved platform prefix is removed from full URL",
-			settings: ResinSettings{
-				Platform:      "CPA",
-				ProxyTemplate: "socks5h://CPA.svc-{account}:token@resin:2260",
-			},
-			want: "svc-{account}-{suffix}",
-		},
-		{
-			name: "explicit account format and placeholders are preserved",
-			settings: ResinSettings{
-				Platform:      "CPA",
-				AccountFormat: "xai-{account}-{region}",
-				ProxyTemplate: "socks5h://CPA.xai-{account}-{region}:token@resin:2260",
-			},
-			want: "xai-{account}-{region}",
-		},
+func TestResinPlaceholderDefinitionsKeepAccountReserved(t *testing.T) {
+	definitions, err := resinPlaceholderDefinitions("xai-{account}-{region}", []coreproxy.Placeholder{
+		{Name: coreproxy.ReservedAccountPlaceholder, Kind: coreproxy.PlaceholderEnum, Enum: &coreproxy.EnumSpec{Separator: ",", Input: "bad,value"}},
+		{Name: "region", Kind: coreproxy.PlaceholderEnum, Enum: &coreproxy.EnumSpec{Separator: ",", Input: "us,jp"}},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := legacyResinAccountFormat(tc.settings); got != tc.want {
-				t.Fatalf("legacy account format = %q, want %q", got, tc.want)
-			}
-		})
+	if len(definitions) != 2 {
+		t.Fatalf("definitions = %#v", definitions)
+	}
+	account := definitions[0]
+	if account.Name != coreproxy.ReservedAccountPlaceholder || account.Kind != coreproxy.PlaceholderReserved || account.Enum != nil || account.Random != nil || account.GroupID != "" {
+		t.Fatalf("account placeholder accepted user configuration: %#v", account)
+	}
+	if definitions[1].Name != "region" || definitions[1].Kind != coreproxy.PlaceholderEnum {
+		t.Fatalf("normal placeholder was lost: %#v", definitions[1])
 	}
 }
 
-func TestLegacyResinStateMigratesToTemplateSource(t *testing.T) {
-	store := statepkg.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Load(statepkg.Policy{}, "test"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Update(func(state *statepkg.State) error {
-		state.Resin = ResinSettings{
-			Configured: true, Name: "Legacy Resin", Enabled: true,
-			Platform: "CPA", PlatformID: "123e4567-e89b-12d3-a456-426614174000",
-			AdminURL:      "https://admin.example:9443",
-			ProxyTemplate: "socks5h://{platform}.xai-{account}:{proxy_token}@resin:2260",
-			AdminToken:    "admin-secret", ProxyToken: "proxy-secret",
-		}
-		state.Proxy.ResinSource = coreproxy.ResinSourceState{ID: "resin", Name: "Legacy Resin", Revision: 2, ConfigVersion: 3, Enabled: true}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	service := &Service{}
-	if err := service.ensureProxyStateDefaults(store, coreproxy.AutoBindConfig{}, ResinSettings{}); err != nil {
-		t.Fatal(err)
-	}
-	projection := store.ProxySourcesSnapshot()
-	if !projection.ResinSourcesInitialized {
-		t.Fatal("legacy Resin state was not marked migrated")
-	}
-	if len(projection.Templates) != 1 || projection.Templates[0].Kind != coreproxy.TemplateResin {
-		t.Fatalf("legacy Resin was not migrated to one template: %#v", projection.Templates)
-	}
-	template := projection.Templates[0]
-	config, ok := projection.ResinSources[template.ID]
-	if !ok {
-		t.Fatalf("migrated Resin config is missing: %#v", projection.ResinSources)
-	}
-	if template.UsernamePattern != "CPA.xai-{account}-{suffix}" {
-		t.Fatalf("unexpected migrated username pattern: %q", template.UsernamePattern)
-	}
-	if template.Revision != 2 || template.ConfigVersion != 3 {
-		t.Fatalf("legacy source versions were not preserved: revision=%d config=%d", template.Revision, template.ConfigVersion)
-	}
-	if config.PlatformID != "123e4567-e89b-12d3-a456-426614174000" || config.AccountFormat != "xai-{account}-{suffix}" {
-		t.Fatalf("migrated Resin connection fields were lost: %#v", config)
-	}
-	if config.AdminToken != "admin-secret" || template.Password != "proxy-secret" {
-		t.Fatalf("migrated Resin credentials were lost: %#v", config)
-	}
-	reserved := false
-	random := false
-	for _, placeholder := range template.Placeholders {
-		if placeholder.Name == coreproxy.ReservedAccountPlaceholder {
-			reserved = placeholder.Kind == coreproxy.PlaceholderReserved
-		}
-		if placeholder.Name == "suffix" {
-			random = placeholder.Kind == coreproxy.PlaceholderRandom && placeholder.Random != nil && placeholder.Random.Length == 12
+func TestNormalizeResinAccountFormatRejectsFullURLAndPlatform(t *testing.T) {
+	for _, value := range []string{"{platform}.{account}", "socks5h://user-{account}:pass@proxy:2260", "xai-{account}@proxy"} {
+		if _, err := normalizeResinAccountFormat(value); err == nil {
+			t.Fatalf("invalid account format %q was accepted", value)
 		}
 	}
-	if !reserved || !random {
-		t.Fatalf("migrated placeholders are incomplete: %#v", template.Placeholders)
+	if got, err := normalizeResinAccountFormat("xai-{account}-{region}"); err != nil || got != "xai-{account}-{region}" {
+		t.Fatalf("valid account format = %q, %v", got, err)
 	}
 }
 
-func TestConfigOnlyResinStateMigratesToTemplateSource(t *testing.T) {
-	store := statepkg.NewStore(filepath.Join(t.TempDir(), "state.json"))
-	if err := store.Load(statepkg.Policy{}, "test"); err != nil {
+func TestResolveResinPlatformByNameReturnsCanonicalName(t *testing.T) {
+	const platformID = "11111111-1111-1111-1111-111111111111"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/platforms" {
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if request.URL.Query().Get("keyword") != "canonical" {
+			t.Fatalf("keyword = %q", request.URL.Query().Get("keyword"))
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"items":[{"id":"` + platformID + `","name":"Canonical"}],"total":1,"limit":1000,"offset":0}`))
+	}))
+	defer server.Close()
+	resolved, err := resolveResinPlatformByName(context.Background(), resinIntegration{
+		Platform: "canonical", AdminURL: server.URL, AdminToken: "admin-token",
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	service := &Service{}
-	settings := ResinSettings{
-		Enabled: true, Name: "Config Resin",
-		Platform: "CPA", PlatformID: "123e4567-e89b-12d3-a456-426614174000",
-		AdminURL:      "https://admin.example:9443",
-		ProxyTemplate: "socks5h://{platform}.xai-{account}:{proxy_token}@resin:2260",
-		AdminToken:    "admin-secret", ProxyToken: "proxy-secret",
+	if resolved.Platform != "Canonical" || resolved.PlatformID != platformID {
+		t.Fatalf("unexpected resolved platform: %#v", resolved)
 	}
-	if err := service.ensureProxyStateDefaults(store, coreproxy.AutoBindConfig{}, settings); err != nil {
-		t.Fatal(err)
-	}
-	projection := store.ProxySourcesSnapshot()
-	if !projection.ResinSourcesInitialized || len(projection.Templates) != 1 {
-		t.Fatalf("config-only Resin was not migrated: initialized=%t templates=%#v", projection.ResinSourcesInitialized, projection.Templates)
-	}
-	template := projection.Templates[0]
-	config, ok := projection.ResinSources[template.ID]
-	if !ok {
-		t.Fatalf("config-only Resin connection is missing: %#v", projection.ResinSources)
-	}
-	if template.UsernamePattern != "CPA.xai-{account}-{suffix}" || config.AccountFormat != "xai-{account}-{suffix}" {
-		t.Fatalf("config-only Resin format was not migrated: template=%q config=%q", template.UsernamePattern, config.AccountFormat)
-	}
-	if template.Protocol != coreproxy.ProtocolSOCKS5H || template.Host != "resin" || template.Port != 2260 {
-		t.Fatalf("legacy proxy endpoint was replaced by the admin endpoint: %#v", template)
-	}
-	if config.PlatformID != settings.PlatformID || config.AdminToken != settings.AdminToken || template.Password != settings.ProxyToken {
-		t.Fatalf("config-only Resin credentials were not migrated: template=%#v config=%#v", template, config)
+}
+
+func TestNormalizeResinAdminSettingsRejectsUnsafeURL(t *testing.T) {
+	for _, raw := range []string{
+		"http://alice:private@resin.example",
+		"http://resin.example?token=private",
+		"http://resin.example#private",
+		"ftp://resin.example",
+	} {
+		if _, err := normalizeResinAdminSettings(resinIntegration{Platform: "Default", AdminURL: raw, AdminToken: "token"}); err == nil || strings.Contains(err.Error(), "private") {
+			t.Fatalf("unsafe admin URL was accepted or disclosed: %v", err)
+		}
 	}
 }

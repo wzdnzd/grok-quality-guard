@@ -3,14 +3,9 @@ package management
 import (
 	"context"
 	"strings"
-
-	proxy "grok-quality-guard/internal/proxy"
 )
 
-func (s *Service) accountSummary(account Account, stateAccount AccountState, resinCfg ResinSettings, proxyURL string) accountSummaryView {
-	_ = resinCfg
-	resinAccount := strings.TrimSpace(stateAccount.Resin.Account)
-	resinManaged := stateAccount.Resin.Managed || resinAccount != ""
+func (s *Service) accountSummary(account Account, stateAccount AccountState, proxyURL string) accountSummaryView {
 	displayFull := strings.TrimSpace(firstNonEmpty(account.Email, account.Label, account.ID))
 	displayLabel := strings.TrimSpace(account.Label)
 	if strings.Contains(displayLabel, "@") {
@@ -30,9 +25,6 @@ func (s *Service) accountSummary(account Account, stateAccount AccountState, res
 		LastObservedAt:    stateAccount.LastObservedAt,
 		CooldownUntil:     stateAccount.CooldownUntil,
 		ProbeBackoffUntil: stateAccount.ProbeBackoffUntil,
-		ResinManaged:      resinManaged,
-		ResinAccount:      resinAccount,
-		ResinGeneration:   stateAccount.Resin.Generation,
 		ProxyStatus:       "unbound",
 		Proxy:             maskProxyURL(proxyURL),
 		TPS:               stateAccount.Metrics.TPS,
@@ -55,11 +47,8 @@ func (s *Service) accountSummary(account Account, stateAccount AccountState, res
 	view.AutoBindExcluded = stateAccount.AutoBind.Excluded
 	if hasBinding {
 		view.ProxyGeneration = binding.Generation
-		if binding.SourceKind == proxy.SourceResin {
-			view.ResinManaged = true
-			if binding.Lease != nil && binding.Lease.Account != "" {
-				view.ResinAccount = binding.Lease.Account
-			}
+		if binding.Lease != nil {
+			view.ProxyLeaseAccount = binding.Lease.Account
 		}
 	}
 	return view
@@ -74,16 +63,15 @@ func accountStateFromSummary(summary AccountStateSummary) AccountState {
 		LastObservedAt:    summary.LastObservedAt,
 		CooldownUntil:     summary.CooldownUntil,
 		ProbeBackoffUntil: summary.ProbeBackoffUntil,
-		Resin:             summary.Resin,
 		Proxy:             summary.Proxy,
 		AutoBind:          summary.AutoBind,
 		Metrics:           summary.Metrics,
 	}
 }
 
-func (s *Service) accountView(account Account, stateAccount AccountState, resinCfg ResinSettings, proxyURL string) accountView {
+func (s *Service) accountView(account Account, stateAccount AccountState, proxyURL string) accountView {
 	return accountView{
-		accountSummaryView:     s.accountSummary(account, stateAccount, resinCfg, proxyURL),
+		accountSummaryView:     s.accountSummary(account, stateAccount, proxyURL),
 		Evidence:               stateAccount.LastEvidence,
 		LastProbeAt:            stateAccount.LastProbeAt,
 		DisableKind:            stateAccount.DisableKind,
@@ -122,5 +110,5 @@ func (s *Service) accountViewForAccount(ctx context.Context, account Account) (a
 	}
 	stateAccount, _ := s.stateAccount(account.ID)
 	rawProxyURL := strings.TrimSpace(authRawString(raw, "proxy_url"))
-	return s.accountView(account, stateAccount, s.ResinConfig(), rawProxyURL), nil
+	return s.accountView(account, stateAccount, rawProxyURL), nil
 }

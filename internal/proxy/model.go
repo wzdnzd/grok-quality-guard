@@ -83,20 +83,20 @@ type AutoBindAccountState struct {
 }
 
 type AutoBindConfig struct {
-	Enabled                   bool     `json:"enabled"`
-	SourceScope               string   `json:"source_scope"`
-	SourceIDs                 []string `json:"source_ids,omitempty"`
-	Concurrency               int      `json:"concurrency"`
-	QueueSize                 int      `json:"queue_size"`
-	MaxPerCycle               int      `json:"max_per_cycle"`
-	ScanInterval              string   `json:"scan_interval"`
-	RequireHealthy            bool     `json:"require_healthy"`
-	HealthMaxAge              string   `json:"health_max_age"`
-	IncludeGuardDisabled      bool     `json:"include_guard_disabled"`
-	IncludeExternallyDisabled bool     `json:"include_externally_disabled"`
-	ManualClearPolicy         string   `json:"manual_clear_policy"`
-	RetryInitial              string   `json:"retry_initial"`
-	RetryMax                  string   `json:"retry_max"`
+	Enabled                   bool     `yaml:"enabled" json:"enabled"`
+	SourceScope               string   `yaml:"source_scope" json:"source_scope"`
+	SourceIDs                 []string `yaml:"source_ids,omitempty" json:"source_ids,omitempty"`
+	Concurrency               int      `yaml:"concurrency" json:"concurrency"`
+	QueueSize                 int      `yaml:"queue_size" json:"queue_size"`
+	MaxPerCycle               int      `yaml:"max_per_cycle" json:"max_per_cycle"`
+	ScanInterval              string   `yaml:"scan_interval" json:"scan_interval"`
+	RequireHealthy            bool     `yaml:"require_healthy" json:"require_healthy"`
+	HealthMaxAge              string   `yaml:"health_max_age" json:"health_max_age"`
+	IncludeGuardDisabled      bool     `yaml:"include_guard_disabled" json:"include_guard_disabled"`
+	IncludeExternallyDisabled bool     `yaml:"include_externally_disabled" json:"include_externally_disabled"`
+	ManualClearPolicy         string   `yaml:"manual_clear_policy" json:"manual_clear_policy"`
+	RetryInitial              string   `yaml:"retry_initial" json:"retry_initial"`
+	RetryMax                  string   `yaml:"retry_max" json:"retry_max"`
 }
 
 func DefaultAutoBindConfig() AutoBindConfig {
@@ -230,19 +230,17 @@ type SourceRuntime struct {
 }
 
 type ProxyState struct {
-	Nodes                   []Node                       `json:"nodes,omitempty"`
-	Templates               []Template                   `json:"templates,omitempty"`
-	ResinSources            map[string]ResinSourceConfig `json:"resin_sources,omitempty"`
-	ResinSourcesInitialized bool                         `json:"resin_sources_initialized,omitempty"`
-	AutoBind                AutoBindConfig               `json:"auto_bind,omitempty"`
-	AutoBindRuntime         AutoBindRuntime              `json:"auto_bind_runtime,omitempty"`
-	Changes                 []SourceChange               `json:"changes,omitempty"`
-	ResinSource             ResinSourceState             `json:"resin_source,omitempty"`
-	Operations              map[string]Operation         `json:"operations,omitempty"`
-	SourceRuntime           map[string]SourceRuntime     `json:"source_runtime,omitempty"`
-	TemplateVersions        []Template                   `json:"template_versions,omitempty"`
-	NodeVersions            []Node                       `json:"node_versions,omitempty"`
-	JournalSequence         uint64                       `json:"journal_sequence,omitempty"`
+	Nodes            []Node                       `json:"nodes,omitempty"`
+	Templates        []Template                   `json:"templates,omitempty"`
+	ResinSources     map[string]ResinSourceConfig `json:"resin_sources,omitempty"`
+	AutoBind         AutoBindConfig               `json:"auto_bind,omitempty"`
+	AutoBindRuntime  AutoBindRuntime              `json:"auto_bind_runtime,omitempty"`
+	Changes          []SourceChange               `json:"changes,omitempty"`
+	Operations       map[string]Operation         `json:"operations,omitempty"`
+	SourceRuntime    map[string]SourceRuntime     `json:"source_runtime,omitempty"`
+	TemplateVersions []Template                   `json:"template_versions,omitempty"`
+	NodeVersions     []Node                       `json:"node_versions,omitempty"`
+	JournalSequence  uint64                       `json:"journal_sequence,omitempty"`
 }
 
 // ResinSourceConfig holds the Resin connection fields that are not part of the
@@ -257,13 +255,12 @@ type ResinSourceConfig struct {
 	AdminToken    string `json:"admin_token,omitempty"`
 }
 
-type ResinSourceState struct {
-	ID            string `json:"id,omitempty"`
-	Name          string `json:"name,omitempty"`
-	Enabled       bool   `json:"enabled,omitempty"`
-	Revision      uint64 `json:"revision,omitempty"`
-	ConfigVersion uint64 `json:"config_version,omitempty"`
-	Deleted       bool   `json:"deleted,omitempty"`
+// ResinSnapshot is the immutable remote-cleanup target stored for queued lease
+// deletions. It intentionally contains only what the cleanup call needs.
+type ResinSnapshot struct {
+	AdminURL   string `json:"admin_url"`
+	PlatformID string `json:"platform_id"`
+	AdminToken string `json:"admin_token,omitempty"`
 }
 
 type ValidationReport struct {

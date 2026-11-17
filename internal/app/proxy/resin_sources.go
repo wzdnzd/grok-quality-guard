@@ -9,7 +9,7 @@ import (
 	"time"
 
 	resinpkg "grok-quality-guard/internal/app/proxy/resin"
-	statepkg "grok-quality-guard/internal/app/state"
+
 	proxy "grok-quality-guard/internal/proxy"
 )
 
@@ -31,71 +31,32 @@ type proxyResinInput struct {
 	ExpectedVersion uint64                     `json:"expected_version,omitempty"`
 }
 
-func resinSettingsForSource(template proxy.Template, config proxy.ResinSourceConfig) ResinSettings {
-	return ResinSettings{
-		ID:            template.ID,
-		Configured:    true,
-		Name:          template.Name,
-		Enabled:       template.Enabled,
-		LocalOnly:     config.LocalOnly,
-		Platform:      config.Platform,
-		PlatformID:    config.PlatformID,
-		AdminURL:      config.AdminURL,
-		AccountFormat: config.AccountFormat,
-		ProxyTemplate: template.URLForReveal(),
-		ProxyToken:    template.Password,
-		AdminToken:    config.AdminToken,
-		ValidatedAt:   template.ValidatedAt,
+type resinIntegration struct {
+	Platform   string
+	PlatformID string
+	AdminURL   string
+	AdminToken string
+	LocalOnly  bool
+}
+
+func resinIntegrationForSource(config proxy.ResinSourceConfig) resinIntegration {
+	return resinIntegration{
+		Platform:   strings.TrimSpace(config.Platform),
+		PlatformID: strings.TrimSpace(config.PlatformID),
+		AdminURL:   strings.TrimRight(strings.TrimSpace(config.AdminURL), "/"),
+		AdminToken: strings.TrimSpace(config.AdminToken),
+		LocalOnly:  config.LocalOnly,
 	}
 }
 
 func resinProviderForSource(template proxy.Template, config proxy.ResinSourceConfig) (*resinpkg.TemplateProvider, error) {
-	settings := resinSettingsForSource(template, config)
 	if !config.LocalOnly && (config.Platform == "" || config.PlatformID == "" || config.AdminURL == "" || config.AdminToken == "" || template.Password == "") {
 		return nil, proxyError("resin_validation_required", 409, "validate and save the Resin connection before binding")
 	}
-	snapshotID := ""
-	if !config.LocalOnly {
-		snapshotID = statepkg.ResinSnapshotID(settings)
-	}
 	return resinpkg.NewTemplateProvider(template, resinpkg.ProviderSettings{
-		Platform: config.Platform, PlatformID: config.PlatformID,
-		ProxyToken: template.Password, SnapshotID: snapshotID, LocalOnly: config.LocalOnly,
+		Platform:  config.Platform,
+		LocalOnly: config.LocalOnly,
 	})
-}
-
-func legacyResinTemplateEndpoint(rawTemplate string) (proxy.Template, bool) {
-	rawTemplate = strings.TrimSpace(rawTemplate)
-	if rawTemplate == "" {
-		return proxy.Template{}, false
-	}
-	rawTemplate = strings.ReplaceAll(rawTemplate, "{proxy_token}", "legacy-token")
-	parsed, err := proxy.ParseTemplateURL(rawTemplate)
-	if err != nil {
-		return proxy.Template{}, false
-	}
-	return parsed, true
-}
-func legacyResinAccountFormat(settings ResinSettings) string {
-	if accountFormat := strings.TrimSpace(settings.AccountFormat); accountFormat != "" {
-		return accountFormat
-	}
-	rawTemplate := strings.TrimSpace(settings.ProxyTemplate)
-	if rawTemplate == "" {
-		rawTemplate = "socks5h://{platform}.{account}:{proxy_token}@resin:2260"
-	}
-	usernamePattern, err := resinpkg.AccountFormat(rawTemplate)
-	if err != nil {
-		return ""
-	}
-	accountFormat := resinAccountSuffix(usernamePattern, settings.Platform)
-	if accountFormat == "{account}" {
-		return "grok-{account}-{suffix}"
-	}
-	if !strings.Contains(strings.ReplaceAll(accountFormat, "{account}", ""), "{") {
-		accountFormat += "-{suffix}"
-	}
-	return accountFormat
 }
 func normalizeResinAccountFormat(value string) (string, error) {
 	value = strings.TrimSpace(value)
@@ -222,7 +183,7 @@ func buildResinSource(input proxyResinInput, currentTemplate *proxy.Template, cu
 		if config.AdminURL == "" {
 			return proxy.Template{}, proxy.ResinSourceConfig{}, resinConfigErrorf(http.StatusBadRequest, "resin admin_url is required")
 		}
-		normalizedAdmin, errAdmin := normalizeResinAdminSettings(ResinSettings{AdminURL: config.AdminURL, Platform: config.Platform, AdminToken: config.AdminToken})
+		normalizedAdmin, errAdmin := normalizeResinAdminSettings(resinIntegration{AdminURL: config.AdminURL, Platform: config.Platform, AdminToken: config.AdminToken})
 		if errAdmin != nil {
 			return proxy.Template{}, proxy.ResinSourceConfig{}, errAdmin
 		}
@@ -287,8 +248,7 @@ func validateResinSource(ctx context.Context, template proxy.Template, config pr
 	if config.LocalOnly {
 		return resinValidationResult{LocalOnly: true, ValidatedAt: time.Now().UTC()}, nil
 	}
-	settings := resinSettingsForSource(template, config)
-	return validateResinSettings(ctx, settings)
+	return validateResinSourceIntegration(ctx, template, config)
 }
 
 func (s *Service) createResinSource(ctx context.Context, input proxyResinInput) (proxySourceView, error) {
@@ -322,7 +282,6 @@ func (s *Service) createResinSource(ctx context.Context, input proxyResinInput) 
 		}
 		state.Proxy.Templates = append(state.Proxy.Templates, template)
 		state.Proxy.ResinSources[template.ID] = config
-		state.Proxy.ResinSourcesInitialized = true
 		s.env.ProxyRecordEvent(state, "", "", "proxy_resin_create", "created", "source="+template.ID)
 		return nil
 	})

@@ -26,10 +26,6 @@ const (
 
 var ErrMissingScheme = errors.New("proxy url is missing scheme")
 
-type ParseOptions struct {
-	AllowColonFormat bool
-}
-
 type Endpoint struct {
 	Protocol    Protocol `json:"protocol"`
 	Host        string   `json:"host"`
@@ -40,7 +36,7 @@ type Endpoint struct {
 	HasPassword bool     `json:"has_password,omitempty"`
 }
 
-func ParseEndpoint(raw string, opts ParseOptions) (Endpoint, error) {
+func ParseEndpoint(raw string) (Endpoint, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return Endpoint{}, invalid("endpoint_empty", "url", "proxy url is empty")
@@ -56,12 +52,17 @@ func ParseEndpoint(raw string, opts ParseOptions) (Endpoint, error) {
 	if len(raw) > maxTemplateBytes || hasControl(raw) || !utf8.ValidString(raw) {
 		return Endpoint{}, invalid("endpoint_invalid", "url", "proxy url contains invalid characters or is too large")
 	}
-	// A normal URL always takes precedence over the explicit import format.
-	endpoint, err := parseStandardEndpoint(string(protocol) + "://" + rest)
-	if err == nil || !opts.AllowColonFormat {
-		return endpoint, err
+	// Standard URLs take precedence. Some providers place authentication after
+	// the host or separate it with colons; try those shapes only as fallbacks.
+	if endpoint, err := parseStandardEndpoint(string(protocol) + "://" + rest); err == nil {
+		return endpoint, nil
 	}
-	return parseColonEndpoint(protocol, rest)
+	if endpoint, err := parseAddressFirstEndpoint(protocol, rest); err == nil {
+		return endpoint, nil
+	} else if !strings.ContainsRune(rest, '@') {
+		return Endpoint{}, err
+	}
+	return parseHostPortAtCredentialsEndpoint(protocol, rest)
 }
 
 func parseStandardEndpoint(raw string) (Endpoint, error) {
@@ -93,29 +94,29 @@ func parseStandardEndpoint(raw string) (Endpoint, error) {
 	return endpoint.Normalize()
 }
 
-func parseColonEndpoint(protocol Protocol, rest string) (Endpoint, error) {
+func parseAddressFirstEndpoint(protocol Protocol, rest string) (Endpoint, error) {
 	if strings.ContainsAny(rest, "/?#") {
-		return Endpoint{}, invalid("colon_format_invalid", "url", "address-first proxy input cannot contain path, query, or fragment")
+		return Endpoint{}, invalid("address_first_invalid", "url", "address-first proxy input cannot contain path, query, or fragment")
 	}
 	// Bracketed IPv6 is an address, not a sequence of credential separators.
 	addressEnd := strings.IndexByte(rest, ':')
 	if strings.HasPrefix(rest, "[") {
 		bracket := strings.IndexByte(rest, ']')
 		if bracket < 0 || bracket+1 >= len(rest) || rest[bracket+1] != ':' {
-			return Endpoint{}, invalid("colon_format_invalid", "host", "address-first proxy host is invalid")
+			return Endpoint{}, invalid("address_first_invalid", "host", "address-first proxy host is invalid")
 		}
 		addressEnd = bracket + 1
 	}
 	if addressEnd < 1 {
-		return Endpoint{}, invalid("colon_format_invalid", "url", "address-first proxy input must be host:port:username:password")
+		return Endpoint{}, invalid("address_first_invalid", "url", "address-first proxy input must be host:port:username:password")
 	}
 	portText, credentials, ok := strings.Cut(rest[addressEnd+1:], ":")
 	if !ok {
-		return Endpoint{}, invalid("colon_format_invalid", "url", "address-first proxy input must be host:port:username:password")
+		return Endpoint{}, invalid("address_first_invalid", "url", "address-first proxy input must be host:port:username:password")
 	}
 	username, password, ok := strings.Cut(credentials, ":")
 	if !ok || username == "" {
-		return Endpoint{}, invalid("colon_format_invalid", "username", "address-first proxy credentials are invalid")
+		return Endpoint{}, invalid("address_first_invalid", "username", "address-first proxy credentials are invalid")
 	}
 	// Decode URL input exactly once; field-based Endpoint values are literal.
 	username, err := url.PathUnescape(username)
@@ -133,6 +134,37 @@ func parseColonEndpoint(protocol Protocol, rest string) (Endpoint, error) {
 	host := rest[:addressEnd]
 	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
 		host = host[1 : len(host)-1]
+	}
+	return (Endpoint{Protocol: protocol, Host: host, Port: port, Username: username, Password: password, HasUser: true, HasPassword: true}).Normalize()
+}
+
+func parseHostPortAtCredentialsEndpoint(protocol Protocol, rest string) (Endpoint, error) {
+	if strings.ContainsAny(rest, "/?#") {
+		return Endpoint{}, invalid("host_port_at_invalid", "url", "host:port@user:pass input cannot contain path, query, or fragment")
+	}
+	address, credentials, ok := strings.Cut(rest, "@")
+	if !ok || address == "" || credentials == "" {
+		return Endpoint{}, invalid("host_port_at_invalid", "url", "proxy input must be host:port@username:password")
+	}
+	host, portText, err := net.SplitHostPort(address)
+	if err != nil || portText == "" {
+		return Endpoint{}, invalid("host_port_at_invalid", "port", "proxy input requires host:port before @")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		return Endpoint{}, invalid("port_invalid", "port", "proxy url port is invalid")
+	}
+	username, password, ok := strings.Cut(credentials, ":")
+	if !ok || username == "" {
+		return Endpoint{}, invalid("host_port_at_invalid", "username", "proxy credentials must be username:password after @")
+	}
+	username, err = url.PathUnescape(username)
+	if err != nil {
+		return Endpoint{}, invalid("credential_encoding_invalid", "username", "proxy username encoding is invalid")
+	}
+	password, err = url.PathUnescape(password)
+	if err != nil {
+		return Endpoint{}, invalid("credential_encoding_invalid", "password", "proxy password encoding is invalid")
 	}
 	return (Endpoint{Protocol: protocol, Host: host, Port: port, Username: username, Password: password, HasUser: true, HasPassword: true}).Normalize()
 }
@@ -302,7 +334,7 @@ func MaskProxyURL(raw string) string {
 		}
 		candidate += parsed.Host
 	}
-	endpoint, err := ParseEndpoint(candidate, ParseOptions{})
+	endpoint, err := ParseEndpoint(candidate)
 	if err != nil {
 		// Invalid address-first imports can contain secrets without an '@'.
 		return "[redacted]"

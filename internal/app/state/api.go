@@ -1,5 +1,7 @@
 package state
 
+import proxy "grok-quality-guard/internal/proxy"
+
 // AppendEvent appends a bounded event and applies the persisted event limit.
 func AppendEvent(state *State, ev Event) {
 	appendEvent(state, ev)
@@ -11,26 +13,14 @@ func (s *Store) SetPathUnchecked(path string, overwrite bool) error {
 	return s.setPath(path, overwrite)
 }
 
-func (s *Store) ProxyPendingReserved(authID string) string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.proxyPendingReserved[authID]
-}
-
-func (s *Store) ProxyLoad(sourceID string) int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.proxyCounts[sourceID] + s.proxyPendingCounts[sourceID]
-}
-
 func (s *Store) ProxyBindingCount(id string) int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.proxyCounts[id]
 }
 
-func ResinSnapshotID(settings ResinSettings) string {
-	return resinSnapshotID(settings)
+func ResinSnapshotID(snapshot proxy.ResinSnapshot) string {
+	return resinSnapshotID(snapshot)
 }
 
 type ProxyIndexes struct {
@@ -70,12 +60,12 @@ func (s *Store) ProxyLeaseUsage(account string) int {
 	return s.proxyLeaseAccounts[account]
 }
 
-func (s *Store) EnsureResinSnapshot(settings ResinSettings) (string, error) {
-	id := resinSnapshotID(settings)
+func (s *Store) EnsureResinSnapshot(snapshot proxy.ResinSnapshot) (string, error) {
+	id := resinSnapshotID(snapshot)
 	if _, ok := s.ResinSnapshot(id); ok {
 		return id, nil
 	}
-	if err := s.CommitProxy(ProxyCommit{Snapshots: map[string]ResinSettings{id: settings}}); err != nil {
+	if err := s.CommitProxy(ProxyCommit{Snapshots: map[string]proxy.ResinSnapshot{id: snapshot}}); err != nil {
 		return "", err
 	}
 	return id, nil

@@ -6,33 +6,7 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
-
-	"grok-quality-guard/internal/proxy"
 )
-
-// AccountFormat returns the username pattern without the fixed Resin scheme,
-// password, host, or port.
-func AccountFormat(rawTemplate string) (string, error) {
-	rawTemplate = strings.TrimSpace(rawTemplate)
-	_, rest, ok := strings.Cut(rawTemplate, "://")
-	if !ok {
-		return "", fmt.Errorf("resin proxy template is missing scheme")
-	}
-	authority := rest
-	if end := strings.IndexAny(authority, "/?#"); end >= 0 {
-		authority = authority[:end]
-	}
-	at := strings.LastIndexByte(authority, '@')
-	if at < 0 {
-		return "", fmt.Errorf("resin proxy template requires userinfo")
-	}
-	username, _, _ := strings.Cut(authority[:at], ":")
-	decoded, err := url.PathUnescape(username)
-	if err != nil || strings.TrimSpace(decoded) == "" {
-		return "", fmt.Errorf("resin proxy template username is invalid")
-	}
-	return decoded, nil
-}
 
 // AccountFromProxyURL extracts an identity; callers must separately verify
 // persisted management evidence before treating that identity as a managed lease.
@@ -74,25 +48,4 @@ func RewriteAccount(proxyURL, account string) (string, error) {
 	}
 	parsed.User = url.UserPassword(username, password)
 	return parsed.String(), nil
-}
-
-// RenderProxy is the migration/validation convenience entry point. Repeated
-// binding generation uses Provider, whose compiled template is reused.
-func RenderProxy(rawTemplate, platform, account, proxyToken string) (string, error) {
-	template, err := MigrateTemplate(rawTemplate, platform, proxyToken)
-	if err != nil {
-		return "", err
-	}
-	compiled, err := proxy.CompileTemplate(template)
-	if err != nil {
-		return "", err
-	}
-	if account == "" || len(account) > 128 || !utf8.ValidString(account) || strings.ContainsFunc(account, unicode.IsControl) {
-		return "", fmt.Errorf("resin account identity is invalid")
-	}
-	rendered, err := compiled.RenderResolved(map[string]string{"account": account})
-	if err != nil {
-		return "", err
-	}
-	return rendered.URL, nil
 }

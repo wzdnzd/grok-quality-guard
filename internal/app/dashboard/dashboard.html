@@ -2691,7 +2691,7 @@
                     <div class="field full"><label for="p_state_file">状态文件路径</label><input id="p_state_file" type="text"
                         autocomplete="off" spellcheck="false"
                         placeholder="/CLIProxyAPI/plugins/data/grok-quality-guard/state.json"><span class="hint">YAML 的
-                        state_file 是启动引导路径；此处保存时会迁移当前状态并使用新路径；目标文件必须尚不存在，且目录需为持久卷</span></div>
+                        state_file 是启动引导路径；此处保存时会把当前状态写入新路径并切换；目标文件必须尚不存在，且目录需为持久卷</span></div>
                   </div>
                 </div>
                 <div class="form-section">
@@ -3000,8 +3000,7 @@
     const ACTION_LABELS = {
       observe: '被动观测', probe: '主动探测', guard_disable: '自动处置', external_disable: '外部禁用',
       restore: '恢复账号', proxy_bind: '绑定代理', proxy_rotate: '轮换代理', proxy_clear: '清除代理', proxy_adopt: '接管代理',
-      resin_bind: '绑定代理服务', resin_rotate: '轮换代理服务', resin_clear: '清除代理服务', resin_lease_delete: '清理代理租约',
-      resin_config_save: '保存代理服务配置', transparent_attempt: '透明重试', transparent_overflow: '缓冲溢出', strike_decay: '惩罚标记降级', internal_error: '内部错误',
+      resin_lease_delete: '清理代理租约', transparent_attempt: '透明重试', transparent_overflow: '缓冲溢出', strike_decay: '惩罚标记降级', internal_error: '内部错误',
       cross_verify_schedule: '调度交叉验证', 'quality.cross_verify': '交叉验证'
     };
     const RESULT_LABELS = {
@@ -3334,22 +3333,23 @@
       return { page: state.proxySourcePage, page_size: state.proxySourcePageSize, kind: !all && state.proxySourceFilter !== 'all' ? state.proxySourceFilter : '', enabled: !all && state.proxySourceEnabledFilter !== 'all' ? state.proxySourceEnabledFilter : '', health: !all && state.proxySourceHealthFilter !== 'all' ? state.proxySourceHealthFilter : '', query: all ? '' : state.proxySourceQuery };
     }
     function normalizeBindingStatus(value) {
-      return { managed: 'bound', needs_reconcile: 'reconcile_required', conflict: 'external' }[value] || value || 'unknown';
+      return value || 'unknown';
     }
     function proxySummaryCounts(summary) {
       const counts = (summary || {}).binding_counts || {};
-      return Object.assign({}, counts, { bound: Number(counts.bound ?? counts.managed ?? 0), external: Number(counts.external ?? counts.conflict ?? 0), reconcile_required: Number(counts.reconcile_required ?? counts.needs_reconcile ?? 0) });
+      return Object.assign({ bound: 0, unbound: 0, external: 0, drifted: 0, unknown: 0, reconcile_required: 0 }, counts);
     }
     function normalizeBindingView(value) {
       return Object.assign({}, value, {
-        proxy_status: normalizeBindingStatus(value.proxy_status || value.status),
-        proxy_source_id: value.proxy_source_id || value.source_id || '',
-        proxy_source_kind: value.proxy_source_kind || value.source_kind || '',
-        proxy_generation: value.proxy_generation || value.generation || 0,
-        proxy_source_revision: value.proxy_source_revision || value.source_revision || 0,
-        proxy_managed: Boolean(value.proxy_managed || value.managed || ['managed', 'bound'].includes(value.proxy_status || value.status)),
+        proxy_status: normalizeBindingStatus(value.proxy_status),
+        proxy_source_id: value.proxy_source_id || '',
+        proxy_source_kind: value.proxy_source_kind || '',
+        proxy_generation: value.proxy_generation || 0,
+        proxy_source_revision: value.proxy_source_revision || 0,
+        proxy_lease_account: value.proxy_lease_account || '',
+        proxy_managed: Boolean(value.proxy_managed),
         display: value.display || value.label || value.auth_id,
-        proxy: value.proxy || value.masked_url || ''
+        proxy: value.proxy || ''
       });
     }
     async function loadList(kind) {
@@ -3660,7 +3660,7 @@
         summaryItem('可绑定代理', esc(num(proxySummary.available_source_count ?? proxySummary.enabled_source_count ?? proxySources.filter((source) => source.enabled && source.valid).length))),
         summaryItem('已绑定', esc(num(proxyCounts.bound || 0))),
         summaryItem('未绑定', esc(num(proxyCounts.unbound || 0))),
-        summaryItem('外部 / 待核对', esc(num(Number(proxyCounts.external || proxyCounts.conflict || 0) + Number(proxyCounts.unknown || 0) + Number(proxyCounts.drifted || 0) + Number(proxyCounts.reconcile_required || 0)))),
+        summaryItem('外部 / 待核对', esc(num(Number(proxyCounts.external || 0) + Number(proxyCounts.unknown || 0) + Number(proxyCounts.drifted || 0) + Number(proxyCounts.reconcile_required || 0)))),
         summaryItem('自动绑定', esc(autoBind.enabled ? '已开启' : '未开启')),
         summaryItem('自动轮换', esc(proxySummary.auto_rotate_after_quality_failure ? '已启用' : '未启用'))
       ].join('');
@@ -3727,9 +3727,9 @@
       if (proxyStatus === 'bound') proxyBadge = badge('已绑定', 'info');
       else if (proxyStatus === 'drifted') proxyBadge = badge('与记录不一致', 'warn');
       else if (proxyStatus === 'reconcile_required') proxyBadge = badge('待核对', 'bad');
-      else if (proxyStatus === 'conflict' || proxyStatus === 'external') proxyBadge = badge('外部配置', '');
+      else if (proxyStatus === 'external') proxyBadge = badge('外部配置', '');
       else if (proxyStatus === 'unknown') proxyBadge = badge('读取失败', 'bad');
-      const proxyDetailText = account.proxy_source_id ? (proxySourceLabel(account.proxy_source_kind) + ' · ' + account.proxy_source_id) : (account.resin_account || '');
+      const proxyDetailText = account.proxy_source_id ? (proxySourceLabel(account.proxy_source_kind) + ' · ' + account.proxy_source_id) : (account.proxy_lease_account || '');
       const proxyDetail = proxyDetailText ? '<div class="subline">' + esc(proxyDetailText) + (account.proxy_generation ? ' · 第 ' + esc(account.proxy_generation) + ' 代' : '') + '</div>' : '';
       const cooldown = account.cooldown_until ? '冷却至：' + esc(formatFullTime(account.cooldown_until)) : '无冷却';
       const probe = account.probe_backoff_until ? '探测退避至：' + esc(formatFullTime(account.probe_backoff_until)) : '可立即探测';
@@ -3742,10 +3742,10 @@
         '<td><div class="account-name" title="' + esc(account.display_full || account.display || account.label || '未命名账号') + '">' + esc(account.display || account.label || '未命名账号') + '</div><div class="subline" title="' + esc(account.auth_id) + '">' + esc(account.auth_id_display || account.auth_id) + '</div></td><td class="nowrap">' + badge(stateLabel(account.state), stateTone(account.state)) + '</td><td><div class="truncate-line" title="' + esc(reasonSummary) + '">' + esc(reasonSummary) + '</div><div class="subline truncate-line" title="' + esc(attemptDetail) + '">' + esc(attemptDetail) + '</div>' + disableReasonDetail + '</td><td><div class="metric-inline"><strong>' + esc(num(account.tps, 1)) + '</strong><span class="muted">TPS</span></div><div class="subline">输出：' + esc(num(account.output_tokens)) + ' · 推理：' + esc(num(account.reasoning_tokens)) + ' · 密文：' + esc(formatBytes(account.encrypted_bytes)) + '</div></td><td>' + proxyBadge + proxyDetail + '</td><td><div>' + esc(cooldown) + '</div><div class="subline">' + esc(probe) + '</div></td><td class="actions-cell"><div class="actions"><button class="btn btn-xs" type="button" data-account-action="accounts.probe" data-auth="' + authID + '">' + icon('play') + '检测</button><button class="btn btn-xs" type="button" data-open-account="' + authID + '">' + icon('eye') + '详情</button></div></td></tr>';
     }    function leaseStatus(account) {
       if (account.proxy_status === 'unknown') return 'unknown';
-      if (account.proxy_status === 'external' || account.proxy_status === 'conflict') return 'external';
+      if (account.proxy_status === 'external') return 'external';
       if (account.proxy_status === 'drifted') return 'drifted';
       if (account.proxy_status === 'reconcile_required') return 'reconcile_required';
-      if (account.proxy_managed || account.resin_managed || account.proxy_status === 'bound') return 'bound';
+      if (account.proxy_managed || account.proxy_status === 'bound') return 'bound';
       return 'unbound';
     }    function leaseFilteredList() {
       return state.leases;
@@ -3793,7 +3793,7 @@
       document.getElementById('resinMetrics').innerHTML = [
         metricCard('database', num(counts.bound || 0), '已绑定账号', '可绑定代理：' + available, 'info'),
         metricCard('users', num(counts.unbound || 0), '未绑定账号', '实际代理为空', ''),
-        metricCard('alert', num(Number(counts.external || counts.conflict || 0) + Number(counts.unknown || 0) + Number(counts.drifted || 0) + Number(counts.reconcile_required || 0)), '需核对', '外部配置、漂移或读取失败', Number(counts.external || counts.conflict || 0) + Number(counts.drifted || 0) + Number(counts.unknown || 0) ? 'warn' : 'good'),
+        metricCard('alert', num(Number(counts.external || 0) + Number(counts.unknown || 0) + Number(counts.drifted || 0) + Number(counts.reconcile_required || 0)), '需核对', '外部配置、漂移或读取失败', Number(counts.external || 0) + Number(counts.drifted || 0) + Number(counts.unknown || 0) ? 'warn' : 'good'),
         metricCard('check', num(sourceTotal), '代理', '可绑定代理：' + available, available ? 'good' : 'warn')
       ].join('');
       document.getElementById('resinConfigState').textContent = !configured ? '未配置代理' : (available ? '有可绑定代理' : '无可绑定代理');
@@ -4226,7 +4226,7 @@
       if (button) button.textContent = '任务详情' + (active ? ' · 进行中：' + active : '') + (failed ? ' · 失败：' + failed : '');
     }
     function proxyTaskLabel(kind) {
-      return { 'proxy.bind': '绑定代理', 'proxy.clear': '清除代理', 'proxy.rotate': '轮换代理', 'proxy.auto_rotate': '自动轮换代理', 'proxy.bind_unbound': '绑定未绑定账号', 'proxy.template.apply': '应用代理模板', 'proxy.source.update': '保存代理', 'proxy.source.delete': '删除代理', 'proxy.sources.test_selected': '批量检测代理', 'proxy.sources.delete_selected': '批量删除代理', 'proxy.source.sync': '同步代理绑定', 'resin.config.save': '保存代理服务配置', 'resin.config.validate': '验证代理服务配置', 'resin.cleanup.retry': '重试代理清理' }[kind] || '代理后台任务';
+      return { 'proxy.bind': '绑定代理', 'proxy.clear': '清除代理', 'proxy.rotate': '轮换代理', 'proxy.auto_rotate': '自动轮换代理', 'proxy.bind_unbound': '绑定未绑定账号', 'proxy.template.apply': '应用代理模板', 'proxy.source.update': '保存代理', 'proxy.source.delete': '删除代理', 'proxy.sources.test_selected': '批量检测代理', 'proxy.sources.delete_selected': '批量删除代理', 'proxy.source.sync': '同步代理绑定', 'resin.cleanup.retry': '重试代理清理' }[kind] || '代理后台任务';
     }
     async function refreshProxyTasks() {
       if (state.proxyTasksRefreshing) return state.proxyEditing?.taskErrors || [];
@@ -4324,6 +4324,7 @@
     async function showProxyEditorError(error, source, editor) {
       if (state.proxyEditing !== editor) return;
       const status = document.getElementById('proxySourceEditorStatus');
+
       if (status) status.textContent = '保存失败：' + error.message;
       const path = error.path || error.details?.path || error.details?.errors?.[0]?.path;
       if (path) { focusProxyValidationPath(path); if (status) status.textContent += ' · ' + path; }
@@ -5038,6 +5039,102 @@
     const PROXY_IMPORT_MAX_BYTES = 16 << 20;
     const PROXY_IMPORT_PROTOCOLS = new Set(['http:', 'https:', 'socks5:', 'socks5h:']);
     const PROXY_IMPORT_ENCODER = new TextEncoder();
+
+    function decodeProxyImportCredential(value, label) {
+      try { return decodeURIComponent(value); } catch (_) { throw new Error(label + '编码无效'); }
+    }
+    function proxyImportStandard(value, protocol) {
+      let endpoint;
+      try { endpoint = new URL(value); } catch (_) { return { valid: false, reason: 'URL 格式无效' }; }
+      if (!endpoint.hostname) return { valid: false, reason: '缺少主机名' };
+      if (endpoint.pathname && endpoint.pathname !== '/') return { valid: false, reason: '不允许路径' };
+      if (endpoint.search || endpoint.hash) return { valid: false, reason: '不允许查询参数或片段' };
+      const authority = value.slice(value.indexOf('://') + 3).split(/[\/?#]/, 1)[0];
+      const hostPort = authority.slice(authority.lastIndexOf('@') + 1);
+      const portMatch = hostPort.startsWith('[') ? /^\[[^\]]+\]:([0-9]+)$/.exec(hostPort) : /^[^:]+:([0-9]+)$/.exec(hostPort);
+      if (!portMatch) return { valid: false, reason: '缺少显式端口或地址格式不明确' };
+      const port = Number(portMatch[1]);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return { valid: false, reason: '端口无效' };
+      return { valid: true, key: endpoint.href, value: value, protocol: protocol };
+    }
+    function proxyImportAddressFirst(value, protocol) {
+      const rest = value.slice(value.indexOf('://') + 3);
+      if (!rest || /[\/?#]/.test(rest)) return { valid: false, reason: '地址在前格式不允许路径、查询参数或片段' };
+      let addressEnd = rest.indexOf(':');
+      let host = '';
+      if (rest.startsWith('[')) {
+        const bracket = rest.indexOf(']');
+        if (bracket < 1 || rest[bracket + 1] !== ':') return { valid: false, reason: 'IPv6 主机格式无效' };
+        host = rest.slice(1, bracket);
+        addressEnd = bracket + 1;
+      } else {
+        if (addressEnd < 1) return { valid: false, reason: '缺少主机名' };
+        host = rest.slice(0, addressEnd);
+      }
+      if (!host || /[\s\/?#@\[\]]/.test(host)) return { valid: false, reason: '主机名无效' };
+      const remainder = rest.slice(addressEnd + 1);
+      const portEnd = remainder.indexOf(':');
+      if (portEnd < 1) return { valid: false, reason: '地址在前格式必须为 host:port:username:password' };
+      const portText = remainder.slice(0, portEnd);
+      if (!/^[0-9]+$/.test(portText)) return { valid: false, reason: '端口无效' };
+      const port = Number(portText);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return { valid: false, reason: '端口无效' };
+      const credentials = remainder.slice(portEnd + 1);
+      const credentialEnd = credentials.indexOf(':');
+      if (credentialEnd <= 0) return { valid: false, reason: '用户名和密码不能为空，格式为 host:port:username:password' };
+      let username;
+      let password;
+      try {
+        username = decodeProxyImportCredential(credentials.slice(0, credentialEnd), '用户名');
+        password = decodeProxyImportCredential(credentials.slice(credentialEnd + 1), '密码');
+      } catch (error) {
+        return { valid: false, reason: error.message };
+      }
+      if (!username) return { valid: false, reason: '用户名不能为空' };
+      if (/[\u0000-\u001f\u007f]/.test(username + password)) return { valid: false, reason: '凭据包含控制字符' };
+      const key = protocol + '//' + host.toLowerCase() + ':' + port + ':' + encodeURIComponent(username) + ':' + encodeURIComponent(password);
+      return { valid: true, key: key, value: value, protocol: protocol };
+    }
+    function proxyImportHostPortAtCredentials(value, protocol) {
+      const rest = value.slice(value.indexOf('://') + 3);
+      if (!rest || /[\/?#]/.test(rest)) return { valid: false, reason: 'host:port@user:pass 格式不允许路径、查询参数或片段' };
+      const at = rest.indexOf('@');
+      if (at <= 0 || at >= rest.length - 1) return { valid: false, reason: '格式必须为 host:port@username:password' };
+      const address = rest.slice(0, at);
+      const credentials = rest.slice(at + 1);
+      let host;
+      let portText;
+      if (address.startsWith('[')) {
+        const bracket = address.indexOf(']');
+        if (bracket < 1 || address[bracket + 1] !== ':') return { valid: false, reason: 'IPv6 主机格式无效' };
+        host = address.slice(1, bracket);
+        portText = address.slice(bracket + 2);
+      } else {
+        const colon = address.lastIndexOf(':');
+        if (colon < 1) return { valid: false, reason: '@ 前必须是 host:port' };
+        host = address.slice(0, colon);
+        portText = address.slice(colon + 1);
+        if (host.includes(':')) return { valid: false, reason: 'IPv6 地址必须使用方括号' };
+      }
+      if (!host || /[\s\/?#@\[\]]/.test(host)) return { valid: false, reason: '主机名无效' };
+      if (!/^[0-9]+$/.test(portText)) return { valid: false, reason: '端口无效' };
+      const port = Number(portText);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return { valid: false, reason: '端口无效' };
+      const credentialEnd = credentials.indexOf(':');
+      if (credentialEnd <= 0) return { valid: false, reason: '@ 后必须是 username:password' };
+      let username;
+      let password;
+      try {
+        username = decodeProxyImportCredential(credentials.slice(0, credentialEnd), '用户名');
+        password = decodeProxyImportCredential(credentials.slice(credentialEnd + 1), '密码');
+      } catch (error) {
+        return { valid: false, reason: error.message };
+      }
+      if (!username) return { valid: false, reason: '用户名不能为空' };
+      if (/[\u0000-\u001f\u007f]/.test(username + password)) return { valid: false, reason: '凭据包含控制字符' };
+      const key = protocol + '//' + host.toLowerCase() + ':' + port + '@' + encodeURIComponent(username) + ':' + encodeURIComponent(password);
+      return { valid: true, key: key, value: value, protocol: protocol };
+    }
     function proxyImportLine(raw) {
       const value = String(raw || '').trim();
       if (!value) return { valid: false, empty: true, reason: '' };
@@ -5046,10 +5143,10 @@
       if (!match) return { valid: false, reason: '缺少协议' };
       const protocol = match[1].toLowerCase() + ':';
       if (!PROXY_IMPORT_PROTOCOLS.has(protocol)) return { valid: false, reason: '不支持的协议' };
-      let endpoint;
-      try { endpoint = new URL(value); } catch (_) { return { valid: false, reason: 'URL 格式无效' }; }
-      if (!endpoint.hostname) return { valid: false, reason: '缺少主机名' };
-      return { valid: true, key: endpoint.href, value: value };
+      const standard = proxyImportStandard(value, protocol);
+      if (standard.valid) return standard;
+      const addressFirst = proxyImportAddressFirst(value, protocol);
+      return addressFirst.valid ? addressFirst : proxyImportHostPortAtCredentials(value, protocol);
     }
     function parseProxyImportText(text) {
       const source = String(text || '');
@@ -5092,13 +5189,15 @@
         overLimit: validCount > PROXY_IMPORT_MAX_NODES,
         overBytes: validBytes > PROXY_IMPORT_MAX_BYTES
       };
-    }    async function openProxyImportEditor() {
+    }
+
+    async function openProxyImportEditor() {
       if (!document.getElementById('proxySourceDrawer').hidden && !await closeProxyDrawer()) return;
       const editor = beginProxyEditor('import', null);
       editor.importTimer = 0;
       document.getElementById('proxySourceEditorTitle').textContent = '批量导入代理节点';
-      document.getElementById('proxySourceEditorSubtitle').textContent = '每行一个完整代理 URL，支持 HTTP、HTTPS、SOCKS5、SOCKS5H；可粘贴多行或加载本地文件，导入时自动跳过无效行';
-      document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyImportForm" class="drawer-form"><section class="card"><div class="form-section"><div class="import-toolbar"><div><h3>代理列表</h3></div><div class="import-toolbar-actions"><input id="proxyImportFile" type="file" accept=".txt,.list,.csv,text/plain,text/csv" hidden><button class="btn btn-xs" type="button" id="proxyImportFileBtn">' + icon('upload') + '加载文件</button><button class="btn btn-xs btn-ghost" type="button" id="proxyImportFilterBtn">' + icon('check') + '过滤无效行</button></div></div><div class="field full"><label for="proxyImportText">代理 URL</label><textarea id="proxyImportText" class="proxy-import-text" spellcheck="false" wrap="off" aria-describedby="proxyImportHint" placeholder="http://user:pass@proxy.example:8080\nsocks5h://user:pass@[2001:db8::1]:1080"></textarea><span class="hint" id="proxyImportHint">上限：100000 条 · 16 MiB，重复项自动忽略</span></div><div class="import-stats" id="proxyImportStats" role="status" aria-live="polite"></div><div class="import-samples" id="proxyImportSamples" hidden></div><div class="form-actions"><button class="btn btn-primary" type="submit" id="proxyImportSubmitBtn" disabled>' + icon('check') + '导入有效节点</button><span class="status-line" id="proxySourceEditorStatus" role="status" aria-live="polite"></span></div></div></section></form>';
+      document.getElementById('proxySourceEditorSubtitle').textContent = '每行一个代理节点，自动优先按标准 URL 解析，失败后尝试地址在前和 host:port@user:pass 格式；支持 HTTP、HTTPS、SOCKS5、SOCKS5H';
+      document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyImportForm" class="drawer-form"><section class="card"><div class="form-section"><div class="import-toolbar"><div><h3>代理列表</h3></div><div class="import-toolbar-actions"><input id="proxyImportFile" type="file" accept=".txt,.list,.csv,text/plain,text/csv" hidden><button class="btn btn-xs" type="button" id="proxyImportFileBtn">' + icon('upload') + '加载文件</button><button class="btn btn-xs btn-ghost" type="button" id="proxyImportFilterBtn">' + icon('check') + '过滤无效行</button></div></div><div class="field full"><label for="proxyImportText">代理 URL</label><textarea id="proxyImportText" class="proxy-import-text" spellcheck="false" wrap="off" aria-describedby="proxyImportHint" placeholder="http://user:pass@proxy.example:8080\nsocks5h://proxy.example:1080:user:pass\nhttp://proxy.example:8080@user:pass\nsocks5h://[2001:db8::1]:1080:user:pass"></textarea><span class="hint" id="proxyImportHint">标准 URL 优先，失败后自动尝试地址在前或 host:port@user:pass；上限：100000 条 · 16 MiB，重复项自动忽略</span></div><div class="import-stats" id="proxyImportStats" role="status" aria-live="polite"></div><div class="import-samples" id="proxyImportSamples" hidden></div><div class="form-actions"><button class="btn btn-primary" type="submit" id="proxyImportSubmitBtn" disabled>' + icon('check') + '导入有效节点</button><span class="status-line" id="proxySourceEditorStatus" role="status" aria-live="polite"></span></div></div></section></form>';
 
       const textarea = document.getElementById('proxyImportText');
       const fileInput = document.getElementById('proxyImportFile');
@@ -5106,6 +5205,7 @@
       const stats = document.getElementById('proxyImportStats');
       const samples = document.getElementById('proxyImportSamples');
       const status = document.getElementById('proxySourceEditorStatus');
+
       const stat = (label, value, tone) => '<span class="import-stat ' + (tone || '') + '"><span>' + label + '：</span><strong>' + esc(String(value)) + '</strong></span>';
       const renderPreview = (parsed, note) => {
         stats.innerHTML = stat('共', parsed.lineCount) + stat('有效', parsed.validCount, parsed.validCount ? 'good' : '') + stat('无效', parsed.invalid, parsed.invalid ? 'bad' : '') + stat('重复', parsed.duplicate, parsed.duplicate ? 'warn' : '') + stat('体积', formatBytes(parsed.validBytes));
@@ -5128,6 +5228,7 @@
       };
 
       textarea.addEventListener('input', schedulePreview);
+
       textarea.addEventListener('paste', (event) => {
         const pasted = event.clipboardData?.getData('text') || '';
         if (PROXY_IMPORT_ENCODER.encode(pasted).length <= PROXY_IMPORT_MAX_BYTES) return;
@@ -5363,7 +5464,7 @@
     }
     async function applyProxyTemplateSource(sourceID, button) {
       let preview;
-      try { preview = await api('proxy.templates.apply_bound', { source_id: sourceID, dry_run: true }); }
+      try { preview = await api('proxy.template.apply', { source_id: sourceID, dry_run: true }); }
       catch (error) { toast(error.message, 'error'); return; }
       const confirmed = await confirmAction({
         title: '应用模板到已绑定账号',
@@ -5374,7 +5475,7 @@
       if (!confirmed) return;
       setBusy(button, true);
       try {
-        const task = await api('proxy.templates.apply_bound', { source_id: sourceID });
+        const task = await api('proxy.template.apply', { source_id: sourceID });
         toast('模板应用任务已提交', 'success');
         const result = await waitForTask(task, '应用代理模板');
         reportProxyResult(result, '应用代理模板');
@@ -5835,7 +5936,7 @@
       try {
         const currentStateFile = String((state.overview && state.overview.state_file) || '').trim();
         if (nextStateFile !== currentStateFile) {
-          document.getElementById('policyStatus').textContent = '正在迁移状态文件…';
+          document.getElementById('policyStatus').textContent = '正在切换状态文件路径…';
           const moved = await api('state_file.update', { state_file: nextStateFile });
           if (moved && moved.state_file) setValue('p_state_file', moved.state_file);
         }
@@ -5887,7 +5988,7 @@
       document.getElementById('drawerTitle').textContent = account.display_full || account.display || account.label || '账号详情';
       document.getElementById('drawerSubtitle').textContent = account.auth_id_display || account.auth_id || '';
       const proxyStatus = account.proxy_status || 'unbound';
-      const proxyStatusBadge = proxyStatus === 'bound' ? badge('代理已绑定', 'info') : (proxyStatus === 'drifted' ? badge('与记录不一致', 'warn') : (proxyStatus === 'reconcile_required' ? badge('待核对', 'bad') : (['conflict', 'external'].includes(proxyStatus) ? badge('外部配置', '') : (proxyStatus === 'unknown' ? badge('读取失败', 'bad') : badge('未绑定代理', '')))));
+      const proxyStatusBadge = proxyStatus === 'bound' ? badge('代理已绑定', 'info') : (proxyStatus === 'drifted' ? badge('与记录不一致', 'warn') : (proxyStatus === 'reconcile_required' ? badge('待核对', 'bad') : (proxyStatus === 'external' ? badge('外部配置', '') : (proxyStatus === 'unknown' ? badge('读取失败', 'bad') : badge('未绑定代理', '')))));
       const actionButtons = [
         '<button class="btn" type="button" data-account-action="accounts.probe" data-auth="' + esc(account.auth_id) + '">' + icon('play') + '主动探测</button>',
         '<button class="btn" type="button" data-account-action="accounts.cooldown" data-auth="' + esc(account.auth_id) + '">' + icon('clock') + '冷却 12 小时</button>',
@@ -5904,7 +6005,7 @@
         actionButtons.push('<button class="btn btn-danger" type="button" data-proxy-action="clear" data-auth="' + esc(account.auth_id) + '">' + icon('x') + '清除代理</button>');
       } else if (proxyStatus === 'unbound' && canBind) {
         actionButtons.push('<button class="btn" type="button" data-proxy-action="bind" data-auth="' + esc(account.auth_id) + '">' + icon('link') + '绑定代理</button>');
-      } else if (proxyStatus === 'conflict' || proxyStatus === 'external') {
+      } else if (proxyStatus === 'external') {
         actionButtons.push('<button class="btn btn-danger" type="button" data-proxy-action="clear-external" data-auth="' + esc(account.auth_id) + '">' + icon('x') + '清除外部代理</button>');
       }
       actionButtons.push('<button class="btn btn-ghost" type="button" data-proxy-action="' + (account.auto_bind_excluded ? 'resume-auto' : 'pause-auto') + '" data-auth="' + esc(account.auth_id) + '">' + (account.auto_bind_excluded ? '恢复自动绑定' : '暂停自动绑定') + '</button>');
@@ -5924,7 +6025,7 @@
         evidenceSection(evidence),
         '<div class="drawer-section"><h3>账号信息</h3><div class="detail-grid">',
         '<div class="detail-cell"><div class="detail-label">认证 ID</div><div class="detail-value mono">' + esc(account.auth_id_display || account.auth_id) + '</div></div>',
-        '<div class="detail-cell"><div class="detail-label">轮换代数</div><div class="detail-value">第 ' + esc(account.proxy_generation || account.resin_generation || 0) + ' 代</div></div>',
+        '<div class="detail-cell"><div class="detail-label">轮换代数</div><div class="detail-value">第 ' + esc(account.proxy_generation || 0) + ' 代</div></div>',
         '<div class="detail-cell"><div class="detail-label">最近观测</div><div class="detail-value">' + esc(formatFullTime(account.last_observed_at)) + '</div></div>',
         '<div class="detail-cell"><div class="detail-label">最近探测</div><div class="detail-value">' + esc(formatFullTime(account.last_probe_at)) + '</div></div>',
         '<div class="detail-cell"><div class="detail-label">冷却截止</div><div class="detail-value">' + esc(formatFullTime(account.cooldown_until)) + '</div></div>',
@@ -5932,7 +6033,7 @@
         '</div></div>',
         '<div class="drawer-section"><h3>代理</h3><div class="detail-grid">',
 		'<div class="detail-cell"><div class="detail-label">代理</div><div class="detail-value">' + esc((account.proxy_source_kind ? proxySourceLabel(account.proxy_source_kind) + ' · ' : '') + (account.proxy_source_id || '-')) + '</div></div>',
-        '<div class="detail-cell"><div class="detail-label">租约账号</div><div class="detail-value mono">' + esc(account.resin_account || '-') + '</div></div>',
+        '<div class="detail-cell"><div class="detail-label">租约账号</div><div class="detail-value mono">' + esc(account.proxy_lease_account || '-') + '</div></div>',
         '<div class="detail-cell"><div class="detail-label">代理地址</div><div class="detail-value mono">' + esc(account.proxy || '-') + '</div></div>',
 		'<div class="detail-cell"><div class="detail-label">自动绑定</div><div class="detail-value">' + (account.auto_bind_excluded ? '已暂停' : '允许') + '</div></div>',
         '</div></div>',

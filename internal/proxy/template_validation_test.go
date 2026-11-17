@@ -51,7 +51,7 @@ func TestTemplateEncodingPreservesLiteralBracesAndCredentialValues(t *testing.T)
 	if got, want := rendered.Endpoint.Password, "p{braces}@:%"; got != want {
 		t.Fatalf("password = %q, want %q", got, want)
 	}
-	reparsed, err := ParseEndpoint(rendered.URL, ParseOptions{})
+	reparsed, err := ParseEndpoint(rendered.URL)
 	if err != nil || reparsed != rendered.Endpoint || reparsed.Host != "example.com" {
 		t.Fatalf("rendered URL did not round-trip: endpoint=%#v error=%v", reparsed, err)
 	}
@@ -93,7 +93,7 @@ func TestTemplateStaticAuthenticationForms(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			expected, err := ParseEndpoint(raw, ParseOptions{})
+			expected, err := ParseEndpoint(raw)
 			if err != nil || rendered.Endpoint != expected {
 				t.Fatalf("authentication form changed: got=%#v expected=%#v error=%v", rendered.Endpoint, expected, err)
 			}
@@ -102,7 +102,7 @@ func TestTemplateStaticAuthenticationForms(t *testing.T) {
 }
 
 func TestEndpointValidationAndCanonicalIDNA(t *testing.T) {
-	endpoint, err := ParseEndpoint("HTTP://u:p@例子.测试:443/", ParseOptions{})
+	endpoint, err := ParseEndpoint("HTTP://u:p@例子.测试:443/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestEndpointValidationAndCanonicalIDNA(t *testing.T) {
 		"http://alice:private%GG@proxy.example:8080",
 	}
 	for _, raw := range bad {
-		if _, err := ParseEndpoint(raw, ParseOptions{}); err == nil {
+		if _, err := ParseEndpoint(raw); err == nil {
 			t.Fatalf("invalid endpoint accepted: %q", raw)
 		} else if strings.Contains(err.Error(), "private") {
 			t.Fatalf("endpoint error disclosed credentials: %v", err)
@@ -140,8 +140,11 @@ func TestEndpointValidationAndCanonicalIDNA(t *testing.T) {
 			t.Fatalf("invalid field endpoint accepted: %#v", endpoint)
 		}
 	}
-	if MaskProxyURL("http://host:8080:user:private") != "[redacted]" {
-		t.Fatal("invalid colon input was not redacted")
+	if masked := MaskProxyURL("http://host:8080:user:private"); masked != "http://us***r:******@host:8080" {
+		t.Fatalf("address-first input was not masked as a URL: %q", masked)
+	}
+	if masked := MaskProxyURL("http://host:8080@user:private"); masked != "http://us***r:******@host:8080" {
+		t.Fatalf("host:port@user:pass input was not masked as a URL: %q", masked)
 	}
 }
 
@@ -167,16 +170,6 @@ func TestEndpointCredentialProtocolByteLimits(t *testing.T) {
 				t.Fatalf("%s %s exceeded its byte limit", protocol, field)
 			}
 		}
-	}
-}
-
-func TestColonFormatIPv6AndDecodeOnce(t *testing.T) {
-	endpoint, err := ParseEndpoint("socks5h://[2001:db8::1]:1080:u%40x:p%253A%40", ParseOptions{AllowColonFormat: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if endpoint.Host != "2001:db8::1" || endpoint.Username != "u@x" || endpoint.Password != "p%3A@" {
-		t.Fatalf("unexpected address-first endpoint: %#v", endpoint)
 	}
 }
 
@@ -374,7 +367,7 @@ func TestTemplateRenderAvoidingFindsFiniteAlternative(t *testing.T) {
 	}
 }
 
-func TestTemplateRelationRowsAllowLegacyLimitAndRejectAboveNewLimit(t *testing.T) {
+func TestTemplateRelationRowsAtLimitAndRejectAbove(t *testing.T) {
 	rows := make([][]string, maxGroupRows)
 	for index := range rows {
 		rows[index] = []string{fmt.Sprintf("%x", index), "x"}

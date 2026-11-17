@@ -19,7 +19,4 @@ const (
 	DisableKindPermanent         = "permanent"
 )
 
-const (
-	stateSchemaVersion = 2
-	resinSourceID      = "resin"
-)
+const stateSchemaVersion = 1

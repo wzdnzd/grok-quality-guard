@@ -15,7 +15,7 @@ Grok Quality Guard 观测 Grok / xAI auth 的真实响应质量，识别 HTTP 20
 - 检测 `missing_thinking`、`buffered_burst`、`cipher_drool`、`fake_encrypted_dump`、`fast_reasoning_ratio_dump`、`soft_tps`、`hard_tps`、`empty_stream`、`probe_error`、`proxy_error`
 - 账号状态机：`unknown`、`healthy`、`suspect`、`degraded`、`cooling`、`quota_exhausted`、`credential_invalid`、`disabled_by_guard`、`externally_disabled`
 - 首次确认异常可配置为只观察或临时冷却，冷却到期通过固定 prompt 恢复探测
-- 通用代理节点、模板与 Resin 来源统一管理；支持 `http`、`https`、`socks5`、`socks5h`、批量导入、均衡绑定、轮换和清除
+- 通用代理节点、模板与 Resin 来源统一管理；支持 `http`、`https`、`socks5`、`socks5h`、标准 URL / 地址在前 / `host:port@user:pass` 多格式批量导入、均衡绑定、轮换和清除
 - 内嵌中文化管理页，按概览、账号质量、代理管理、事件日志和设置分 Tab；代理管理内部按“账号绑定 / 代理来源”组织，节点、模板与 Resin 共享同一绑定视图
 - 账号详情展示最近尝试与脱敏质量判定依据，明确区分非质量错误和上一次真实质量结论
 - auth、proxy URL、Admin Token、xAI token 全程脱敏
@@ -174,7 +174,7 @@ internal/
     quality/                    质量处置、冷却、恢复与状态对账
     redact/                     日志和错误脱敏
     routing/                    候选选择、会话粘性与选择索引
-    state/                      持久化状态、代理 journal 与路径迁移
+    state/                      持久化状态、代理 journal 与路径切换
     tasks/                      后台任务队列
   test/                         通过公开 ABI/管理接口驱动的跨包测试
   config/                       配置解码、默认值、校验与策略映射
@@ -188,7 +188,7 @@ internal/
 
 领域实现位于 `internal/app` 的各自子包；`plugin.go`、`host_bridge.go` 和 `registration.go` 只保留装配与宿主边界。子包通过显式的 `Environment` interface 使用宿主能力，不反向导入 `internal/app`。Resin 是 `internal/app/proxy/resin` 独立子包，普通代理模板不依赖 Resin 配置。
 
-测试按作用域组织：只验证单个子包行为的单元测试放在目标包目录；跨包验收测试优先放在 `internal/test`，通过 `NewPlugin`、`Configure`、`RouteModel`、`Execute*`、`HandleManagement` 和 fake host 等公开边界驱动，不依赖私有字段。`internal/app` 根目录只保留仍需验证同包私有装配细节的过渡性白盒测试；迁移时按业务域拆分测试场景，而不是新增生产代码导出。
+测试按作用域组织：只验证单个子包行为的单元测试放在目标包目录；跨包验收测试优先放在 `internal/test`，通过 `NewPlugin`、`Configure`、`RouteModel`、`Execute*`、`HandleManagement` 和 fake host 等公开边界驱动，不依赖私有字段。`internal/app` 根目录只保留仍需验证同包私有装配细节的过渡性白盒测试；拆分测试时按业务域组织场景，而不是新增生产代码导出。
 
 ## 配置
 
@@ -251,16 +251,6 @@ plugins:
         suspect_backoff: "15m"
         max_backoff: "1h"
 
-      resin:
-        enabled: false
-        local_only: false
-        platform: "Default"
-        admin_url: ""
-        admin_token_env: "RESIN_ADMIN_TOKEN"
-        proxy_token_env: "RESIN_PROXY_TOKEN"
-        proxy_template: "socks5h://{platform}.{account}:{proxy_token}@resin:2260"
-        auto_rotate_after_quality_failure: true
-
       proxy:
         auto_rotate_after_quality_failure: true
         auto_bind:
@@ -282,6 +272,8 @@ plugins:
       state_file: "/CLIProxyAPI/plugins/data/grok-quality-guard/state.json"
       events_limit: 1000
 ```
+
+配置使用严格 YAML 解码，未知字段（包括旧 `resin:` 配置块）会直接报错，不会静默忽略。
 
 ### 自动处置
 
@@ -344,7 +336,7 @@ plugins:
 
 插件支持三类代理来源：
 
-1. **节点**：直接保存 `协议://用户名:密码@主机:端口`，支持无认证、仅用户名、IPv4、IPv6 和 URL 编码凭据。无 scheme 的导入行会被忽略。
+1. **节点**：普通编辑保存 `协议://用户名:密码@主机:端口`；导入时自动优先按标准 URL 解析，失败后尝试地址在前 `协议://主机:端口:用户名:密码` 或 `协议://主机:端口@用户名:密码`。三种形式均支持 IPv4、IPv6 和 URL 编码凭据；标准 URL 与地址在前格式也支持无认证或仅用户名。无 scheme 的导入行会被忽略。
 2. **模板**：占位符只允许出现在用户名中；每个变量可选 `enum` 或 `random`。枚举值使用用户配置的分隔符解析，替换时随机选择；随机值由英文字母和数字组成，可配置长度与大小写敏感。
 3. **Resin**：一种特殊模板。与节点、模板共用新增类型下拉、列表、编辑、检测、删除、绑定和轮换流程；API 模式额外负责远端租约删除。可以添加多个 Resin 代理，以同一 Resin 服务的不同平台、Admin 地址或账号生成规则分别参与选择。
 
@@ -364,7 +356,7 @@ API 模式用于创建新的代理绑定，并管理 Resin 远端租约。在“
 2. 使用同一 Admin Token 请求 `GET /api/v1/platforms?keyword={platform}`，按名称精确解析平台 UUID 并读取规范平台名称
 3. 按账号格式生成代理 URL 渲染验证账号，并执行 SOCKS5 RFC1929 用户名/密码认证，确认 Proxy Token 有效
 
-任一步失败都不会保存配置。已保存的 token 不会回填到页面，也不会通过管理页或 JSON API 返回；再次保存时留空 Secret 输入框会保留已有值。YAML 中的 `admin_token_env` 和 `proxy_token_env` 仅作为 state 尚未配置时的环境变量回退来源。
+任一步失败都不会保存配置。已保存的 token 不会回填到页面，也不会通过管理页或 JSON API 返回；再次保存时留空 Secret 输入框会保留已有值。连接凭据只保存在 state 的 Resin 来源配置中，不再从 YAML 环境变量字段回退读取。
 
 Resin 平台名称在 Resin 中唯一。管理页只要求填写名称，保存时通过平台列表接口解析出 `platform_id` 并写入状态文件；管理员不需要手工填写 UUID。绑定操作仍会按内部 `platform_id` 重新查询规范名称；轮换使用已保存的规范平台名称和账号格式，不在请求关键路径调用平台接口。
 
@@ -378,20 +370,13 @@ Resin 绑定必须由管理员显式触发，不会在首次启动时自动覆�
 
 租约删除不在 CPA 请求关键路径上。删除失败时任务保留在 state 中，按 30 秒起步的指数退避重试，最长间隔 1 小时；插件重启后会继续处理。管理页事件日志会记录 `resin_lease_delete` 的 queued、retry_scheduled 和 succeeded 结果。
 
-API 模式清除 `proxy_url` 时，插件会先清空本地 auth 并写入 state，再异步排队删除旧 Resin 租约，不会等待管理接口。auth 保存失败仍会使操作失败；auth 已保存但 state 写入失败时，本地清除仍然有效，只记录 `internal_error`。如果旧 state 缺少 Resin 租约字段，但 auth 代理端点与已保存的 Resin 代理模板一致，插件会从代理用户名反推租约 account 并排队删除。
+API 模式清除 `proxy_url` 时，插件会先清空本地 auth 并写入 state，再异步排队删除旧 Resin 租约，不会等待管理接口。auth 保存失败仍会使操作失败；auth 已保存但 state 写入失败时，本地清除仍然有效，只记录 `internal_error`。插件不会从 auth 代理 URL 反推历史租约；只有通用 binding 中记录了有效 SnapshotID 的租约才会进入清理队列。
 
-当 CPA auth 列表中的账号消失时，插件会在删除对应 state 记录前，把该 state 中仍记录的 Resin 管理租约加入同一持久化删除队列。该清理只在 Resin API 模式启用且配置完整时执行；`resin.enabled=false`、`local_only`、缺少 Admin URL、Platform ID 或 Admin Token，以及没有记录租约 account 的账号不会访问 Resin API。
+当 CPA auth 列表中的账号消失时，插件会在删除对应 state 记录前，把该 state 中仍记录的 Resin 管理租约加入同一持久化删除队列。该清理只处理绑定中带有有效 Resin 快照的账号；本地轮换、缺少快照、没有租约 account 或连接信息不完整的记录不会访问 Resin API。
 
 ### 仅本地轮换
 
-仅本地轮换用于只修改 auth 中已有代理、但不管理 Resin 远端租约的场景。它不需要 Admin API URL、Platform ID、Admin Token、Proxy Token 或代理模板：
-
-```yaml
-resin:
-  enabled: true
-  local_only: true
-```
-
+仅本地轮换在“新增类型 / Resin”编辑器中勾选“仅本地轮换”即可，不再使用 YAML 中的全局 Resin 配置。该模式不需要 Admin API URL、Platform ID、Admin Token、Proxy Token 或代理模板。
 本地轮换要求 auth 中已有代理包含用户名和密码，且用户名最后一个 `.` 后是当前 account。例如：
 
 ```text
@@ -451,31 +436,24 @@ curl -X POST \
 | `proxy.summary` | 代理来源、绑定状态和自动绑定运行时摘要 |
 | `proxy.sources.list/get` | 代理来源列表与脱敏详情 |
 | `proxy.sources.validate/preview/test` | 配置验证、条件预览和端点检测 |
-| `proxy.sources.create/import_nodes/update/delete` | 节点、模板 CRUD 与批量节点导入 |
+| `proxy.sources.create/import_nodes/update/delete` | 节点、模板 CRUD 与批量节点导入，自动识别标准 URL、地址在前和 `host:port@user:pass` 格式 |
 | `proxy.bindings.list/bind/clear/rotate/adopt` | 分页查询、绑定、清除、轮换和显式接管 |
 | `proxy.bindings.endpoint` | 按 auth 显式读取完整代理端点；列表默认仅返回脱敏端点 |
 | `proxy.bindings.set_auto_bind` | 暂停或恢复指定 auth 的自动绑定 |
 | `proxy.bind_unbound` | 显式批量绑定未绑定 auth |
-| `proxy.template.apply` / `proxy.templates.apply_bound` | 将当前模板按固定版本应用到已绑定 auth |
+| `proxy.template.apply` | 将当前模板按固定版本应用到已绑定 auth |
 | `proxy.auto_bind.get/update/run` | 自动绑定策略、保存和立即扫描 |
 | `proxy.changes.list/get/retry/cancel` | 同步与回溯详情、失败重试及取消 |
-| `resin.cleanup.list/retry/pause` | 历史租约清理、重试和暂停/恢复 |
-| `resin.bind` | 提交异步绑定任务；仅 API 模式可用 |
-| `resin.bind_unbound` | 提交异步批量绑定任务 |
-| `resin.rotate` | 提交异步轮换任务；本地模式只改写已有代理用户名 |
-| `resin.clear` | 提交异步清除任务；API 模式清除代理后异步排队删除管理租约，本地模式不处理远端租约 |
-| `resin.config.get` | 查看脱敏的 Resin 配置与 Secret 是否已设置 |
-| `resin.config.validate` | 提交异步 Resin 配置验证任务 |
-| `resin.config.save` | 提交异步验证并保存任务 |
+| `resin.cleanup.list/retry/pause` | 已排队租约清理、重试和暂停/恢复 |
 | `policy.get` | 查看运行时策略 |
 | `policy.update` | 校验并持久化策略 |
 | `policy.reset` | 重置为 YAML 初始值 |
-| `state_file.update` | 迁移并切换状态文件路径；目标文件必须不存在 |
+| `state_file.update` | 写入并切换状态文件路径；目标文件必须不存在 |
 | `events.list` | 查看质量事件日志 |
 | `tasks.get` | 查询异步任务状态、结果和错误 |
 | `tasks.list` | 列出最近异步任务 |
 
-主动探测、Resin 配置验证/保存、通用代理批量绑定/清除/轮换、模板回溯和 Resin 操作都是长耗时操作，会立即返回 `202 Accepted` 与 `task_id`，不会占住管理请求超时。调用方应轮询：
+主动探测、通用代理批量绑定/清除/轮换、模板回溯和 Resin 租约清理都是长耗时操作，会立即返回 `202 Accepted` 与 `task_id`，不会占住管理请求超时。调用方应轮询：
 
 ```json
 {"action":"tasks.get","params":{"task_id":"<task_id>"}}
@@ -496,7 +474,7 @@ plugins/data/grok-quality-guard/state.json
 <temp>/grok-quality-guard/state.json
 ```
 
-Docker 部署必须把第一项所在目录挂载为宿主持久卷，否则容器重建后策略、账号状态、事件、Resin 配置和凭据仍会丢失：
+Docker 部署必须把第一项所在目录挂载为宿主持久卷，否则容器重建后策略、账号状态、事件、代理来源配置、Resin 连接凭据和清理快照仍会丢失：
 
 ```yaml
 services:
@@ -509,15 +487,15 @@ services:
 
 管理页“设置 / 守护策略”中的状态文件路径可以直接编辑。保存新路径时，插件会把当前完整 state 写入目标文件并立即切换；为避免覆盖已有数据，目标文件必须尚不存在。引导路径旁会生成 `<state_file>.location` 指针文件，使插件重启后继续使用新路径。修改 YAML 中的 `state_file` 会产生新的引导位置，因此可以借此重新指定路径；如要回退到旧引导文件，需要先删除对应指针文件。
 
-状态文件使用 schema v2、原子替换写入，Unix 权限为目录 `0700`、文件 `0600`。策略首次从 YAML 初始化，之后管理页修改会持久化到 state；`policy.reset` 会恢复为当前 YAML 的默认值。通过管理页保存的多个 Resin 代理配置和 API 模式 token 也存储在 state 中，API 与页面只返回是否已设置的布尔标记。管理页设置区会显示当前实际使用的状态文件路径。
+状态文件使用 schema v1、原子替换写入，Unix 权限为目录 `0700`、文件 `0600`。读取时严格拒绝未知字段和非 v1 schema；不会迁移或兼容旧 state，旧数据必须删除后重建。策略首次从 YAML 初始化，之后管理页修改会持久化到 state；`policy.reset` 会恢复为当前 YAML 的默认值。通过管理页保存的多个 Resin 代理配置、连接凭据和租约清理快照也存储在 state 中，API 与页面只返回是否已设置的布尔标记。管理页设置区会显示当前实际使用的状态文件路径。
 
 插件运行时只会修改 auth 文件中的原生字段 `disabled` 和 `proxy_url`。冷却原因、strike、禁用所有权、Resin 租约及其他控制信息全部保存在 `state.json`，不再向 auth 写入 `grok_quality_guard` 或其他插件私有字段。
 
 代理写入使用相邻的 `state.json.proxy-journal` 保存准备与提交记录，主 state 定期原子 checkpoint 后截断日志。备份或恢复应停止插件，并保留匹配的 state、journal 和 `.location` 指针；不可在运行时只覆盖其中一份。
 
-来源编辑须传 `expected_version`。节点端点变化自动同步绑定；模板默认保持旧绑定，选择 `rerender_bound` 才回溯。失败任务保留成功结果，调用方应检查 `counts`、`committed` 和 `needs_reconcile`。节点和模板编辑通过 `edit_fields:true` 回显完整 URL，密码直接随 URL 修改；普通详情与列表仍不返回凭据。`password_update` 仅为其他 API 客户端保留兼容。
+来源编辑须传 `expected_version`。节点端点变化自动同步绑定；模板默认保持旧绑定，选择 `rerender_bound` 才回溯。失败任务保留成功结果，调用方应检查 `counts`、`committed` 和 `needs_reconcile`。节点和模板编辑通过 `edit_fields:true` 回显完整 URL，密码只随 URL 修改；普通详情与列表仍不返回凭据。
 
-依赖的 CLIProxyAPI v8.0.67 将 `socks5` 和 `socks5h` 都按远端 DNS 执行；按用户确认的兼容策略保留两种 URL，不改 scheme。HTTPS 代理在普通 HTTP/SSE 路径使用 TLS，原生 WebSocket 仍受宿主拨号器能力限制。完整实现约束与审查记录见 [代理管理设计](designs/proxy.md)。
+依赖的 CLIProxyAPI v8.0.67 将 `socks5` 和 `socks5h` 都按远端 DNS 执行；插件保留这两种 scheme，不做改写。HTTPS 代理在普通 HTTP/SSE 路径使用 TLS，原生 WebSocket 仍受宿主拨号器能力限制。完整实现约束与审查记录见 [代理管理设计](designs/proxy.md)。
 
 ## 开发与测试
 

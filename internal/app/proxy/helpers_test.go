@@ -44,3 +44,12 @@ func TestResinAccountBaseFallbacks(t *testing.T) {
 		t.Fatalf("fallback base = %q", got)
 	}
 }
+
+func TestResinAccountBaseUsesOnlyNormalizedEmailPrefix(t *testing.T) {
+	raw := map[string]json.RawMessage{}
+	encoded, _ := json.Marshal("Alice.Bob+Tag@example.com")
+	raw["email"] = encoded
+	if got := resinAccountBase(raw); got != "alice_bob_tag" {
+		t.Fatalf("resin account base = %q, want normalized email prefix", got)
+	}
+}

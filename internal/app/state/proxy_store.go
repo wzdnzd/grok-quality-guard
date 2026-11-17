@@ -29,7 +29,6 @@ type ProxyAccountCommit struct {
 	AuthID   string                     `json:"auth_id"`
 	Binding  proxy.Binding              `json:"binding"`
 	AutoBind proxy.AutoBindAccountState `json:"auto_bind"`
-	Resin    ResinState                 `json:"resin"`
 }
 
 type ProxyCommit struct {
@@ -38,8 +37,7 @@ type ProxyCommit struct {
 	Operation        *proxy.Operation               `json:"operation,omitempty"`
 	DeleteOperations []string                       `json:"delete_operations,omitempty"`
 	Cleanup          []ResinLeaseDelete             `json:"cleanup,omitempty"`
-	Tokens           map[string]string              `json:"tokens,omitempty"`
-	Snapshots        map[string]ResinSettings       `json:"snapshots,omitempty"`
+	Snapshots        map[string]proxy.ResinSnapshot `json:"snapshots,omitempty"`
 	Runtimes         map[string]proxy.SourceRuntime `json:"runtimes,omitempty"`
 	ChangeID         string                         `json:"change_id,omitempty"`
 	ChangeItem       *proxy.ChangeItem              `json:"change_item,omitempty"`
@@ -162,7 +160,7 @@ func (s *Store) replayProxyJournalLocked() error {
 			continue
 		}
 		var record ProxyJournalRecord
-		if err := json.Unmarshal(line, &record); err != nil {
+		if err := decodeStrictJSON(line, &record); err != nil {
 			return fmt.Errorf("invalid proxy journal: %w", err)
 		}
 		sum := sha256.Sum256(record.Payload)
@@ -170,7 +168,7 @@ func (s *Store) replayProxyJournalLocked() error {
 			return errors.New("proxy journal checksum mismatch")
 		}
 		var commit ProxyCommit
-		if err := json.Unmarshal(record.Payload, &commit); err != nil {
+		if err := decodeStrictJSON(record.Payload, &commit); err != nil {
 			return err
 		}
 		if commit.Sequence <= s.state.Proxy.JournalSequence {
@@ -208,7 +206,6 @@ func (s *Store) applyProxyCommitLocked(commit ProxyCommit) {
 		before := *account
 		account.Proxy = proxy.CloneBinding(delta.Binding)
 		account.AutoBind = delta.AutoBind
-		account.Resin = delta.Resin
 		s.indexProxyAccountLocked(delta.AuthID, &before, account)
 	}
 	if commit.Operation != nil {
@@ -228,17 +225,11 @@ func (s *Store) applyProxyCommitLocked(commit ProxyCommit) {
 			delete(state.Proxy.Operations, id)
 		}
 	}
-	for id, token := range commit.Tokens {
-		if state.ResinAdminTokens == nil {
-			state.ResinAdminTokens = make(map[string]string)
-		}
-		state.ResinAdminTokens[id] = token
-	}
-	for id, settings := range commit.Snapshots {
+	for id, snapshot := range commit.Snapshots {
 		if state.ResinSnapshots == nil {
-			state.ResinSnapshots = make(map[string]ResinSettings)
+			state.ResinSnapshots = make(map[string]proxy.ResinSnapshot)
 		}
-		state.ResinSnapshots[id] = settings
+		state.ResinSnapshots[id] = snapshot
 	}
 	for id, runtime := range commit.Runtimes {
 		if state.Proxy.SourceRuntime == nil {
@@ -449,7 +440,7 @@ func proxyLeaseIdentity(account AccountState) string {
 	if account.Proxy.Lease != nil {
 		return account.Proxy.Lease.Account
 	}
-	return account.Resin.Account
+	return ""
 }
 
 func (s *Store) ProxyChange(id string) (proxy.SourceChange, bool) {
@@ -600,16 +591,7 @@ func (s *Store) PrepareProxy(operation proxy.Operation, automatic bool) error {
 				}
 			}
 		}
-		if !found && sourceID == resinSourceID {
-			found = true
-			enabled = s.state.Proxy.ResinSource.Enabled
-			if s.state.Resin.Configured {
-				enabled = s.state.Resin.Enabled
-			}
-			if operation.Binding.SourceRevision != max(1, s.state.Proxy.ResinSource.Revision) {
-				return proxy.NewError("proxy_source_version_conflict", 409, "Resin revision changed before prepare")
-			}
-		}
+
 		if !found {
 			return proxy.NewError("proxy_source_not_found", 404, "proxy source no longer exists")
 		}
@@ -726,7 +708,7 @@ func (s *Store) ProxyAccount(authID string) AccountState {
 	if account == nil {
 		return AccountState{AuthID: authID}
 	}
-	return AccountState{AuthID: authID, State: account.State, DisableKind: account.DisableKind, Resin: account.Resin, Proxy: proxy.CloneBinding(account.Proxy), AutoBind: account.AutoBind}
+	return AccountState{AuthID: authID, State: account.State, DisableKind: account.DisableKind, Proxy: proxy.CloneBinding(account.Proxy), AutoBind: account.AutoBind}
 }
 
 func (s *Store) ProxyAutoBindConfig() proxy.AutoBindConfig {
@@ -775,23 +757,17 @@ func (s *Store) TakeRecoveredProxyChanges() []string {
 	return ids
 }
 
-func (s *Store) ProxyResinSource() proxy.ResinSourceState {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.state.Proxy.ResinSource
-}
-
-func resinSnapshotID(settings ResinSettings) string {
-	key := settings.AdminURL + "\x00" + settings.PlatformID + "\x00" + settings.Platform + "\x00" + settings.AdminToken + "\x00" + settings.ProxyTemplate + "\x00" + settings.ProxyToken + "\x00" + fmt.Sprint(settings.LocalOnly)
+func resinSnapshotID(snapshot proxy.ResinSnapshot) string {
+	key := strings.TrimRight(strings.TrimSpace(snapshot.AdminURL), "/") + "\x00" + strings.TrimSpace(snapshot.PlatformID) + "\x00" + snapshot.AdminToken
 	sum := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Store) ResinSnapshot(id string) (ResinSettings, bool) {
+func (s *Store) ResinSnapshot(id string) (proxy.ResinSnapshot, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	settings, ok := s.state.ResinSnapshots[strings.TrimSpace(id)]
-	return settings, ok
+	snapshot, ok := s.state.ResinSnapshots[strings.TrimSpace(id)]
+	return snapshot, ok
 }
 
 func (s *Store) RecordProxyHealth(id string, revision uint64, health proxy.HealthStatus, checked time.Time, cause error) error {
@@ -808,9 +784,7 @@ func (s *Store) RecordProxyHealth(id string, revision uint64, health proxy.Healt
 			currentRevision = template.Revision
 		}
 	}
-	if id == resinSourceID {
-		currentRevision = max(1, s.state.Proxy.ResinSource.Revision)
-	}
+
 	if currentRevision != revision {
 		return nil
 	}
@@ -877,9 +851,7 @@ func gcProxyHistory(state *State) {
 			snapshots[job.SnapshotID] = struct{}{}
 		}
 	}
-	if resinCleanupConfigured(state.Resin) {
-		snapshots[resinSnapshotID(state.Resin)] = struct{}{}
-	}
+
 	for _, change := range state.Proxy.Changes {
 		if change.Status != "succeeded" {
 			versions[proxyVersionKey(change.SourceID, change.TargetRevision)] = struct{}{}
@@ -929,7 +901,6 @@ func gcProxyHistory(state *State) {
 		keepChanges = append(keepChanges, change)
 	}
 	state.Proxy.Changes = keepChanges
-	gcResinAdminTokens(state)
 }
 
 func (s *Store) maybeGCProxyHistoryLocked() {
