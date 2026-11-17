@@ -151,7 +151,7 @@ func proxyDuplicateNodeError() error {
 }
 
 func proxyDuplicateTemplateError() error {
-	return proxyError("proxy_duplicate", 409, "相同标准 URL、占位符配置和关联关系的代理模板已存在")
+	return proxyError("proxy_duplicate", 409, "相同标准端点、占位符值空间和关联关系的代理模板已存在")
 }
 
 func proxyDuplicateNameError() error {
@@ -183,19 +183,7 @@ func proxySourceNameTaken(state *State, name, exceptID string) bool {
 }
 
 func templateDefinitionEqual(left, right proxy.Template) bool {
-	if left.Kind != right.Kind || !templateEndpointEqual(left, right) || !reflect.DeepEqual(left.Placeholders, right.Placeholders) {
-		return false
-	}
-	if len(left.ValueGroups) != len(right.ValueGroups) {
-		return false
-	}
-	for index := range left.ValueGroups {
-		leftGroup, rightGroup := left.ValueGroups[index], right.ValueGroups[index]
-		if leftGroup.ID != rightGroup.ID || !reflect.DeepEqual(leftGroup.Columns, rightGroup.Columns) || !reflect.DeepEqual(leftGroup.Rows, rightGroup.Rows) {
-			return false
-		}
-	}
-	return true
+	return proxy.TemplateDefinitionsEqual(left, right)
 }
 
 func (s *Service) createProxyNode(input proxyNodeInput) (proxy.Node, error) {

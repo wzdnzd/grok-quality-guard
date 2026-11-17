@@ -803,6 +803,37 @@ func TestProxyTemplateRejectsDuplicateDefinition(t *testing.T) {
 	t.Fatal("updated template disappeared")
 }
 
+func TestProxyTemplateRejectsSemanticallyEquivalentDefinition(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	first, errCreate := plugin.createProxyTemplate(proxyapp.TemplateInput{
+		Name: "renamed base",
+		URL:  "socks5h://rn-region-{country}-sid-{session}-t-5:password@us.arxlabs.io:3010",
+		Placeholders: []proxy.Placeholder{
+			{Name: "country", Kind: proxy.PlaceholderEnum, Enum: &proxy.EnumSpec{Separator: ",", Input: "US,CN,SG"}},
+			{Name: "session", Kind: proxy.PlaceholderRandom, Random: &proxy.RandomSpec{Length: 8, CaseSensitive: true}},
+		},
+	})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	_, errDuplicate := plugin.createProxyTemplate(proxyapp.TemplateInput{
+		Name: "renamed duplicate",
+		URL:  "socks5h://rn-region-{pl1}-sid-{pl2}-t-5:password@us.arxlabs.io:3010",
+		Placeholders: []proxy.Placeholder{
+			{Name: "pl2", Kind: proxy.PlaceholderRandom, Random: &proxy.RandomSpec{Length: 8, CaseSensitive: true}},
+			{Name: "pl1", Kind: proxy.PlaceholderEnum, Enum: &proxy.EnumSpec{Separator: "|", Values: []string{"SG", "US", "CN"}}},
+		},
+	})
+	if errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "代理模板已存在") {
+		t.Fatalf("semantically equivalent template was not rejected: %v", errDuplicate)
+	}
+	state := plugin.stateStore().Snapshot()
+	if len(state.Proxy.Templates) != 1 || state.Proxy.Templates[0].ID != first.ID {
+		t.Fatalf("duplicate template was persisted: %#v", state.Proxy.Templates)
+	}
+}
+
 func TestProxyVersionTracksEndpointAndGenerationChanges(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
