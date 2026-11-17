@@ -250,21 +250,64 @@ func (e Endpoint) maskedURL() string {
 	return string(e.Protocol) + "://" + net.JoinHostPort(e.Host, strconv.Itoa(e.Port))
 }
 
+// MaskedCredentialURL keeps the standard proxy URL shape while hiding the
+// username and replacing any password with a fixed marker.
+func (e Endpoint) MaskedCredentialURL() string {
+	if normalized, err := e.Normalize(); err == nil {
+		e = normalized
+	}
+	userinfo := ""
+	if e.HasUser {
+		userinfo = maskProxyUsername(e.Username)
+		if e.HasPassword {
+			userinfo += ":******"
+		}
+		userinfo += "@"
+	}
+	return string(e.Protocol) + "://" + userinfo + net.JoinHostPort(e.Host, strconv.Itoa(e.Port))
+}
+
+func maskProxyUsername(value string) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	switch {
+	case len(runes) == 0:
+		return ""
+	case len(runes) <= 2:
+		return string(runes[:1]) + "***"
+	case len(runes) >= 8:
+		return string(runes[:3]) + "***" + string(runes[len(runes)-2:])
+	default:
+		return string(runes[:2]) + "***" + string(runes[len(runes)-1:])
+	}
+}
+
 func (e Endpoint) Fingerprint() string {
 	sum := sha256.Sum256([]byte(e.CanonicalURL()))
 	return hex.EncodeToString(sum[:])
 }
 
 func MaskProxyURL(raw string) string {
-	if strings.TrimSpace(raw) == "" {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
 		return ""
 	}
-	endpoint, err := ParseEndpoint(raw, ParseOptions{})
+	candidate := raw
+	if parsed, errParse := url.Parse(raw); errParse == nil && parsed.Scheme != "" && parsed.Host != "" {
+		// Proxy URLs do not use paths, queries, or fragments for routing. Drop
+		// them before strict validation so existing values still mask safely.
+		candidate = parsed.Scheme + "://"
+		if parsed.User != nil {
+			candidate += parsed.User.String() + "@"
+		}
+		candidate += parsed.Host
+	}
+	endpoint, err := ParseEndpoint(candidate, ParseOptions{})
 	if err != nil {
 		// Invalid address-first imports can contain secrets without an '@'.
 		return "[redacted]"
 	}
-	return endpoint.MaskedURL()
+	return endpoint.MaskedCredentialURL()
 }
 
 func (e Endpoint) Validate() error {

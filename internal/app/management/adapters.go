@@ -126,6 +126,9 @@ func (s *Service) actionProxySourcesList(params map[string]any) (any, int, error
 func (s *Service) actionProxySourceGet(params map[string]any) (any, int, error) {
 	return s.env.Proxy().ActionSourceGet(params)
 }
+func (s *Service) actionProxySourceEndpoint(params map[string]any) (any, int, error) {
+	return s.env.Proxy().ActionSourceEndpoint(params)
+}
 func (s *Service) actionProxySourceValidate(params map[string]any) (any, int, error) {
 	return s.env.Proxy().ActionSourceValidate(params)
 }

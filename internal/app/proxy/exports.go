@@ -110,6 +110,9 @@ func (s *Service) ActionSourcesList(params map[string]any) (any, int, error) {
 func (s *Service) ActionSourceGet(params map[string]any) (any, int, error) {
 	return s.actionProxySourceGet(params)
 }
+func (s *Service) ActionSourceEndpoint(params map[string]any) (any, int, error) {
+	return s.actionProxySourceEndpoint(params)
+}
 func (s *Service) ActionSourceValidate(params map[string]any) (any, int, error) {
 	return s.actionProxySourceValidate(params)
 }

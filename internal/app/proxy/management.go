@@ -73,6 +73,17 @@ func (s *Service) actionProxySourceGet(params map[string]any) (any, int, error) 
 	}
 	return view, 200, nil
 }
+func (s *Service) actionProxySourceEndpoint(params map[string]any) (any, int, error) {
+	id := strings.TrimSpace(actionpkg.String(params["source_id"]))
+	if id == "" {
+		return nil, 400, errors.New("source_id is required")
+	}
+	full, err := s.proxySourceEndpoint(id)
+	if err != nil {
+		return nil, proxyErrorStatus(err), err
+	}
+	return map[string]any{"source_id": id, "proxy": maskProxyURL(full), "proxy_full": full}, 200, nil
+}
 func decodeProxyParams[T any](params map[string]any, nestedKey string) (T, error) {
 	var value T
 	var raw any = params
@@ -711,7 +722,7 @@ func proxySourceParamPresent(params map[string]any, key string) bool {
 }
 
 func proxyNodeView(node proxy.Node, count int) proxySourceView {
-	return proxySourceView{ID: node.ID, Kind: proxy.SourceNode, Name: node.Name, Enabled: node.Enabled, Valid: true, ConfigVersion: node.ConfigVersion, Revision: node.Revision, Priority: node.Priority, MaxBindings: node.MaxBindings, BindingCount: count, Health: node.Health, HealthChecked: node.HealthChecked, Endpoint: node.Endpoint.MaskedURL(), PasswordSet: node.Endpoint.HasPassword}
+	return proxySourceView{ID: node.ID, Kind: proxy.SourceNode, Name: node.Name, Enabled: node.Enabled, Valid: true, ConfigVersion: node.ConfigVersion, Revision: node.Revision, Priority: node.Priority, MaxBindings: node.MaxBindings, BindingCount: count, Health: node.Health, HealthChecked: node.HealthChecked, Endpoint: node.Endpoint.MaskedCredentialURL(), PasswordSet: node.Endpoint.HasPassword}
 }
 func proxyNodesView(nodes []proxy.Node) []proxySourceView {
 	views := make([]proxySourceView, len(nodes))
@@ -721,8 +732,7 @@ func proxyNodesView(nodes []proxy.Node) []proxySourceView {
 	return views
 }
 func proxyTemplateView(template proxy.Template, count int) proxySourceView {
-	e := proxy.Endpoint{Protocol: template.Protocol, Host: template.Host, Port: template.Port}
-	return proxySourceView{ID: template.ID, Kind: proxy.SourceTemplate, Name: template.Name, Enabled: template.Enabled, Valid: true, ValidatedAt: template.ValidatedAt, ConfigVersion: template.ConfigVersion, Revision: template.Revision, Priority: template.Priority, MaxBindings: template.MaxBindings, BindingCount: count, Endpoint: e.MaskedURL(), UsernamePattern: template.UsernamePattern, PasswordSet: template.HasPassword, UpdatePolicy: template.UpdatePolicy, PlaceholderCount: len(template.Placeholders), GroupCount: len(template.ValueGroups)}
+	return proxySourceView{ID: template.ID, Kind: proxy.SourceTemplate, Name: template.Name, Enabled: template.Enabled, Valid: true, ValidatedAt: template.ValidatedAt, ConfigVersion: template.ConfigVersion, Revision: template.Revision, Priority: template.Priority, MaxBindings: template.MaxBindings, BindingCount: count, Endpoint: template.URLForDisplay(), UsernamePattern: template.UsernamePattern, PasswordSet: template.HasPassword, UpdatePolicy: template.UpdatePolicy, PlaceholderCount: len(template.Placeholders), GroupCount: len(template.ValueGroups)}
 }
 func (s *Service) proxySourcesView() []proxySourceView {
 	catalog := s.proxyCatalog()
@@ -759,6 +769,32 @@ func (s *Service) proxySourcesView() []proxySourceView {
 
 func (s *Service) proxySourceDetails(id string) (any, error) {
 	return s.proxySourceDetailsForEdit(id, false)
+}
+
+func (s *Service) proxySourceEndpoint(id string) (string, error) {
+	entry := s.proxyCatalog().ByID[id]
+	if entry == nil {
+		return "", proxyError("proxy_source_not_found", 404, "proxy source not found")
+	}
+	switch entry.Kind {
+	case proxy.SourceNode:
+		if entry.Node == nil {
+			return "", proxyError("proxy_source_not_found", 404, "proxy node not found")
+		}
+		return entry.Node.Endpoint.CanonicalURL(), nil
+	case proxy.SourceTemplate:
+		if entry.Template == nil {
+			return "", proxyError("proxy_source_not_found", 404, "proxy template not found")
+		}
+		return entry.Template.URLForReveal(), nil
+	case proxy.SourceResin:
+		if entry.ResinSettings == nil {
+			return "", proxyError("proxy_source_not_found", 404, "Resin source not found")
+		}
+		return renderResinProxy(*entry.ResinSettings, "preview")
+	default:
+		return "", proxyError("proxy_source_not_found", 404, "proxy source not found")
+	}
 }
 func (s *Service) proxySourceDetailsForEdit(id string, edit bool) (any, error) {
 	entry := s.proxyCatalog().ByID[id]
@@ -927,7 +963,8 @@ func (s *Service) walkProxyCatalog(visit func(proxyCatalogRow)) int {
 }
 func proxyRowView(row proxyCatalogRow) map[string]any {
 	a, b := row.Account, row.Binding
-	return map[string]any{"auth_id": a.ID, "auth_id_display": maskAuthID(a.ID), "display": maskAccountIdentity(firstNonEmptyString(a.Email, a.Label, a.ID)), "proxy": maskProxyURL(row.Observation.URL), "proxy_status": row.Status, "source_id": b.SourceID, "source_kind": b.SourceKind, "generation": b.Generation, "source_revision": b.SourceRevision, "auto_bind_excluded": row.AutoBind.Excluded, "next_attempt_at": row.AutoBind.NextAttemptAt, "last_error": row.AutoBind.LastError}
+	displayFull := strings.TrimSpace(firstNonEmptyString(a.Email, a.Label, a.ID))
+	return map[string]any{"auth_id": a.ID, "auth_id_display": maskAuthID(a.ID), "display": maskAccountIdentity(displayFull), "display_full": displayFull, "proxy": maskProxyURL(row.Observation.URL), "proxy_status": row.Status, "source_id": b.SourceID, "source_kind": b.SourceKind, "generation": b.Generation, "source_revision": b.SourceRevision, "auto_bind_excluded": row.AutoBind.Excluded, "next_attempt_at": row.AutoBind.NextAttemptAt, "last_error": row.AutoBind.LastError}
 }
 
 func proxyStatusMatches(filter, status string) bool {

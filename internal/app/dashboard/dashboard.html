@@ -816,6 +816,83 @@
       width: 160px;
     }
 
+    .proxy-lease-table,
+    .proxy-source-table {
+      table-layout: fixed;
+    }
+
+    .proxy-lease-table {
+      min-width: 1260px;
+    }
+
+    .proxy-source-table {
+      min-width: 1320px;
+    }
+
+    .proxy-lease-table th,
+    .proxy-lease-table td,
+    .proxy-source-table th,
+    .proxy-source-table td {
+      padding-left: 7px;
+      padding-right: 7px;
+    }
+
+    .proxy-lease-table th:nth-child(1) {
+      width: 40px;
+    }
+
+    .proxy-lease-table th:nth-child(2) {
+      width: 210px;
+    }
+
+    .proxy-lease-table th:nth-child(3) {
+      width: 160px;
+    }
+
+    .proxy-lease-table th:nth-child(4) {
+      width: 37%;
+    }
+
+    .proxy-lease-table th:nth-child(5) {
+      width: 90px;
+    }
+
+    .proxy-lease-table th:nth-child(6) {
+      width: 110px;
+    }
+
+    .proxy-lease-table .actions-cell {
+      width: 236px;
+    }
+
+    .proxy-source-table th:nth-child(1) {
+      width: 200px;
+    }
+
+    .proxy-source-table th:nth-child(2) {
+      width: 76px;
+    }
+
+    .proxy-source-table th:nth-child(3) {
+      width: 38%;
+    }
+
+    .proxy-source-table th:nth-child(4) {
+      width: 105px;
+    }
+
+    .proxy-source-table th:nth-child(5) {
+      width: 76px;
+    }
+
+    .proxy-source-table th:nth-child(6) {
+      width: 112px;
+    }
+
+    .proxy-source-table .actions-cell {
+      width: 260px;
+    }
+
     th,
     td {
       padding: 10px 12px;
@@ -874,15 +951,16 @@
     }
 
     .endpoint-cell {
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 4px;
+      width: fit-content;
+      max-width: 100%;
       min-width: 0;
-      max-width: 320px;
     }
 
-    .endpoint-cell .truncate-line {
-      flex: 1 1 auto;
+    .endpoint-cell .endpoint-text {
+      flex: 0 1 auto;
       min-width: 0;
     }
 
@@ -2394,7 +2472,7 @@
             </div>
           </div>
           <div class="table-wrap">
-            <table style="min-width:960px">
+            <table class="proxy-lease-table">
               <thead>
                 <tr>
                   <th class="select-cell"><input id="leaseSelectAll" type="checkbox" aria-label="选择本页全部账号"
@@ -2404,7 +2482,7 @@
                   <th>端点</th>
                   <th>模板版本</th>
                   <th>状态</th>
-                  <th style="text-align:right">操作</th>
+                  <th class="actions-cell">操作</th>
                 </tr>
               </thead>
               <tbody id="leaseRows"></tbody>
@@ -2438,7 +2516,7 @@
               </div>
             </div>
             <div class="toolbar"><div class="toolbar-left"><label class="search"><svg class="icon"><use href="#i-search"></use></svg><input id="proxySourceSearch" type="search" placeholder="搜索名称、类型或脱敏端点" autocomplete="off"></label><span class="muted" id="proxySourceSummary"></span></div><div class="toolbar-right"><button class="btn btn-xs" type="button" id="proxySourceRefreshBtn"><svg class="icon"><use href="#i-refresh"></use></svg>刷新</button></div></div>
-            <div class="table-wrap"><table style="min-width:980px"><thead><tr><th>名称</th><th>类型</th><th>脱敏端点</th><th>状态</th><th>绑定数</th><th>版本</th><th style="text-align:right">操作</th></tr></thead><tbody id="proxySourceRows"></tbody></table></div>
+            <div class="table-wrap"><table class="proxy-source-table"><thead><tr><th>名称</th><th>类型</th><th>端点</th><th>状态</th><th>绑定数</th><th>版本</th><th class="actions-cell">操作</th></tr></thead><tbody id="proxySourceRows"></tbody></table></div>
             <div class="pagination" id="proxySourcesPager" hidden></div>
             <div class="empty" id="proxySourcesEmpty" hidden><svg class="icon"><use href="#i-database"></use></svg><div>暂无代理来源</div></div>
           </section>
@@ -2784,6 +2862,7 @@
       accountSelection: new Set(),
       leaseSelection: new Set(),
       leaseProxyDetails: new Map(),
+      sourceProxyDetails: new Map(),
       refreshing: false
     };
     const formDrafts = new Map();
@@ -3227,9 +3306,11 @@
       } else if (kind === 'leases') {
         state.leaseList = data;
         state.leases = data.items.map(normalizeBindingView);
+        state.leaseProxyDetails.clear();
       } else {
         state.proxySourceList = data;
         state.proxySources = data.items;
+        state.sourceProxyDetails.clear();
         renderProxySourceChoices();
       }
       return data;
@@ -3712,15 +3793,17 @@
         actions = '<button class="btn btn-xs btn-ghost" type="button" data-open-account="' + authID + '">' + icon('eye') + '详情</button>';
       }
       actions += '<button class="btn btn-xs btn-ghost" type="button" data-proxy-action="' + (account.auto_bind_excluded ? 'resume-auto' : 'pause-auto') + '" data-auth="' + authID + '">' + (account.auto_bind_excluded ? '恢复自动绑定' : '暂停自动绑定') + '</button>';
-      const revealedProxy = state.leaseProxyDetails.get(account.auth_id) || '';
-      const proxyText = revealedProxy || account.proxy;
-      const proxyTitle = revealedProxy || '点击眼睛显示完整端点';
-      const proxyLabel = revealedProxy ? '隐藏完整端点' : '显示完整端点';
-      const proxy = account.proxy ? '<div class="endpoint-cell"><div class="mono truncate-line" title="' + esc(proxyTitle) + '">' + esc(proxyText) + '</div><button class="btn btn-xs btn-ghost icon-btn" type="button" data-lease-endpoint="' + authID + '" title="' + proxyLabel + '" aria-label="' + proxyLabel + '">' + icon('eye') + '</button></div>' : '<span class="subtle">-</span>';
+      const proxy = endpointCell(account.proxy, state.leaseProxyDetails.get(account.auth_id), 'data-lease-endpoint', authID);
       const sourceDetail = sourceLabel !== '-' ? '<div class="subline">' + esc(sourceKind) + ' · ' + esc(sourceLabel) + '</div>' : '';
       return '<tr><td class="select-cell"><input type="checkbox" data-lease-select="' + authID + '" aria-label="选择账号" ' + (selected ? 'checked' : '') + '></td>' +
-        '<td><div class="account-name truncate-line" title="' + esc(account.display_full || account.display || account.label || '未命名账号') + '">' + esc(account.display || account.label || '未命名账号') + '</div><div class="subline truncate-line" title="' + esc(account.auth_id) + '">' + esc(account.auth_id_display || account.auth_id) + '</div>' + (account.auto_bind_excluded ? '<div class="subline">自动绑定已暂停</div>' : '') + '</td>' +
+        '<td><div class="account-name truncate-line" title="' + esc(account.display_full || account.auth_id || account.display || account.label || '未命名账号') + '">' + esc(account.display || account.label || '未命名账号') + '</div><div class="subline truncate-line" title="' + esc(account.auth_id) + '">' + esc(account.auth_id_display || account.auth_id) + '</div>' + (account.auto_bind_excluded ? '<div class="subline">自动绑定已暂停</div>' : '') + '</td>' +
         '<td>' + (sourceDetail || '<span class="subtle">-</span>') + '</td><td>' + proxy + '</td><td class="mono">' + (account.proxy_source_revision ? 'r' + esc(account.proxy_source_revision) : '-') + '</td><td>' + statusBadge + '</td><td class="actions-cell"><div class="actions">' + actions + '</div></td></tr>';
+    }
+    function endpointCell(value, revealed, attribute, id) {
+      if (!value) return '<span class="subtle">-</span>';
+      const text = revealed || value;
+      const label = revealed ? '隐藏完整端点' : '显示完整端点';
+      return '<div class="endpoint-cell"><span class="mono endpoint-text truncate-line" title="' + esc(text) + '">' + esc(text) + '</span><button class="btn btn-xs btn-ghost icon-btn" type="button" ' + attribute + '="' + id + '" title="' + label + '" aria-label="' + label + '">' + icon('eye') + '</button></div>';
     }
     async function toggleLeaseEndpoint(authID, button) {
       if (state.leaseProxyDetails.has(authID)) {
@@ -3735,6 +3818,25 @@
         if (!full) throw new Error('完整端点为空');
         state.leaseProxyDetails.set(authID, full);
         renderResin();
+      } catch (error) {
+        toast('读取完整端点失败：' + error.message, 'error');
+      } finally {
+        if (button.isConnected) setBusy(button, false);
+      }
+    }
+    async function toggleSourceEndpoint(sourceID, button) {
+      if (state.sourceProxyDetails.has(sourceID)) {
+        state.sourceProxyDetails.delete(sourceID);
+        renderProxySources();
+        return;
+      }
+      setBusy(button, true);
+      try {
+        const value = await api('proxy.sources.endpoint', { source_id: sourceID });
+        const full = String(value?.proxy_full || '').trim();
+        if (!full) throw new Error('完整端点为空');
+        state.sourceProxyDetails.set(sourceID, full);
+        renderProxySources();
       } catch (error) {
         toast('读取完整端点失败：' + error.message, 'error');
       } finally {
@@ -3782,9 +3884,10 @@
       const detail = source.kind === 'template'
         ? '<div class="subline">' + esc(source.placeholder_count || 0) + ' 个变量 · ' + esc(source.group_count || 0) + ' 个关联组 · ' + (source.update_policy === 'rerender_bound' ? '保存时更新绑定' : '保留旧绑定') + '</div>'
         : (source.kind === 'resin' ? '' : '<div class="subline">优先级：' + esc(source.priority || 0) + ' · 上限：' + esc(source.max_bindings || '不限') + '</div>');
+      const endpoint = endpointCell(source.endpoint, state.sourceProxyDetails.get(source.id), 'data-source-endpoint', sourceID);
       return '<tr><td><div class="account-name">' + esc(source.name || '未命名来源') + '</div>' + detail + '</td>' +
         '<td>' + badge(proxySourceLabel(source.kind), source.kind === 'resin' ? 'info' : '') + '</td>' +
-        '<td><div class="mono">' + esc(source.endpoint || '-') + '</div>' + (source.password_set ? '<div class="subline">凭据已设置</div>' : '') + '</td>' +
+        '<td>' + endpoint + (source.password_set ? '<div class="subline">凭据已设置</div>' : '') + '</td>' +
         '<td>' + proxySourceState(source) + '</td><td class="mono">' + esc(source.binding_count || 0) + '</td>' +
         '<td class="mono">v' + esc(source.config_version || 1) + ' / r' + esc(source.revision || 1) + '</td>' +
         '<td class="actions-cell"><div class="actions">' + actions.join('') + '</div></td></tr>';
@@ -5677,6 +5780,8 @@
       if (action) runProxyAction(action.dataset.proxyAction, action.dataset.auth, action);
     });
     document.getElementById('proxySourceRows').addEventListener('click', (event) => {
+      const endpoint = event.target.closest('[data-source-endpoint]');
+      if (endpoint) { toggleSourceEndpoint(endpoint.dataset.sourceEndpoint, endpoint); return; }
       const edit = event.target.closest('[data-proxy-source-edit]');
       if (edit) { openProxySourceByID(edit.dataset.proxySourceEdit).catch((error) => toast(error.message, 'error')); return; }
       const apply = event.target.closest('[data-proxy-source-apply]');

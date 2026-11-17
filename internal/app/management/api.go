@@ -189,6 +189,8 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 		return s.actionProxySourcesList(request.Params)
 	case "proxy.sources.get":
 		return s.actionProxySourceGet(request.Params)
+	case "proxy.sources.endpoint":
+		return s.actionProxySourceEndpoint(request.Params)
 	case "proxy.sources.validate":
 		return s.actionProxySourceValidate(request.Params)
 	case "proxy.sources.preview":

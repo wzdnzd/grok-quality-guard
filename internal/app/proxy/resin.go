@@ -951,17 +951,7 @@ func deleteResinLease(ctx context.Context, adminURL, platformID, adminToken, acc
 }
 
 func maskProxyURL(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return ""
-	}
-	parsed, errParse := url.Parse(value)
-	if errParse != nil {
-		return "[redacted]"
-	}
-	if parsed.Host == "" {
-		return parsed.Scheme + "://[redacted]"
-	}
-	return parsed.Scheme + "://" + parsed.Host
+	return proxy.MaskProxyURL(value)
 }
 
 func maskAccountIdentity(value string) string {

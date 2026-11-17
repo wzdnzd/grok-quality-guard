@@ -114,7 +114,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, resinAccountFormatFromTemplate, leaseRow, toggleLeaseEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, resinAccountFormatFromTemplate, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -556,10 +556,14 @@ test('Lease endpoints stay masked until the eye reveals the full endpoint', asyn
   ui.state.proxy = {};
   ui.state.proxySources = [];
   ui.state.resin = {};
-  const account = { auth_id: 'auth-1', auth_id_display: 'auth-1', display: 'a***@example.com', display_full: 'alice@example.com', proxy: 'socks5h://resin:2260', proxy_status: 'bound', proxy_managed: true };
+  const account = { auth_id: 'auth-1', auth_id_display: 'auth-1', display: 'a***@example.com', display_full: 'alice@example.com', proxy: 'socks5h://us***r:******@resin:2260', proxy_status: 'bound', proxy_managed: true };
   let row = ui.leaseRow(account);
+  assert.ok(row.includes('title="' + account.display_full + '"'));
+  assert.ok(row.includes('>' + account.display + '</div>'));
+  assert.ok(row.includes(account.proxy));
+  assert.ok(row.includes('title="' + account.proxy + '"'));
   assert.match(row, /data-lease-endpoint="auth-1"/);
-  assert.match(row, /title="点击眼睛显示完整端点"/);
+  assert.match(row, /title="显示完整端点"/);
   assert.doesNotMatch(row, /user:pass/);
   ui.state.leaseProxyDetails.set('auth-1', 'socks5h://user:pass@resin:2260');
   row = ui.leaseRow(account);
@@ -575,6 +579,33 @@ test('Lease endpoints stay masked until the eye reveals the full endpoint', asyn
   });
   await ui.toggleLeaseEndpoint('auth-1', new Element());
   assert.equal(ui.state.leaseProxyDetails.get('auth-1'), 'socks5h://user:pass@resin:2260');
+});
+
+test('Source endpoints keep the proxy URL shape and reveal full credentials on demand', async () => {
+  const { dashboard: ui, mock } = harness();
+  const masked = 'socks5h://us***r:******@proxy.example:8080';
+  const full = 'socks5h://user:secret@proxy.example:8080';
+  const source = { id: 'node-1', kind: 'node', name: 'Primary', endpoint: masked, password_set: true };
+  let row = ui.proxySourceRow(source);
+  assert.match(row, /data-source-endpoint="node-1"/);
+  assert.ok(row.includes(masked));
+  assert.ok(row.includes('title="' + masked + '"'));
+  assert.doesNotMatch(row, /user:secret/);
+
+  ui.state.sourceProxyDetails.set('node-1', full);
+  row = ui.proxySourceRow(source);
+  assert.ok(row.includes(full));
+  assert.ok(row.includes('title="' + full + '"'));
+  assert.match(row, /隐藏完整端点/);
+
+  ui.state.sourceProxyDetails.clear();
+  mock('renderProxySources', () => {});
+  mock('api', async (action) => {
+    assert.equal(action, 'proxy.sources.endpoint');
+    return { proxy_full: full };
+  });
+  await ui.toggleSourceEndpoint('node-1', new Element());
+  assert.equal(ui.state.sourceProxyDetails.get('node-1'), full);
 });
 
 test('A late task-detail refresh cannot restore an older selected page', async () => {

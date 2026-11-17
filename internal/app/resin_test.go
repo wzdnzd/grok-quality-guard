@@ -995,7 +995,7 @@ func TestRandomBase36Format(t *testing.T) {
 
 func TestMaskProxyURLDropsCredentialsAndPath(t *testing.T) {
 	masked := maskProxyURL("socks5h://user:pass@example.com:1080/secret/path?token=abc")
-	if masked != "socks5h://example.com:1080" {
+	if masked != "socks5h://us***r:******@example.com:1080" {
 		t.Fatalf("masked proxy = %q", masked)
 	}
 }

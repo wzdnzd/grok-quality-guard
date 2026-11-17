@@ -25,8 +25,8 @@ func TestResinAccountBaseAndMasking(t *testing.T) {
 	if mask := maskEmail("ab@example.com"); mask != "a***@example.com" {
 		t.Fatalf("masked email = %q", mask)
 	}
-	if !strings.Contains(maskProxyURL("socks5h://user:pass@example.com:1080/path"), "socks5h://example.com:1080") {
-		t.Fatal("proxy mask did not preserve scheme and host")
+	if masked := maskProxyURL("socks5h://user:pass@example.com:1080/path"); masked != "socks5h://us***r:******@example.com:1080" {
+		t.Fatalf("proxy mask = %q, want credential-shaped mask", masked)
 	}
 }
 

@@ -114,8 +114,9 @@ func TestProxyBindingEndpointRevealIsOnDemand(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, nil)
-	if _, err := plugin.createProxyNode(proxyapp.NodeInput{URL: "socks5h://user:secret@proxy.example:8080", Name: "reveal"}); err != nil {
-		t.Fatal(err)
+	node, errCreate := plugin.createProxyNode(proxyapp.NodeInput{URL: "socks5h://user:secret@proxy.example:8080", Name: "reveal"})
+	if errCreate != nil {
+		t.Fatal(errCreate)
 	}
 	if _, err := plugin.bindProxy(context.Background(), "auth-1", proxyapp.BindOptions{}); err != nil {
 		t.Fatal(err)
@@ -137,8 +138,29 @@ func TestProxyBindingEndpointRevealIsOnDemand(t *testing.T) {
 	if decoded.Data.AuthID != "auth-1" || decoded.Data.ProxyFull != "socks5h://user:secret@proxy.example:8080" {
 		t.Fatalf("unexpected endpoint response: %#v", decoded.Data)
 	}
-	if decoded.Data.Proxy != "socks5h://proxy.example:8080" || strings.Contains(decoded.Data.Proxy, "secret") {
+	if decoded.Data.Proxy != "socks5h://us***r:******@proxy.example:8080" || strings.Contains(decoded.Data.Proxy, "secret") {
 		t.Fatalf("masked endpoint leaked credentials: %#v", decoded.Data)
+	}
+
+	response = actionManagementForTest(t, plugin, "proxy.sources.endpoint", map[string]any{"source_id": node.ID})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("source endpoint status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var sourceDecoded struct {
+		Data struct {
+			SourceID  string `json:"source_id"`
+			Proxy     string `json:"proxy"`
+			ProxyFull string `json:"proxy_full"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body, &sourceDecoded); err != nil {
+		t.Fatal(err)
+	}
+	if sourceDecoded.Data.SourceID != node.ID || sourceDecoded.Data.ProxyFull != "socks5h://user:secret@proxy.example:8080" {
+		t.Fatalf("unexpected source endpoint response: %#v", sourceDecoded.Data)
+	}
+	if sourceDecoded.Data.Proxy != "socks5h://us***r:******@proxy.example:8080" {
+		t.Fatalf("unexpected masked source endpoint: %#v", sourceDecoded.Data)
 	}
 }
 

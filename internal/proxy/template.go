@@ -175,6 +175,16 @@ func templateFromEndpoint(endpoint Endpoint, pattern, encoding string) Template 
 }
 
 func (t Template) URLForDisplay() string {
+	return t.displayURL(false)
+}
+
+// URLForReveal returns the same URL shape as URLForDisplay with the literal
+// password included. Callers expose this only through an explicit reveal action.
+func (t Template) URLForReveal() string {
+	return t.displayURL(true)
+}
+
+func (t Template) displayURL(revealPassword bool) string {
 	masked := (Endpoint{Protocol: t.Protocol, Host: t.Host, Port: t.Port}).MaskedURL()
 	if !t.HasUser && t.UsernamePattern == "" && !t.HasPassword {
 		return masked
@@ -195,7 +205,12 @@ func (t Template) URLForDisplay() string {
 	}
 	userinfo := username.String()
 	if t.HasPassword {
-		userinfo += ":******"
+		password := "******"
+		if revealPassword {
+			_, encoded, _ := strings.Cut(url.UserPassword("u", t.Password).String(), ":")
+			password = encoded
+		}
+		userinfo += ":" + password
 	}
 	return string(t.Protocol) + "://" + userinfo + "@" + net.JoinHostPort(t.Host, strconv.Itoa(t.Port))
 }

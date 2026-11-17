@@ -176,7 +176,7 @@ func TestAccountsListMasksSecrets(t *testing.T) {
 			t.Fatalf("management response leaked %q: %s", forbidden, text)
 		}
 	}
-	if !strings.Contains(text, "al***e@example.com") || !strings.Contains(text, "socks5h://example.com:1080") {
+	if !strings.Contains(text, "al***e@example.com") || !strings.Contains(text, "socks5h://us***r:******@example.com:1080") {
 		t.Fatalf("management response did not include masked values: %s", text)
 	}
 	if !strings.Contains(text, "auth_id_display") {
