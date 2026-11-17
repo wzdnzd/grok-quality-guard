@@ -114,7 +114,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, resinAccountFormatFromTemplate, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, resinAccountFormatFromTemplate, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -374,6 +374,42 @@ test('Clear options pass null, rebind, and pause as distinct overrides', async (
   }
 });
 
+test('Binding source candidates follow the selected source scope', async () => {
+  const { dashboard: ui, get, mock } = harness();
+  ui.state.proxySources = [
+    { id: 'node-1', name: 'Node one', kind: 'node' },
+    { id: 'template-1', name: 'Template one', kind: 'template' },
+    { id: 'resin-1', name: 'Resin one', kind: 'resin' }
+  ];
+  ui.state.proxyOperationSourceChoices = [];
+  ui.renderProxyOperationSourceChoices('templates');
+  let candidateHTML = get('proxyOperationSourceChoices').innerHTML;
+  assert.match(candidateHTML, /value="template-1"/);
+  assert.doesNotMatch(candidateHTML, /value="node-1"|value="resin-1"/);
+
+  const requests = [];
+  mock('api', async (action, params) => {
+    requests.push({ action, params });
+    return { items: [
+      { id: 'template-2', name: 'Template two', kind: 'template' },
+      { id: 'node-2', name: 'Node two', kind: 'node' }
+    ] };
+  });
+  await ui.searchProxyOperationSourceChoices('tpl', 'templates');
+  candidateHTML = get('proxyOperationSourceChoices').innerHTML;
+  assert.equal(requests[0].action, 'proxy.sources.list');
+  assert.equal(requests[0].params.kind, 'template');
+  assert.match(candidateHTML, /value="template-2"/);
+  assert.doesNotMatch(candidateHTML, /value="node-2"/);
+
+  await ui.searchProxyOperationSourceChoices('', 'all');
+  candidateHTML = get('proxyOperationSourceChoices').innerHTML;
+  assert.equal(Object.hasOwn(requests[1].params, 'kind'), false);
+  assert.match(candidateHTML, /value="template-2"/);
+  assert.match(candidateHTML, /value="node-2"/);
+  assert.match(html, /\.confirm-card\.wide\s*\{/);
+});
+
 test('Bulk proxy import filters invalid and duplicate lines and stays bounded', () => {
   const { dashboard: ui } = harness();
   const text = [
@@ -630,6 +666,13 @@ test('Checkbox controls reserve a label line and retry fields share one row', ()
   assert.match(html, /class="field-grid retry-grid"/);
   assert.match(html, /首次失败后的等待时长/);
   assert.match(html, /退避等待的最长时间/);
+});
+
+test('Template variable generation controls share one roomy row', () => {
+  assert.match(html, /\.proxy-generation-grid\s*\{\s*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
+  assert.match(html, /\.proxy-variable-body \.field\s*\{\s*gap: 7px;/);
+  assert.match(html, /\.proxy-variable-body \.field>label:not\(\.check-row\)\s*\{[\s\S]*?flex-direction: column;[\s\S]*?gap: 7px;/);
+  assert.match(html, /<div class="field-grid proxy-generation-grid">/);
 });
 
 test('Routing affinity cards share a row and parameter hints explain their effects', () => {

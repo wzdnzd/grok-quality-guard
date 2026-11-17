@@ -1753,6 +1753,10 @@
       animation: confirm-in .16s ease-out;
     }
 
+    .confirm-card.wide {
+      width: min(620px, 100%);
+    }
+
     @keyframes confirm-in {
       from {
         transform: translateY(8px) scale(.985);
@@ -2042,6 +2046,18 @@
       padding: 12px;
       border-top: 1px solid var(--line);
     }
+    .proxy-variable-body .field {
+      gap: 7px;
+    }
+    .proxy-variable-body .field>label:not(.check-row) {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .proxy-generation-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      column-gap: 10px;
+    }
     .proxy-group-editor {
       border: 1px solid var(--line);
       border-radius: 10px;
@@ -2066,7 +2082,7 @@
     #confirmOptions { margin: 0 20px 14px; }
     #confirmOptions:empty { display: none; }
     .draft-note { color: var(--muted); font-size: 12px; }
-    @media (max-width: 767px) { .proxy-path-fields { grid-template-columns: minmax(0, 1fr); } }
+    @media (max-width: 767px) { .proxy-path-fields, .proxy-generation-grid { grid-template-columns: minmax(0, 1fr); } }
   </style>
 </head>
 
@@ -2796,7 +2812,7 @@
     </form>
   </div>
   <div class="confirm-backdrop" id="confirmDialog" hidden>
-    <section class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmDetail">
+    <section class="confirm-card" id="confirmCard" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmDetail">
       <div class="confirm-main">
         <span class="confirm-icon" id="confirmIcon"><svg class="icon"><use id="confirmIconUse" href="#i-alert"></use></svg></span>
         <div>
@@ -2831,6 +2847,7 @@
       proxySourcePage: 1,
       proxySourcePageSize: 50,
       proxySourceChoices: [],
+      proxyOperationSourceChoices: [],
       proxySourceList: null,
       proxyTasks: new Map(),
       proxyChanges: [],
@@ -3080,6 +3097,7 @@
       accept.textContent = config.confirmLabel || '确认';
       cancel.textContent = config.cancelLabel || '取消';
       const danger = config.tone === 'danger';
+      document.getElementById('confirmCard').className = 'confirm-card' + (config.wide ? ' wide' : '');
       accept.className = 'btn ' + (danger ? 'btn-danger' : 'btn-primary');
       document.getElementById('confirmIcon').className = 'confirm-icon' + (danger ? ' danger' : '');
       document.getElementById('confirmIconUse').setAttribute('href', '#i-' + (config.icon || 'alert'));
@@ -3887,7 +3905,7 @@
       const endpoint = endpointCell(source.endpoint, state.sourceProxyDetails.get(source.id), 'data-source-endpoint', sourceID);
       return '<tr><td><div class="account-name">' + esc(source.name || '未命名来源') + '</div>' + detail + '</td>' +
         '<td>' + badge(proxySourceLabel(source.kind), source.kind === 'resin' ? 'info' : '') + '</td>' +
-        '<td>' + endpoint + (source.password_set ? '<div class="subline">凭据已设置</div>' : '') + '</td>' +
+        '<td>' + endpoint + '</td>' +
         '<td>' + proxySourceState(source) + '</td><td class="mono">' + esc(source.binding_count || 0) + '</td>' +
         '<td class="mono">v' + esc(source.config_version || 1) + ' / r' + esc(source.revision || 1) + '</td>' +
         '<td class="actions-cell"><div class="actions">' + actions.join('') + '</div></td></tr>';
@@ -3923,6 +3941,18 @@
       const choices = new Map(state.proxySources.concat(state.proxySourceChoices).map((source) => [source.id, source]));
       document.getElementById('proxySourceChoices').innerHTML = Array.from(choices.values()).slice(0, 100).map((source) => '<option value="' + esc(source.id) + '">' + esc(source.name + ' · ' + proxySourceLabel(source.kind)) + '</option>').join('');
     }
+    function proxySourceKindForScope(scope) {
+      if (scope === 'nodes') return 'node';
+      if (scope === 'templates') return 'template';
+      if (scope === 'resin') return 'resin';
+      return '';
+    }
+    function renderProxyOperationSourceChoices(scope) {
+      const kind = proxySourceKindForScope(scope);
+      const choices = new Map(state.proxySources.concat(state.proxyOperationSourceChoices).map((source) => [source.id, source]));
+      const filtered = Array.from(choices.values()).filter((source) => !kind || source.kind === kind);
+      document.getElementById('proxyOperationSourceChoices').innerHTML = filtered.slice(0, 100).map((source) => '<option value="' + esc(source.id) + '">' + esc(source.name + ' · ' + proxySourceLabel(source.kind)) + '</option>').join('');
+    }
     let proxySourceChoiceRequest = 0;
     async function searchProxySourceChoices(query) {
       const request = ++proxySourceChoiceRequest;
@@ -3930,6 +3960,17 @@
       if (request !== proxySourceChoiceRequest) return;
       state.proxySourceChoices = value?.items || [];
       renderProxySourceChoices();
+    }
+    let proxyOperationSourceChoiceRequest = 0;
+    async function searchProxyOperationSourceChoices(query, scope) {
+      const request = ++proxyOperationSourceChoiceRequest;
+      const kind = proxySourceKindForScope(scope);
+      const params = { page: 1, page_size: 50, query: query || '' };
+      if (kind) params.kind = kind;
+      const value = await api('proxy.sources.list', params);
+      if (request !== proxyOperationSourceChoiceRequest) return;
+      state.proxyOperationSourceChoices = value?.items || [];
+      renderProxyOperationSourceChoices(scope);
     }
     function renderProxyAutoBind() {
       const summary = state.proxy || {};
@@ -4348,7 +4389,7 @@
       const enumInput = enumSpec.input || (enumSpec.values || []).join(enumSpec.separator || ',');
       const open = expanded !== false ? ' open' : '';
       const kindLabel = kind === 'enum' ? '枚举变量' : '随机变量';
-      return '<details class="proxy-template-variable" data-placeholder-card="' + esc(name) + '"' + open + '><summary><span class="proxy-variable-name">{' + esc(name) + '}</span><span class="proxy-variable-kind" data-placeholder-summary-kind>' + kindLabel + '</span></summary><div class="proxy-variable-body"><div class="field-grid">' +
+      return '<details class="proxy-template-variable" data-placeholder-card="' + esc(name) + '"' + open + '><summary><span class="proxy-variable-name">{' + esc(name) + '}</span><span class="proxy-variable-kind" data-placeholder-summary-kind>' + kindLabel + '</span></summary><div class="proxy-variable-body"><div class="field-grid proxy-generation-grid">' +
         '<div class="field"><label>生成方式<select data-placeholder-kind="' + esc(name) + '"><option value="enum"' + (kind === 'enum' ? ' selected' : '') + '>枚举取值</option><option value="random"' + (kind === 'random' ? ' selected' : '') + '>随机字符串</option></select></label></div>' +
         '<div class="field" data-enum-field><label>关联组<input data-placeholder-group="' + esc(name) + '" data-previous-group="' + esc(placeholder.group_id || '') + '" value="' + esc(placeholder.group_id || '') + '" placeholder="可选，如 plans"></label></div>' +
         '<div class="field" data-enum-field><label>分隔符<input data-enum-separator="' + esc(name) + '" data-previous-separator="' + esc(enumSpec.separator || ',') + '" value="' + esc(enumSpec.separator || ',') + '"></label><span class="proxy-field-error" data-enum-error></span></div>' +
@@ -4812,8 +4853,8 @@
       const editor = beginProxyEditor('import', null);
       editor.importTimer = 0;
       document.getElementById('proxySourceEditorTitle').textContent = '批量导入代理节点';
-      document.getElementById('proxySourceEditorSubtitle').textContent = '每行一个完整代理 URL，支持 HTTP、HTTPS、SOCKS5，导入时自动跳过无效行';
-      document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyImportForm" class="drawer-form"><section class="card"><div class="form-section"><div class="import-toolbar"><div><h3>代理列表</h3><p>支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H；可粘贴多行或加载本地文件</p></div><div class="import-toolbar-actions"><input id="proxyImportFile" type="file" accept=".txt,.list,.csv,text/plain,text/csv" hidden><button class="btn btn-xs" type="button" id="proxyImportFileBtn">' + icon('upload') + '加载文件</button><button class="btn btn-xs btn-ghost" type="button" id="proxyImportFilterBtn">' + icon('check') + '过滤无效行</button></div></div><div class="field full"><label for="proxyImportText">代理 URL</label><textarea id="proxyImportText" class="proxy-import-text" spellcheck="false" wrap="off" aria-describedby="proxyImportHint" placeholder="http://user:pass@proxy.example:8080\nsocks5h://user:pass@[2001:db8::1]:1080"></textarea><span class="hint" id="proxyImportHint">上限：100000 条 · 16 MiB，重复项自动忽略</span></div><div class="import-stats" id="proxyImportStats" role="status" aria-live="polite"></div><div class="import-samples" id="proxyImportSamples" hidden></div><div class="form-actions"><button class="btn btn-primary" type="submit" id="proxyImportSubmitBtn" disabled>' + icon('check') + '导入有效节点</button><span class="status-line" id="proxySourceEditorStatus" role="status" aria-live="polite"></span></div></div></section></form>';
+      document.getElementById('proxySourceEditorSubtitle').textContent = '每行一个完整代理 URL，支持 HTTP、HTTPS、SOCKS5、SOCKS5H；可粘贴多行或加载本地文件，导入时自动跳过无效行';
+      document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyImportForm" class="drawer-form"><section class="card"><div class="form-section"><div class="import-toolbar"><div><h3>代理列表</h3></div><div class="import-toolbar-actions"><input id="proxyImportFile" type="file" accept=".txt,.list,.csv,text/plain,text/csv" hidden><button class="btn btn-xs" type="button" id="proxyImportFileBtn">' + icon('upload') + '加载文件</button><button class="btn btn-xs btn-ghost" type="button" id="proxyImportFilterBtn">' + icon('check') + '过滤无效行</button></div></div><div class="field full"><label for="proxyImportText">代理 URL</label><textarea id="proxyImportText" class="proxy-import-text" spellcheck="false" wrap="off" aria-describedby="proxyImportHint" placeholder="http://user:pass@proxy.example:8080\nsocks5h://user:pass@[2001:db8::1]:1080"></textarea><span class="hint" id="proxyImportHint">上限：100000 条 · 16 MiB，重复项自动忽略</span></div><div class="import-stats" id="proxyImportStats" role="status" aria-live="polite"></div><div class="import-samples" id="proxyImportSamples" hidden></div><div class="form-actions"><button class="btn btn-primary" type="submit" id="proxyImportSubmitBtn" disabled>' + icon('check') + '导入有效节点</button><span class="status-line" id="proxySourceEditorStatus" role="status" aria-live="polite"></span></div></div></section></form>';
 
       const textarea = document.getElementById('proxyImportText');
       const fileInput = document.getElementById('proxyImportFile');
@@ -4981,12 +5022,25 @@
       const policy = state.proxy?.auto_bind?.manual_clear_policy || 'rebind';
       const options = clear
         ? '<div class="field"><label for="proxyClearPolicy">清除后自动绑定</label><select id="proxyClearPolicy"><option value="global">遵循全局设置 · ' + (policy === 'pause' ? '暂停这些账号' : '允许重新绑定') + '</option><option value="rebind">本次允许重新绑定</option><option value="pause">本次暂停这些账号</option></select><span class="hint">已经暂停的账号保留暂停状态，可通过恢复自动绑定解除</span></div>'
-        : '<div class="field-grid"><div class="field"><label for="proxyBindScope">来源范围</label><select id="proxyBindScope"><option value="all">全部来源</option><option value="nodes">仅节点</option><option value="templates">仅模板</option><option value="resin">仅 Resin</option></select></div><div class="field"><label for="proxyOperationSource">指定来源 · 可按名称搜索</label><input id="proxyOperationSource" list="proxySourceChoices" autocomplete="off" placeholder="留空按范围自动分配"><span class="hint">选择匹配项或填写来源 ID；最多展示 100 个候选</span></div></div>';
-      const pending = confirmAction({ title: label, detail: '将处理 ' + count + ' 个账号' + (action === 'clear-external' ? '仅清除本地代理 URL，不删除 Resin 租约' : clear ? '清除前核对当前代理与管理记录；漂移和读取失败项目会报告' : '仅绑定代理为空的 Grok/xAI 账号；已有外部代理或未解决操作会跳过'), confirmLabel: clear ? '开始清除' : '开始绑定', icon: clear ? 'x' : 'link', tone: clear ? 'danger' : '', optionsHTML: options });
+        : '<div class="field-grid"><div class="field"><label for="proxyBindScope">来源范围</label><select id="proxyBindScope"><option value="all">全部来源</option><option value="nodes">仅节点</option><option value="templates">仅模板</option><option value="resin">仅 Resin</option></select><span class="hint">限制自动分配和候选列表的来源类型</span></div><div class="field"><label for="proxyOperationSource">指定来源 · 可按名称搜索</label><input id="proxyOperationSource" list="proxyOperationSourceChoices" autocomplete="off" placeholder="留空按范围自动分配"><datalist id="proxyOperationSourceChoices"></datalist><span class="hint">候选按来源范围过滤；也可填写来源 ID</span></div></div>';
+      const pending = confirmAction({ title: label, detail: '将处理 ' + count + ' 个账号' + (action === 'clear-external' ? '仅清除本地代理 URL，不删除 Resin 租约' : clear ? '清除前核对当前代理与管理记录；漂移和读取失败项目会报告' : '仅绑定代理为空的 Grok/xAI 账号；已有外部代理或未解决操作会跳过'), confirmLabel: clear ? '开始清除' : '开始绑定', icon: clear ? 'x' : 'link', tone: clear ? 'danger' : '', wide: !clear, optionsHTML: options });
       const sourceField = document.getElementById('proxyOperationSource');
       if (sourceField) {
+        const scopeField = document.getElementById('proxyBindScope');
         let timer = 0;
-        sourceField.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(() => searchProxySourceChoices(sourceField.value).catch((error) => toast(error.message, 'error')), 250); });
+        const renderChoices = () => renderProxyOperationSourceChoices(scopeField?.value || 'all');
+        renderChoices();
+        scopeField?.addEventListener('change', () => {
+          window.clearTimeout(timer);
+          sourceField.value = '';
+          state.proxyOperationSourceChoices = [];
+          renderChoices();
+          sourceField.focus();
+        });
+        sourceField.addEventListener('input', () => {
+          window.clearTimeout(timer);
+          timer = window.setTimeout(() => searchProxyOperationSourceChoices(sourceField.value, scopeField?.value || 'all').catch((error) => toast(error.message, 'error')), 250);
+        });
       }
       if (!await pending) return null;
       if (clear) {
