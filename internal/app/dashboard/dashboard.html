@@ -2546,7 +2546,7 @@
               <button class="btn btn-xs" type="button" id="bindSelectedBtn" disabled><svg class="icon">
                   <use href="#i-link"></use>
                 </svg>绑定所选</button>
-              <button class="btn btn-xs btn-danger" type="button" id="clearSelectedBtn" disabled><svg class="icon">
+              <button class="btn btn-xs btn-danger" type="button" id="clearSelectedBtn" title="清除已选账号的代理，包括外部配置" disabled><svg class="icon">
                   <use href="#i-x"></use>
                 </svg>清除所选</button>
               <button class="btn btn-xs btn-ghost" type="button" id="pauseSelectedAutoBindBtn" disabled>暂停自动绑定</button>
@@ -4038,11 +4038,8 @@
         actions.push('<button class="btn btn-xs btn-ghost" type="button" data-proxy-source-test="' + sourceID + '">' + icon('activity') + '检测</button>');
         actions.push('<button class="btn btn-xs btn-danger" type="button" data-proxy-source-delete="' + sourceID + '" data-kind="' + esc(source.kind) + '">' + icon('x') + '删除</button>');
       }
-      const detail = source.kind === 'template'
-        ? '<div class="subline">' + esc(source.placeholder_count || 0) + ' 个变量 · ' + esc(source.group_count || 0) + ' 个关联组 · ' + (source.update_policy === 'rerender_bound' ? '保存时更新绑定' : '保留旧绑定') + '</div>'
-        : (source.kind === 'resin' ? '' : '<div class="subline">优先级：' + esc(source.priority || 0) + ' · 绑定上限：' + esc(source.max_bindings || '不限') + '</div>');
       const endpoint = endpointCell(source.endpoint, state.sourceProxyDetails.get(source.id), 'data-source-endpoint', sourceID);
-      return '<tr><td class="select-cell"><input type="checkbox" data-source-select="' + sourceID + '" aria-label="选择代理" ' + (selected ? 'checked' : '') + '></td><td><div class="account-name">' + esc(source.name || '未命名代理') + '</div>' + detail + '</td>' +
+      return '<tr><td class="select-cell"><input type="checkbox" data-source-select="' + sourceID + '" aria-label="选择代理" ' + (selected ? 'checked' : '') + '></td><td><div class="account-name">' + esc(source.name || '未命名代理') + '</div></td>' +
         '<td>' + badge(proxySourceLabel(source.kind), source.kind === 'resin' ? 'info' : '') + '</td>' +
         '<td>' + endpoint + '</td>' +
         '<td>' + proxySourceEnabledState(source) + '</td><td>' + proxySourceConnectivity(source) + '</td><td class="nowrap">' + proxySourceCheckedAt(source) + '</td><td class="mono">' + esc(source.binding_count || 0) + '</td>' +
@@ -5359,7 +5356,7 @@
       const options = clear
         ? '<div class="field"><label for="proxyClearPolicy">清除后自动绑定</label><select id="proxyClearPolicy"><option value="global">遵循全局设置 · ' + (policy === 'pause' ? '暂停这些账号' : '允许重新绑定') + '</option><option value="rebind">本次允许重新绑定</option><option value="pause">本次暂停这些账号</option></select><span class="hint">已经暂停的账号保留暂停状态，可通过恢复自动绑定解除</span></div>'
         : '<div class="field-grid"><div class="field"><label for="proxyBindScope">代理范围</label><select id="proxyBindScope"><option value="all">全部代理</option><option value="nodes">仅节点</option><option value="templates">仅模板</option><option value="resin">仅 Resin</option></select><span class="hint">限制自动分配和候选列表的代理类型</span></div><div class="field proxy-source-picker"><label for="proxyOperationSource">指定代理 · 可按名称搜索</label><div class="proxy-source-combobox"><input id="proxyOperationSource" type="text" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="proxyOperationSourceChoices" placeholder="留空按范围自动分配"><input id="proxyOperationSourceID" type="hidden" value=""><div class="proxy-source-picker-menu" id="proxyOperationSourceChoices" role="listbox" hidden></div></div><span class="hint">候选按代理范围过滤；也可填写代理 ID</span></div></div>';
-      const pending = confirmAction({ title: label, detail: '将处理 ' + count + ' 个账号' + (action === 'clear-external' ? '仅清除本地代理 URL，不删除 Resin 租约' : clear ? '清除前核对当前代理与管理记录；漂移和读取失败项目会报告' : '仅绑定代理为空的 Grok/xAI 账号；已有外部代理或未解决操作会跳过'), confirmLabel: clear ? '开始清除' : '开始绑定', icon: clear ? 'x' : 'link', tone: clear ? 'danger' : '', wide: !clear, optionsHTML: options });
+      const pending = confirmAction({ title: label, detail: '将处理 ' + count + ' 个账号' + (action === 'clear-external' ? '仅清除本地代理 URL，不删除 Resin 租约' : clear ? '清除前核对当前代理与管理记录；外部配置也会一并清除；漂移和读取失败项目会报告' : '仅绑定代理为空的 Grok/xAI 账号；已有外部代理或未解决操作会跳过'), confirmLabel: clear ? '开始清除' : '开始绑定', icon: clear ? 'x' : 'link', tone: clear ? 'danger' : '', wide: !clear, optionsHTML: options });
       const sourceField = document.getElementById('proxyOperationSource');
       if (sourceField) {
         const scopeField = document.getElementById('proxyBindScope');
@@ -5502,7 +5499,8 @@
       setBusy(button, true);
       try {
         const apiAction = action === 'bind' ? 'proxy.bindings.bind' : 'proxy.bindings.clear';
-        const result = await runProxyAccountBatches(apiAction, authIDs, options, label);
+        const params = action === 'clear' ? Object.assign({}, options, { allow_external: true }) : options;
+        const result = await runProxyAccountBatches(apiAction, authIDs, params, label);
         reportProxyResult(result, label);
         await refreshAll(true);
       } catch (error) { toast(error.message, 'error'); }

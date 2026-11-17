@@ -238,6 +238,31 @@ func TestResinClearBatchManagement(t *testing.T) {
 	}
 }
 
+func TestProxyClearBatchAllowsExternalProxy(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-external", "[EMAIL]", map[string]any{
+		"proxy_url": "socks5h://user:external-secret@external.example:1080",
+	})
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	response := actionManagementForTest(t, plugin, "proxy.bindings.clear", map[string]any{
+		"auth_ids":       []any{"auth-external"},
+		"allow_external": true,
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.StatusCode, response.Body)
+	}
+	if strings.Contains(string(response.Body), "external-secret") {
+		t.Fatalf("batch clear response leaked proxy credentials: %s", response.Body)
+	}
+	saved, errDecode := rawAuthToMap(host.saves["auth-external"])
+	if errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	if appauth.RawString(saved, "proxy_url") != "" {
+		t.Fatal("external proxy_url was not cleared")
+	}
+}
+
 func TestPolicyUpdateAndReset(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "alice@example.com", nil)
 	host := newMockHostCall(entries, auths)

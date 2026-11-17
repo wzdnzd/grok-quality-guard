@@ -114,7 +114,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, resinAccountFormatFromTemplate, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, resinAccountFormatFromTemplate, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -372,6 +372,28 @@ test('Clear options pass null, rebind, and pause as distinct overrides', async (
     get('proxyClearPolicy').value = choice;
     assert.equal((await ui.confirmProxyBindingOptions('clear', 2, 'Clear')).exclude_auto_bind, expected);
   }
+});
+
+test('Selected proxy clear explicitly allows external configurations', async () => {
+  const { dashboard: ui, mock } = harness();
+  ui.state.leaseSelection.add('auth-external');
+  const requests = [];
+  mock('confirmProxyBindingOptions', async () => ({ exclude_auto_bind: null }));
+  mock('api', async (action, params) => {
+    requests.push({ action, params });
+    return {
+      count: params.auth_ids.length,
+      counts: { total: params.auth_ids.length, succeeded: params.auth_ids.length, failed: 0 },
+      items: params.auth_ids.map((authID) => ({ auth_id: authID, status: 'cleared' }))
+    };
+  });
+  mock('reportProxyResult', () => {});
+  mock('refreshAll', async () => {});
+  await ui.runSelectedProxyAction('clear', new Element());
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].action, 'proxy.bindings.clear');
+  assert.equal(requests[0].params.allow_external, true);
+  assert.deepEqual(plain(requests[0].params.auth_ids), ['auth-external']);
 });
 
 test('Binding source candidates use a bounded labeled picker', async () => {
@@ -663,7 +685,8 @@ test('Proxy source connectivity and check time use separate compact columns', ()
   assert.match(row, /已启用/);
   assert.match(row, /不可达/);
   assert.match(row, /2026\/11\/17/);
-  assert.match(row, /绑定上限：不限/);
+  assert.match(row, /<div class="account-name">Node one<\/div><\/td>/);
+  assert.doesNotMatch(row, /绑定上限：不限/);
   assert.doesNotMatch(row, /· 上限：/);
   assert.doesNotMatch(row, /检测：|尚未检测|检测时生成临时端点/);
   assert.doesNotMatch(row, />可用</);
@@ -677,6 +700,7 @@ test('Proxy source connectivity and check time use separate compact columns', ()
   assert.match(templateRow, /可连通/);
   assert.match(templateRow, /已启用/);
   assert.doesNotMatch(templateRow, /样本可连通/);
+  assert.doesNotMatch(templateRow, /个变量|个关联组|保留旧绑定/);
 
   const unknown = ui.proxySourceConnectivity({ id: 'template-2', kind: 'template', enabled: true, valid: true, health_checked: '0001-01-01T00:00:00Z' });
   assert.match(unknown, /未检测/);
