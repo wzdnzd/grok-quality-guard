@@ -155,7 +155,7 @@ func proxyDuplicateTemplateError() error {
 }
 
 func proxyDuplicateNameError() error {
-	return proxyError("proxy_name_duplicate", 409, "代理来源名称已存在")
+	return proxyError("proxy_name_duplicate", 409, "代理名称已存在")
 }
 
 func proxySourceNameTaken(state *State, name, exceptID string) bool {
@@ -300,7 +300,7 @@ func (s *Service) importProxyNodes(inputs []proxyNodeInput, text string) (map[st
 		nameKey := strings.ToLower(strings.TrimSpace(name))
 		if _, exists := names[nameKey]; exists {
 			invalid++
-			details = append(details, map[string]any{"line": item.Line, "code": "duplicate_name", "error": "代理来源名称已存在"})
+			details = append(details, map[string]any{"line": item.Line, "code": "duplicate_name", "error": "代理名称已存在"})
 			continue
 		}
 		now := time.Now().UTC()

@@ -114,7 +114,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, syncProxySourceSelectionUI, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, resinAccountFormatFromTemplate, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, resinAccountFormatFromTemplate, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -374,7 +374,7 @@ test('Clear options pass null, rebind, and pause as distinct overrides', async (
   }
 });
 
-test('Binding source candidates follow the selected source scope', async () => {
+test('Binding source candidates use a bounded labeled picker', async () => {
   const { dashboard: ui, get, mock } = harness();
   ui.state.proxySources = [
     { id: 'node-1', name: 'Node one', kind: 'node' },
@@ -384,8 +384,9 @@ test('Binding source candidates follow the selected source scope', async () => {
   ui.state.proxyOperationSourceChoices = [];
   ui.renderProxyOperationSourceChoices('templates');
   let candidateHTML = get('proxyOperationSourceChoices').innerHTML;
-  assert.match(candidateHTML, /value="template-1"/);
-  assert.doesNotMatch(candidateHTML, /value="node-1"|value="resin-1"/);
+  assert.match(candidateHTML, /data-proxy-source-option="template-1"/);
+  assert.doesNotMatch(candidateHTML, /data-proxy-source-option="node-1"|data-proxy-source-option="resin-1"/);
+  assert.match(candidateHTML, />Template one · 模板</);
 
   const requests = [];
   mock('api', async (action, params) => {
@@ -399,15 +400,24 @@ test('Binding source candidates follow the selected source scope', async () => {
   candidateHTML = get('proxyOperationSourceChoices').innerHTML;
   assert.equal(requests[0].action, 'proxy.sources.list');
   assert.equal(requests[0].params.kind, 'template');
-  assert.match(candidateHTML, /value="template-2"/);
-  assert.doesNotMatch(candidateHTML, /value="node-2"/);
+  assert.match(candidateHTML, /data-proxy-source-option="template-2"/);
+  assert.doesNotMatch(candidateHTML, /data-proxy-source-option="node-2"/);
 
   await ui.searchProxyOperationSourceChoices('', 'all');
   candidateHTML = get('proxyOperationSourceChoices').innerHTML;
   assert.equal(Object.hasOwn(requests[1].params, 'kind'), false);
-  assert.match(candidateHTML, /value="template-2"/);
-  assert.match(candidateHTML, /value="node-2"/);
+  assert.match(candidateHTML, /data-proxy-source-option="template-2"/);
+  assert.match(candidateHTML, /data-proxy-source-option="node-2"/);
+
+  assert.equal(ui.chooseProxyOperationSource('template-2'), true);
+  assert.equal(get('proxyOperationSource').value, 'Template two');
+  assert.equal(get('proxyOperationSourceID').value, 'template-2');
+  assert.equal(ui.proxyOperationSourceValue(), 'template-2');
+
   assert.match(html, /\.confirm-card\.wide\s*\{/);
+  assert.match(html, /role="combobox"/);
+  assert.match(html, /\.proxy-source-picker-menu\s*\{[\s\S]*?max-height:\s*240px/);
+  assert.doesNotMatch(html, /<datalist id="proxyOperationSourceChoices"/);
 });
 
 test('Bulk proxy import filters invalid and duplicate lines and stays bounded', () => {
@@ -644,7 +654,7 @@ test('Source endpoints keep the proxy URL shape and reveal full credentials on d
   assert.equal(ui.state.sourceProxyDetails.get('node-1'), full);
 });
 
-test('Proxy source enabled and connectivity statuses stay independent', () => {
+test('Proxy source connectivity and check time use separate compact columns', () => {
   const { dashboard: ui } = harness();
   const row = ui.proxySourceRow({
     id: 'node-1', kind: 'node', name: 'Node one', enabled: true, valid: true,
@@ -652,8 +662,13 @@ test('Proxy source enabled and connectivity statuses stay independent', () => {
   });
   assert.match(row, /已启用/);
   assert.match(row, /不可达/);
+  assert.match(row, /2026\/11\/17/);
+  assert.match(row, /绑定上限：不限/);
+  assert.doesNotMatch(row, /· 上限：/);
+  assert.doesNotMatch(row, /检测：|尚未检测|检测时生成临时端点/);
   assert.doesNotMatch(row, />可用</);
   assert.match(row, /仅表示最近一次通过网络代理建立测试目标隧道的检测结果/);
+  assert.match(html, /网络连通性<\/th><th title="最近一次网络连通性检测时间">检测时间<\/th>/);
 
   const templateRow = ui.proxySourceRow({
     id: 'template-1', kind: 'template', name: 'Region template', enabled: true, valid: true,
@@ -665,14 +680,11 @@ test('Proxy source enabled and connectivity statuses stay independent', () => {
 
   const unknown = ui.proxySourceConnectivity({ id: 'template-2', kind: 'template', enabled: true, valid: true, health_checked: '0001-01-01T00:00:00Z' });
   assert.match(unknown, /未检测/);
-  assert.match(unknown, /检测时生成临时端点/);
-  assert.doesNotMatch(unknown, /检测：-/);
-  assert.doesNotMatch(unknown, /不适用|无法检测|样本/);
+  assert.doesNotMatch(unknown, /检测时生成临时端点|检测：-|不适用|无法检测|样本/);
 
   const localResin = ui.proxySourceConnectivity({ id: 'resin', kind: 'resin', enabled: true, valid: true, local_only: true });
   assert.match(localResin, /未检测/);
-  assert.match(localResin, /本地轮换无独立端点/);
-  assert.doesNotMatch(localResin, /不适用|无法检测/);
+  assert.doesNotMatch(localResin, /本地轮换无独立端点|不适用|无法检测/);
 });
 
 test('Proxy source filters include enabled and connectivity dimensions', () => {
@@ -704,6 +716,53 @@ test('Proxy source selection enables batch test and delete actions', () => {
   assert.equal(get('proxySourceDeleteSelectedBtn').disabled, false);
   assert.match(get('proxySourceRows').innerHTML, /data-source-select="node-1"/);
   assert.match(get('proxySourceRows').innerHTML, /data-source-select="node-1" aria-label="选择来源" checked/);
+});
+
+test('Proxy delete confirms stay concise and avoid trailing full stops', () => {
+  assert.match(html, /将删除此来源并清理受管理代理；失败项保留并报告/);
+  assert.match(html, /将删除 ' \+ ids\.length \+ ' 个来源并清理受管理代理；失败项保留并报告/);
+  assert.doesNotMatch(html, /成功项不会回滚。|成功项不会回滚'/);
+});
+
+test('Proxy source select-all loads every filtered source across pages', async () => {
+  const { dashboard: ui, get, mock } = harness();
+  ui.state.proxy = { source_count: 600, source_counts: { node: 600, template: 0, resin: 0 } };
+  ui.state.proxySourceFilter = 'node';
+  ui.state.proxySourceEnabledFilter = 'enabled';
+  ui.state.proxySourceHealthFilter = 'healthy';
+  ui.state.proxySourceQuery = 'edge';
+  ui.state.proxySources = [{ id: 'node-0', kind: 'node', name: 'Node 0', enabled: true, valid: true }];
+  ui.state.proxySourceList = { total: 501, page: 1, page_size: 50 };
+  ui.renderProxySources();
+  assert.equal(get('proxySourceSelectFilteredBtn').hidden, false);
+  assert.equal(get('proxySourceSelectFilteredBtn').textContent, '全选当前筛选：501 个');
+  assert.equal(get('proxySourceSelectAllBtn').hidden, false);
+  assert.equal(get('proxySourceSelectAllBtn').textContent, '全选所有来源：600 个');
+
+  const sources = Array.from({ length: 501 }, (_, index) => ({ id: 'node-' + index, kind: 'node', name: 'Node ' + index }));
+  const requests = [];
+  mock('api', async (action, params) => {
+    requests.push({ action, params });
+    const start = (params.page - 1) * params.page_size;
+    return { items: sources.slice(start, start + params.page_size), total: sources.length, page: params.page, page_size: params.page_size };
+  });
+  mock('confirmAction', async () => true);
+  await ui.selectProxySourceScope(false, get('proxySourceSelectFilteredBtn'));
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].action, 'proxy.sources.list');
+  assert.equal(requests[0].params.page_size, 500);
+  assert.equal(requests[0].params.kind, 'node');
+  assert.equal(requests[0].params.enabled, 'enabled');
+  assert.equal(requests[0].params.health, 'healthy');
+  assert.equal(requests[0].params.query, 'edge');
+  assert.equal(ui.state.proxySourceSelection.size, 501);
+  assert.match(get('proxySourceSelectionCount').textContent, /^已选：501 个来源/);
+
+  const allParams = plain(ui.listParams('sources', true));
+  assert.equal(allParams.kind, '');
+  assert.equal(allParams.enabled, '');
+  assert.equal(allParams.health, '');
+  assert.equal(allParams.query, '');
 });
 
 test('Proxy source versions explain endpoint and generation semantics', () => {
@@ -764,7 +823,7 @@ test('Routing affinity cards share a row and parameter hints explain their effec
   assert.match(html, /<th>端点<\/th>/);
   assert.match(html, /for="r_account_format">账号格式/);
   assert.match(html, /for="r_name">来源名称/);
-  assert.match(html, /无需填写 \{platform\}；只填写 username 后缀，例如 \{account\}。系统会拼成 socks5h:\/\/\{platform\}\.&lt;填写内容&gt;:\{proxy_token\}@&lt;Admin API 主机&gt;:&lt;端口&gt;/);
+  assert.match(html, /无需填写 \{platform\}；只填写 username 后缀，例如 \{account\}；系统会拼成 socks5h:\/\/\{platform\}\.&lt;填写内容&gt;:\{proxy_token\}@&lt;Admin API 主机&gt;:&lt;端口&gt;/);
   assert.doesNotMatch(html, /for="r_proxy_template">模板/);
 });
 
