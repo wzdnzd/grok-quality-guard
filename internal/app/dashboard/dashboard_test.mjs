@@ -687,6 +687,34 @@ test('Proxy source connectivity and check time use separate compact columns', ()
   assert.doesNotMatch(localResin, /本地轮换无独立端点|不适用|无法检测/);
 });
 
+test('Binding picker refreshes scoped proxy candidates before showing them', async () => {
+  const { dashboard: ui, get, mock } = harness();
+  ui.state.proxySources = [{ id: 'node-1', name: 'Node one', kind: 'node' }];
+  ui.state.proxyOperationSourceChoices = [];
+  get('proxyOperationSourceChoices').hidden = true;
+  get('proxyBindScope').value = 'all';
+  const requests = [];
+  mock('api', async (action, params) => {
+    requests.push({ action, params });
+    return { items: [{ id: 'template-1', name: 'Template one', kind: 'template' }], total: 1 };
+  });
+  const pending = deferred();
+  mock('confirmAction', () => pending.promise);
+  const optionsPromise = ui.confirmProxyBindingOptions('bind', 1, 'Bind');
+  get('proxyBindScope').value = 'templates';
+  await get('proxyBindScope').emit('change');
+  await get('proxyOperationSource').emit('focus');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].action, 'proxy.sources.list');
+  assert.equal(requests[0].params.kind, 'template');
+  assert.match(get('proxyOperationSourceChoices').innerHTML, /data-proxy-source-option="template-1"/);
+  assert.equal(ui.chooseProxyOperationSource('template-1'), true);
+  pending.resolve(true);
+  const options = await optionsPromise;
+  assert.deepEqual(plain(options.source_ids), ['template-1']);
+});
+
 test('Proxy source filters include enabled and connectivity dimensions', () => {
   const { dashboard: ui } = harness();
   ui.state.proxySourceEnabledFilter = 'disabled';
@@ -711,17 +739,22 @@ test('Proxy source selection enables batch test and delete actions', () => {
   ui.state.proxySourceList = { total: 2, page: 1, page_size: 50 };
   ui.state.proxySourceSelection.add('node-1');
   ui.renderProxySources();
-  assert.equal(get('proxySourceSelectionCount').textContent, '已选：1 个来源');
+  assert.equal(get('proxySourceSelectionCount').textContent, '已选：1 个代理');
   assert.equal(get('proxySourceTestSelectedBtn').disabled, false);
   assert.equal(get('proxySourceDeleteSelectedBtn').disabled, false);
   assert.match(get('proxySourceRows').innerHTML, /data-source-select="node-1"/);
-  assert.match(get('proxySourceRows').innerHTML, /data-source-select="node-1" aria-label="选择来源" checked/);
+  assert.match(get('proxySourceRows').innerHTML, /data-source-select="node-1" aria-label="选择代理" checked/);
 });
 
 test('Proxy delete confirms stay concise and avoid trailing full stops', () => {
-  assert.match(html, /将删除此来源并清理受管理代理；失败项保留并报告/);
-  assert.match(html, /将删除 ' \+ ids\.length \+ ' 个来源并清理受管理代理；失败项保留并报告/);
+  assert.match(html, /将删除此代理并清理受管理代理；失败项保留并报告/);
+  assert.match(html, /将删除 ' \+ ids\.length \+ ' 个代理并清理受管理代理；失败项保留并报告/);
   assert.doesNotMatch(html, /成功项不会回滚。|成功项不会回滚'/);
+});
+
+test('Proxy UI uses unified naming and avoids Chinese full stops', () => {
+  assert.doesNotMatch(html, /代理来源|个来源|来源名称|全部来源|添加来源|指定来源|来源范围/);
+  assert.doesNotMatch(html, /。/);
 });
 
 test('Proxy source select-all loads every filtered source across pages', async () => {
@@ -737,7 +770,7 @@ test('Proxy source select-all loads every filtered source across pages', async (
   assert.equal(get('proxySourceSelectFilteredBtn').hidden, false);
   assert.equal(get('proxySourceSelectFilteredBtn').textContent, '全选当前筛选：501 个');
   assert.equal(get('proxySourceSelectAllBtn').hidden, false);
-  assert.equal(get('proxySourceSelectAllBtn').textContent, '全选所有来源：600 个');
+  assert.equal(get('proxySourceSelectAllBtn').textContent, '全选所有代理：600 个');
 
   const sources = Array.from({ length: 501 }, (_, index) => ({ id: 'node-' + index, kind: 'node', name: 'Node ' + index }));
   const requests = [];
@@ -756,7 +789,7 @@ test('Proxy source select-all loads every filtered source across pages', async (
   assert.equal(requests[0].params.health, 'healthy');
   assert.equal(requests[0].params.query, 'edge');
   assert.equal(ui.state.proxySourceSelection.size, 501);
-  assert.match(get('proxySourceSelectionCount').textContent, /^已选：501 个来源/);
+  assert.match(get('proxySourceSelectionCount').textContent, /^已选：501 个代理/);
 
   const allParams = plain(ui.listParams('sources', true));
   assert.equal(allParams.kind, '');
@@ -813,7 +846,7 @@ test('Routing affinity cards share a row and parameter hints explain their effec
   const affinity = html.indexOf('id="p_session_affinity"');
   assert(ttl > 0 && ttl < prefer && prefer < affinity);
   assert.match(html, /健康记录超过此时长后失效/);
-  assert.match(html, /仅选择健康且未过期的来源/);
+  assert.match(html, /仅选择健康且未过期的代理/);
   assert.match(html, /:password@proxy\.example:1080/);
   assert.doesNotMatch(html, /:密码@proxy\.example:1080/);
   assert.match(html, /\.check-card\.compact\s*\{[^}]*min-height: 33px;[^}]*margin-top: 20px;/s);
@@ -822,7 +855,7 @@ test('Routing affinity cards share a row and parameter hints explain their effec
   assert.match(html, /默认显示脱敏端点，点击眼睛查看完整端点/);
   assert.match(html, /<th>端点<\/th>/);
   assert.match(html, /for="r_account_format">账号格式/);
-  assert.match(html, /for="r_name">来源名称/);
+  assert.match(html, /for="r_name">代理名称/);
   assert.match(html, /无需填写 \{platform\}；只填写 username 后缀，例如 \{account\}；系统会拼成 socks5h:\/\/\{platform\}\.&lt;填写内容&gt;:\{proxy_token\}@&lt;Admin API 主机&gt;:&lt;端口&gt;/);
   assert.doesNotMatch(html, /for="r_proxy_template">模板/);
 });

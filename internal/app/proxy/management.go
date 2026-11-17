@@ -374,7 +374,7 @@ func (s *Service) actionProxySourceDelete(params map[string]any) (any, int, erro
 	if s.env.ProxyStore().ProxyBindingCount(id) > 0 && !actionpkg.Bool(params, "force") {
 		return nil, 409, proxyError("proxy_source_in_use", 409, "source has active bindings; use force=true to clear them and delete")
 	}
-	task := s.env.ProxyStartTask("proxy.source.delete", nil, "正在清理绑定并删除代理来源", func(ctx context.Context) (any, error) {
+	task := s.env.ProxyStartTask("proxy.source.delete", nil, "正在清理绑定并删除代理", func(ctx context.Context) (any, error) {
 		return s.deleteProxySource(ctx, id, actionpkg.Bool(params, "force"))
 	})
 	return task, 202, nil
@@ -474,9 +474,9 @@ func (s *Service) actionProxySourcesTestSelected(_ context.Context, params map[s
 		return nil, 400, errors.New("provide 1 to 10000 source IDs")
 	}
 	if s.env.ProxyHasActivePrefix("proxy.sources.test_selected") {
-		return nil, 409, proxyError("proxy_source_test_busy", 409, "代理来源批量检测任务已在执行")
+		return nil, 409, proxyError("proxy_source_test_busy", 409, "代理批量检测任务已在执行")
 	}
-	task := s.env.ProxyStartTask("proxy.sources.test_selected", ids, "正在检测已选代理来源", func(taskCtx context.Context) (any, error) {
+	task := s.env.ProxyStartTask("proxy.sources.test_selected", ids, "正在检测已选代理", func(taskCtx context.Context) (any, error) {
 		items := make([]proxySourceBatchItem, len(ids))
 		for index, id := range ids {
 			items[index] = proxySourceBatchItem{SourceID: id, Kind: s.proxySourceKind(id), Status: "pending"}
@@ -512,10 +512,10 @@ func (s *Service) actionProxySourcesDeleteSelected(_ context.Context, params map
 		return nil, 400, errors.New("provide 1 to 10000 source IDs")
 	}
 	if s.env.ProxyHasActivePrefix("proxy.sources.delete_selected") {
-		return nil, 409, proxyError("proxy_source_delete_busy", 409, "代理来源批量删除任务已在执行")
+		return nil, 409, proxyError("proxy_source_delete_busy", 409, "代理批量删除任务已在执行")
 	}
 	force := actionpkg.Bool(params, "force")
-	task := s.env.ProxyStartTask("proxy.sources.delete_selected", ids, "正在清理并删除已选代理来源", func(taskCtx context.Context) (any, error) {
+	task := s.env.ProxyStartTask("proxy.sources.delete_selected", ids, "正在清理并删除已选代理", func(taskCtx context.Context) (any, error) {
 		items := make([]proxySourceBatchItem, len(ids))
 		for index, id := range ids {
 			items[index] = proxySourceBatchItem{SourceID: id, Kind: s.proxySourceKind(id), Status: "pending"}

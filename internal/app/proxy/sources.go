@@ -143,7 +143,7 @@ func proxyNodeEditorConfigEqual(left, right proxy.Node) bool {
 }
 
 func proxySourceUnchangedError() error {
-	return proxyError("proxy_source_unchanged", 400, "代理来源内容未发生变化，不能保存")
+	return proxyError("proxy_source_unchanged", 400, "代理内容未发生变化，不能保存")
 }
 
 func proxyDuplicateNodeError() error {

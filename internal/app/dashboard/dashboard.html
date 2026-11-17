@@ -2456,7 +2456,7 @@
       <section class="tab-panel" id="panel-resin" role="tabpanel" aria-labelledby="tab-resin">
         <nav class="tabs settings-tabs" role="tablist" aria-label="代理管理任务">
           <button class="tab-button active" id="proxy-tab-bindings" type="button" role="tab" aria-selected="true" aria-controls="proxy-subpanel-bindings" data-proxy-subtab="bindings">账号绑定</button>
-          <button class="tab-button" id="proxy-tab-sources" type="button" role="tab" aria-selected="false" aria-controls="proxy-subpanel-sources" data-proxy-subtab="sources">代理来源</button>
+          <button class="tab-button" id="proxy-tab-sources" type="button" role="tab" aria-selected="false" aria-controls="proxy-subpanel-sources" data-proxy-subtab="sources">代理</button>
         </nav>
         <div class="notice" id="proxyAutoBindBar">
           <svg class="icon"><use href="#i-activity"></use></svg>
@@ -2479,10 +2479,10 @@
               </div>
             </section>
             <section class="settings-group">
-              <h3 class="section-title">绑定来源</h3>
+              <h3 class="section-title">绑定代理</h3>
               <div class="field-grid">
-                <div class="field full"><label for="pab_source_scope">来源范围</label><select id="pab_source_scope"><option value="all">全部来源</option><option value="nodes">仅节点</option><option value="templates">仅模板</option><option value="resin">仅 Resin</option></select><span class="hint">仅在这些来源中选择</span></div>
-                <div class="field full"><label for="pab_source_ids">限定来源 ID</label><input id="pab_source_ids" type="text" placeholder="留空不限制，多个 ID 用逗号分隔"><span class="hint">保存时校验来源</span></div>
+                <div class="field full"><label for="pab_source_scope">代理范围</label><select id="pab_source_scope"><option value="all">全部代理</option><option value="nodes">仅节点</option><option value="templates">仅模板</option><option value="resin">仅 Resin</option></select><span class="hint">仅在这些代理中选择</span></div>
+                <div class="field full"><label for="pab_source_ids">限定代理 ID</label><input id="pab_source_ids" type="text" placeholder="留空不限制，多个 ID 用逗号分隔"><span class="hint">保存时校验代理</span></div>
               </div>
             </section>
             <section class="settings-group">
@@ -2498,7 +2498,7 @@
               <h3 class="section-title">健康与账号范围</h3>
               <div class="field-grid">
                 <div class="field"><label for="pab_health_max_age">健康最大年龄</label><input id="pab_health_max_age" type="text" placeholder="10m"><span class="hint">健康记录超过此时长后失效</span></div>
-                <div class="field"><label class="check-row"><input id="pab_require_healthy" type="checkbox"><span>仅使用健康来源</span></label><span class="hint">仅选择健康且未过期的来源</span></div>
+                <div class="field"><label class="check-row"><input id="pab_require_healthy" type="checkbox"><span>仅使用健康代理</span></label><span class="hint">仅选择健康且未过期的代理</span></div>
                 <div class="field"><label class="check-row"><input id="pab_include_guard_disabled" type="checkbox"><span>纳入插件隔离账号</span></label><span class="hint">包括冷却或隔离中的账号</span></div>
                 <div class="field"><label class="check-row"><input id="pab_include_externally_disabled" type="checkbox"><span>纳入外部禁用账号</span></label><span class="hint">包括 CPA 外部禁用的账号</span></div>
               </div>
@@ -2551,7 +2551,7 @@
             <div class="toolbar-left">
               <label class="search"><svg class="icon">
                   <use href="#i-search"></use>
-                </svg><input id="leaseSearch" type="search" placeholder="搜索账号、代理地址或来源" autocomplete="off"></label>
+                </svg><input id="leaseSearch" type="search" placeholder="搜索账号、代理地址或代理名称" autocomplete="off"></label>
               <select class="control" id="leaseFilter" aria-label="筛选代理状态">
                 <option value="all">全部代理</option>
                 <option value="bound">已绑定</option>
@@ -2562,7 +2562,7 @@
                 <option value="unknown">读取失败</option>
                 <option value="paused">自动绑定已暂停</option>
               </select>
-              <input class="control" id="leaseSourceFilter" type="search" list="proxySourceChoices" aria-label="筛选绑定来源" placeholder="来源 ID · 可搜索">
+              <input class="control" id="leaseSourceFilter" type="search" list="proxySourceChoices" aria-label="筛选绑定代理" placeholder="代理 ID · 可搜索">
             </div>
             <div class="toolbar-right">
               <span class="selection-note" id="leaseSelectionCount">已选：0 个账号</span>
@@ -2584,7 +2584,7 @@
                   <th class="select-cell"><input id="leaseSelectAll" type="checkbox" aria-label="选择本页全部账号"
                       title="选择本页全部账号"></th>
                   <th>账号</th>
-                  <th>来源</th>
+                  <th>代理</th>
                   <th>端点</th>
                   <th>模板版本</th>
                   <th>状态</th>
@@ -2614,17 +2614,17 @@
         </div>
           <section class="card" aria-labelledby="proxySourcesTitle">
             <div class="card-header">
-              <div><h2 id="proxySourcesTitle"><svg class="icon"><use href="#i-database"></use></svg>代理来源</h2><p>节点、模板与代理服务统一参与绑定；启用状态与网络连通性分列显示，列表筛选只影响当前列表</p></div>
+              <div><h2 id="proxySourcesTitle"><svg class="icon"><use href="#i-database"></use></svg>代理</h2><p>节点、模板与代理服务统一参与绑定；启用状态与网络连通性分列显示，列表筛选只影响当前列表</p></div>
               <div class="card-actions">
-                <label class="inline-control source-filter-group" for="proxySourceFilter"><span>列表筛选</span><select class="control" id="proxySourceFilter" aria-label="筛选代理来源类型" title="筛选当前来源列表"><option value="all">全部来源</option><option value="node">节点</option><option value="template">模板</option><option value="resin">Resin</option></select></label>
-                <div class="inline-control source-filter-group add-source-control"><span>新增类型</span><select class="control" id="proxyAddSourceKind" aria-label="新增来源类型" title="选择要添加的来源类型"><option value="node">节点</option><option value="template">模板</option></select><button class="btn btn-xs" type="button" id="proxyAddSourceBtn"><svg class="icon"><use href="#i-plus"></use></svg>添加来源</button></div>
+                <label class="inline-control source-filter-group" for="proxySourceFilter"><span>列表筛选</span><select class="control" id="proxySourceFilter" aria-label="筛选代理类型" title="筛选当前代理列表"><option value="all">全部代理</option><option value="node">节点</option><option value="template">模板</option><option value="resin">Resin</option></select></label>
+                <div class="inline-control source-filter-group add-source-control"><span>新增类型</span><select class="control" id="proxyAddSourceKind" aria-label="新增代理类型" title="选择要添加的代理类型"><option value="node">节点</option><option value="template">模板</option></select><button class="btn btn-xs" type="button" id="proxyAddSourceBtn"><svg class="icon"><use href="#i-plus"></use></svg>添加代理</button></div>
                 <button class="btn btn-xs btn-ghost" type="button" id="proxyImportNodesBtn"><svg class="icon"><use href="#i-link"></use></svg>批量导入节点</button>
               </div>
             </div>
-            <div class="toolbar"><div class="toolbar-left"><label class="search"><svg class="icon"><use href="#i-search"></use></svg><input id="proxySourceSearch" type="search" placeholder="搜索名称、类型或脱敏端点" autocomplete="off"></label><label class="inline-control source-filter-group" for="proxySourceEnabledFilter"><span>启用</span><select class="control" id="proxySourceEnabledFilter" aria-label="按启用状态筛选代理来源"><option value="all">全部</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select></label><label class="inline-control source-filter-group" for="proxySourceHealthFilter"><span>连通性</span><select class="control" id="proxySourceHealthFilter" aria-label="按网络连通性筛选代理来源"><option value="all">全部</option><option value="healthy">可连通</option><option value="unhealthy">不可达</option><option value="unknown">未检测</option></select></label><span class="muted" id="proxySourceSummary"></span></div><div class="toolbar-right"><span class="selection-note" id="proxySourceSelectionCount">已选：0 个来源</span><button class="btn btn-xs btn-ghost" type="button" id="proxySourceSelectFilteredBtn" title="选择当前搜索和筛选结果中的所有来源" hidden>全选当前筛选</button><button class="btn btn-xs btn-ghost" type="button" id="proxySourceSelectAllBtn" title="忽略当前搜索和筛选，选择全部来源" hidden>全选所有来源</button><button class="btn btn-xs" type="button" id="proxySourceTestSelectedBtn" title="检测已选来源的网络连通性" disabled><svg class="icon"><use href="#i-play"></use></svg>检测所选</button><button class="btn btn-xs btn-danger" type="button" id="proxySourceDeleteSelectedBtn" title="清理绑定并删除已选来源" disabled><svg class="icon"><use href="#i-x"></use></svg>删除所选</button><button class="btn btn-xs btn-ghost" type="button" id="proxySourceClearSelectionBtn" hidden>清空已选</button><button class="btn btn-xs" type="button" id="proxySourceRefreshBtn"><svg class="icon"><use href="#i-refresh"></use></svg>刷新</button></div></div>
-            <div class="table-wrap"><table class="proxy-source-table"><thead><tr><th class="select-cell"><input id="proxySourceSelectAll" type="checkbox" aria-label="选择本页全部来源" title="选择本页全部来源"></th><th>名称</th><th>类型</th><th>端点</th><th>启用状态</th><th title="仅表示最近一次网络隧道检测结果，不代表账号质量或授权可用性">网络连通性</th><th title="最近一次网络连通性检测时间">检测时间</th><th>绑定数</th><th title="v = 标准端点内容版本；r = 生成配置版本">版本</th><th class="actions-cell">操作</th></tr></thead><tbody id="proxySourceRows"></tbody></table></div>
+            <div class="toolbar"><div class="toolbar-left"><label class="search"><svg class="icon"><use href="#i-search"></use></svg><input id="proxySourceSearch" type="search" placeholder="搜索名称、类型或脱敏端点" autocomplete="off"></label><label class="inline-control source-filter-group" for="proxySourceEnabledFilter"><span>启用</span><select class="control" id="proxySourceEnabledFilter" aria-label="按启用状态筛选代理"><option value="all">全部</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select></label><label class="inline-control source-filter-group" for="proxySourceHealthFilter"><span>连通性</span><select class="control" id="proxySourceHealthFilter" aria-label="按网络连通性筛选代理"><option value="all">全部</option><option value="healthy">可连通</option><option value="unhealthy">不可达</option><option value="unknown">未检测</option></select></label><span class="muted" id="proxySourceSummary"></span></div><div class="toolbar-right"><span class="selection-note" id="proxySourceSelectionCount">已选：0 个代理</span><button class="btn btn-xs btn-ghost" type="button" id="proxySourceSelectFilteredBtn" title="选择当前搜索和筛选结果中的所有代理" hidden>全选当前筛选</button><button class="btn btn-xs btn-ghost" type="button" id="proxySourceSelectAllBtn" title="忽略当前搜索和筛选，选择全部代理" hidden>全选所有代理</button><button class="btn btn-xs" type="button" id="proxySourceTestSelectedBtn" title="检测已选代理的网络连通性" disabled><svg class="icon"><use href="#i-play"></use></svg>检测所选</button><button class="btn btn-xs btn-danger" type="button" id="proxySourceDeleteSelectedBtn" title="清理绑定并删除已选代理" disabled><svg class="icon"><use href="#i-x"></use></svg>删除所选</button><button class="btn btn-xs btn-ghost" type="button" id="proxySourceClearSelectionBtn" hidden>清空已选</button><button class="btn btn-xs" type="button" id="proxySourceRefreshBtn"><svg class="icon"><use href="#i-refresh"></use></svg>刷新</button></div></div>
+            <div class="table-wrap"><table class="proxy-source-table"><thead><tr><th class="select-cell"><input id="proxySourceSelectAll" type="checkbox" aria-label="选择本页全部代理" title="选择本页全部代理"></th><th>名称</th><th>类型</th><th>端点</th><th>启用状态</th><th title="仅表示最近一次网络隧道检测结果，不代表账号质量或授权可用性">网络连通性</th><th title="最近一次网络连通性检测时间">检测时间</th><th>绑定数</th><th title="v = 标准端点内容版本；r = 生成配置版本">版本</th><th class="actions-cell">操作</th></tr></thead><tbody id="proxySourceRows"></tbody></table></div>
             <div class="pagination" id="proxySourcesPager" hidden></div>
-            <div class="empty" id="proxySourcesEmpty" hidden><svg class="icon"><use href="#i-database"></use></svg><div>暂无代理来源</div></div>
+            <div class="empty" id="proxySourcesEmpty" hidden><svg class="icon"><use href="#i-database"></use></svg><div>暂无代理</div></div>
           </section>
         </div>
       </section>
@@ -2850,7 +2850,7 @@
     <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="proxySourceEditorTitle">
       <div class="drawer-head">
         <div>
-          <h2 id="proxySourceEditorTitle">代理来源</h2>
+          <h2 id="proxySourceEditorTitle">代理</h2>
           <p id="proxySourceEditorSubtitle">配置节点或模板；敏感凭据不会回填</p>
         </div>
         <button class="btn btn-ghost icon-btn" type="button" id="proxySourceEditorClose" aria-label="关闭"><svg class="icon"><use href="#i-x"></use></svg></button>
@@ -2866,7 +2866,7 @@
           <div class="field-grid">
             <label class="check-card full"><input id="r_enabled" type="checkbox"><span class="check-copy"><span class="check-title">启用代理轮换</span><span class="check-desc">关闭后不会自动写入或轮换账号代理</span></span></label>
             <label class="check-card full"><input id="r_local_only" type="checkbox"><span class="check-copy"><span class="check-title">仅本地轮换</span><span class="check-desc">不调用 Resin API，只改写 OAuth 文件中已有代理的用户名</span></span></label>
-            <div class="field"><label for="r_name">来源名称</label><input id="r_name" type="text" autocomplete="off" placeholder="Resin"><span class="hint">用于代理来源列表和自动绑定选择；名称不能与其他来源重复</span></div>
+            <div class="field"><label for="r_name">代理名称</label><input id="r_name" type="text" autocomplete="off" placeholder="Resin"><span class="hint">用于代理列表和自动绑定选择；名称不能与其他代理重复</span></div>
             <div class="field"><label for="r_platform">平台名称</label><input id="r_platform" type="text" autocomplete="off" placeholder="例如 Default"><span class="hint">保存时按名称查询 Resin 平台并取得 UUID</span></div>
             <div class="field full"><label for="r_admin_url">Admin API URL</label><input id="r_admin_url" type="url" autocomplete="off" placeholder="http://resin:2260"><span class="hint">仅 API 模式需要，必须可从 CPA 插件进程访问</span></div>
           </div>
@@ -3588,7 +3588,7 @@
     const PAGE_CONFIG = {
       accounts: { pageKey: 'accountPage', sizeKey: 'accountPageSize', pagerId: 'accountsPager', itemUnit: '个', unit: '个账号', items: () => state.accounts, metadata: () => state.accountList, render: () => renderAccounts() },
       leases: { pageKey: 'leasePage', sizeKey: 'leasePageSize', pagerId: 'leasesPager', itemUnit: '个', unit: '个账号', items: () => state.leases, metadata: () => state.leaseList, render: () => renderResin() },
-      sources: { pageKey: 'proxySourcePage', sizeKey: 'proxySourcePageSize', pagerId: 'proxySourcesPager', itemUnit: '个', unit: '个来源', items: () => state.proxySources, metadata: () => state.proxySourceList, render: () => renderProxySources() },
+      sources: { pageKey: 'proxySourcePage', sizeKey: 'proxySourcePageSize', pagerId: 'proxySourcesPager', itemUnit: '个', unit: '个代理', items: () => state.proxySources, metadata: () => state.proxySourceList, render: () => renderProxySources() },
       events: { pageKey: 'eventPage', sizeKey: 'eventPageSize', pagerId: 'eventsPager', itemUnit: '条', unit: '条事件', items: () => state.events.filter(eventMatches), render: () => renderEvents() }
     };
     function pagedItems(kind) {
@@ -3708,7 +3708,7 @@
       const proxySources = state.proxySources || [];
       const autoBind = proxySummary.auto_bind || {};
       document.getElementById('resinSummary').innerHTML = [
-        summaryItem('可绑定来源', esc(num(proxySummary.available_source_count ?? proxySummary.enabled_source_count ?? proxySources.filter((source) => source.enabled && source.valid).length))),
+        summaryItem('可绑定代理', esc(num(proxySummary.available_source_count ?? proxySummary.enabled_source_count ?? proxySources.filter((source) => source.enabled && source.valid).length))),
         summaryItem('已绑定', esc(num(proxyCounts.bound || 0))),
         summaryItem('未绑定', esc(num(proxyCounts.unbound || 0))),
         summaryItem('外部 / 待核对', esc(num(Number(proxyCounts.external || proxyCounts.conflict || 0) + Number(proxyCounts.unknown || 0) + Number(proxyCounts.drifted || 0) + Number(proxyCounts.reconcile_required || 0)))),
@@ -3844,21 +3844,21 @@
       const configured = sourceTotal > 0;
       const available = Number(proxy.available_source_count ?? sources.filter((source) => source.enabled && source.valid).length);
       document.getElementById('resinMetrics').innerHTML = [
-        metricCard('database', num(counts.bound || 0), '已绑定账号', '可绑定来源：' + available, 'info'),
+        metricCard('database', num(counts.bound || 0), '已绑定账号', '可绑定代理：' + available, 'info'),
         metricCard('users', num(counts.unbound || 0), '未绑定账号', '实际代理为空', ''),
         metricCard('alert', num(Number(counts.external || counts.conflict || 0) + Number(counts.unknown || 0) + Number(counts.drifted || 0) + Number(counts.reconcile_required || 0)), '需核对', '外部配置、漂移或读取失败', Number(counts.external || counts.conflict || 0) + Number(counts.drifted || 0) + Number(counts.unknown || 0) ? 'warn' : 'good'),
-        metricCard('check', num(sourceTotal), '代理来源', '可绑定来源：' + available, available ? 'good' : 'warn')
+        metricCard('check', num(sourceTotal), '代理', '可绑定代理：' + available, available ? 'good' : 'warn')
       ].join('');
-      document.getElementById('resinConfigState').textContent = !configured ? '未配置' : (available ? '有可绑定来源' : '无可绑定来源');
+      document.getElementById('resinConfigState').textContent = !configured ? '未配置' : (available ? '有可绑定代理' : '无可绑定代理');
       const notice = document.getElementById('resinNotice');
       if (!configured) {
         notice.hidden = false;
         notice.className = 'notice warn';
-        document.getElementById('resinNoticeText').textContent = '尚未配置代理来源，请在代理来源添加节点或模板，或配置 Resin 连接';
+        document.getElementById('resinNoticeText').textContent = '尚未配置代理，请在代理添加节点或模板，或配置 Resin 连接';
       } else if (!available) {
         notice.hidden = false;
         notice.className = 'notice warn';
-        document.getElementById('resinNoticeText').textContent = '当前没有可用于新绑定的代理来源；已有代理路由保持不变';
+        document.getElementById('resinNoticeText').textContent = '当前没有可用于新绑定的代理；已有代理路由保持不变';
       } else {
         notice.hidden = true;
       }
@@ -3897,7 +3897,7 @@
         actions = '<button class="btn btn-xs" type="button" data-proxy-action="rotate" data-auth="' + authID + '">' + icon('rotate') + '轮换</button>' +
           '<button class="btn btn-xs btn-danger" type="button" data-proxy-action="clear" data-auth="' + authID + '">' + icon('x') + '清除</button>';
       } else if (status === 'unbound') {
-        actions = canBind ? '<button class="btn btn-xs" type="button" data-proxy-action="bind" data-auth="' + authID + '">' + icon('link') + '绑定</button>' : '<span class="subtle">无可绑定来源</span>';
+        actions = canBind ? '<button class="btn btn-xs" type="button" data-proxy-action="bind" data-auth="' + authID + '">' + icon('link') + '绑定</button>' : '<span class="subtle">无可绑定代理</span>';
       } else if (status === 'external') {
         actions = '<button class="btn btn-xs btn-danger" type="button" data-proxy-action="clear-external" data-auth="' + authID + '">' + icon('x') + '清除外部代理</button>';
       } else {
@@ -3958,7 +3958,7 @@
       if (kind === 'node') return '节点';
       if (kind === 'template') return '模板';
       if (kind === 'resin') return 'Resin';
-      return kind || '来源';
+      return kind || '代理';
     }
     function proxySourceFilteredList() {
       return state.proxySources;
@@ -3999,20 +3999,20 @@
       selectAll.checked = current.items.length > 0 && pageSelected === current.items.length;
       selectAll.indeterminate = pageSelected > 0 && pageSelected < current.items.length;
       const scope = current.items.length > 0 && pageSelected === current.items.length ? ' · 包含本页全部' : '';
-      document.getElementById('proxySourceSelectionCount').textContent = '已选：' + selected + ' 个来源' + scope;
+      document.getElementById('proxySourceSelectionCount').textContent = '已选：' + selected + ' 个代理' + scope;
       const selectFiltered = document.getElementById('proxySourceSelectFilteredBtn');
       const selectAllSources = document.getElementById('proxySourceSelectAllBtn');
       selectFiltered.hidden = current.total === 0 || current.total === allCount;
       selectFiltered.textContent = '全选当前筛选：' + current.total + ' 个';
       selectAllSources.hidden = allCount === 0;
-      selectAllSources.textContent = '全选所有来源：' + allCount + ' 个';
+      selectAllSources.textContent = '全选所有代理：' + allCount + ' 个';
       document.getElementById('proxySourceClearSelectionBtn').hidden = selected === 0;
       const test = document.getElementById('proxySourceTestSelectedBtn');
       test.disabled = selected === 0;
-      test.title = selected > 0 ? '检测已选 ' + selected + ' 个来源的网络连通性' : '请先勾选来源';
+      test.title = selected > 0 ? '检测已选 ' + selected + ' 个代理的网络连通性' : '请先勾选代理';
       const remove = document.getElementById('proxySourceDeleteSelectedBtn');
       remove.disabled = selected === 0;
-      remove.title = selected > 0 ? '清理绑定并删除已选 ' + selected + ' 个来源' : '请先勾选来源';
+      remove.title = selected > 0 ? '清理绑定并删除已选 ' + selected + ' 个代理' : '请先勾选代理';
     }
     function proxySourceRow(source) {
       const sourceID = esc(source.id || '');
@@ -4036,7 +4036,7 @@
         ? '<div class="subline">' + esc(source.placeholder_count || 0) + ' 个变量 · ' + esc(source.group_count || 0) + ' 个关联组 · ' + (source.update_policy === 'rerender_bound' ? '保存时更新绑定' : '保留旧绑定') + '</div>'
         : (source.kind === 'resin' ? '' : '<div class="subline">优先级：' + esc(source.priority || 0) + ' · 绑定上限：' + esc(source.max_bindings || '不限') + '</div>');
       const endpoint = endpointCell(source.endpoint, state.sourceProxyDetails.get(source.id), 'data-source-endpoint', sourceID);
-      return '<tr><td class="select-cell"><input type="checkbox" data-source-select="' + sourceID + '" aria-label="选择来源" ' + (selected ? 'checked' : '') + '></td><td><div class="account-name">' + esc(source.name || '未命名来源') + '</div>' + detail + '</td>' +
+      return '<tr><td class="select-cell"><input type="checkbox" data-source-select="' + sourceID + '" aria-label="选择代理" ' + (selected ? 'checked' : '') + '></td><td><div class="account-name">' + esc(source.name || '未命名代理') + '</div>' + detail + '</td>' +
         '<td>' + badge(proxySourceLabel(source.kind), source.kind === 'resin' ? 'info' : '') + '</td>' +
         '<td>' + endpoint + '</td>' +
         '<td>' + proxySourceEnabledState(source) + '</td><td>' + proxySourceConnectivity(source) + '</td><td class="nowrap">' + proxySourceCheckedAt(source) + '</td><td class="mono">' + esc(source.binding_count || 0) + '</td>' +
@@ -4107,7 +4107,7 @@
       if (!menu) return visible;
       menu.innerHTML = visible.length
         ? visible.map((source, index) => '<button type="button" class="proxy-source-picker-option' + (index === proxyOperationSourceActiveIndex ? ' active' : '') + '" id="proxyOperationSourceOption-' + index + '" role="option" aria-selected="' + String(source.id === selectedID) + '" data-proxy-source-option="' + esc(source.id) + '">' + esc(source.name || source.id) + ' · ' + esc(proxySourceLabel(source.kind)) + '</button>').join('')
-        : '<div class="proxy-source-picker-empty">没有匹配的来源</div>';
+        : '<div class="proxy-source-picker-empty">没有匹配的代理</div>';
       return visible;
     }
     function setProxyOperationSourceMenuOpen(open) {
@@ -4170,7 +4170,7 @@
       const config = summary.auto_bind || {};
       const runtime = summary.auto_bind_runtime || {};
       const enabled = Boolean(config.enabled);
-      const waitingLabels = { disabled: '已关闭', catalog_empty: '等待账号目录', no_available_sources: '等待可绑定来源', auth_read_unknown: '账号读取失败', queue_full: '队列已满', source_quota_reached: '来源配额已满', retry_backoff: '等待退避结束', stopping: '正在停止' };
+      const waitingLabels = { disabled: '已关闭', catalog_empty: '等待账号目录', no_available_sources: '等待可绑定代理', auth_read_unknown: '账号读取失败', queue_full: '队列已满', source_quota_reached: '代理配额已满', retry_backoff: '等待退避结束', stopping: '正在停止' };
       const waiting = runtime.waiting_reason ? (' · 等待：' + (waitingLabels[runtime.waiting_reason] || localizeDetail(runtime.waiting_reason))) : '';
       const queue = Number(runtime.queue_depth || 0);
       const inFlight = Number(runtime.in_flight || 0);
@@ -4284,7 +4284,7 @@
       if (button) button.textContent = '任务详情' + (active ? ' · 进行中：' + active : '') + (failed ? ' · 失败：' + failed : '');
     }
     function proxyTaskLabel(kind) {
-      return { 'proxy.bind': '绑定代理', 'proxy.clear': '清除代理', 'proxy.rotate': '轮换代理', 'proxy.bind_unbound': '绑定未绑定账号', 'proxy.template.apply': '应用代理模板', 'proxy.source.update': '保存代理来源', 'proxy.source.delete': '删除代理来源', 'proxy.sources.test_selected': '批量检测代理来源', 'proxy.sources.delete_selected': '批量删除代理来源', 'proxy.source.sync': '同步来源绑定', 'resin.config.save': '保存代理服务配置', 'resin.config.validate': '验证代理服务配置', 'resin.cleanup.retry': '重试代理清理' }[kind] || '代理后台任务';
+      return { 'proxy.bind': '绑定代理', 'proxy.clear': '清除代理', 'proxy.rotate': '轮换代理', 'proxy.bind_unbound': '绑定未绑定账号', 'proxy.template.apply': '应用代理模板', 'proxy.source.update': '保存代理', 'proxy.source.delete': '删除代理', 'proxy.sources.test_selected': '批量检测代理', 'proxy.sources.delete_selected': '批量删除代理', 'proxy.source.sync': '同步代理绑定', 'resin.config.save': '保存代理服务配置', 'resin.config.validate': '验证代理服务配置', 'resin.cleanup.retry': '重试代理清理' }[kind] || '代理后台任务';
     }
     async function refreshProxyTasks() {
       if (state.proxyTasksRefreshing) return state.proxyEditing?.taskErrors || [];
@@ -4372,11 +4372,11 @@
         const page = Math.max(1, Math.min(remote ? Number(detail.page || 1) : editor.taskDetailPage || 1, Math.ceil(total / 20) || 1));
         editor.taskDetailPage = page;
         const visible = remote ? items : items.slice((page - 1) * 20, page * 20);
-        const itemLabel = visible.some((item) => item.source_id) ? '来源' : '账号';
+        const itemLabel = visible.some((item) => item.source_id) ? '代理' : '账号';
         detailHTML = '<section class="card proxy-task-results"><div class="form-section"><h3 class="section-title">逐项结果</h3><p role="status" aria-live="polite">' + esc(proxyResultMessage(result, '任务').message) + '</p><div class="table-wrap"><table><thead><tr><th>' + itemLabel + '</th><th>结果</th><th>原因</th></tr></thead><tbody>' + visible.map((item) => '<tr><td>' + esc(item.auth_id || item.source_id || '-') + '</td><td>' + esc(statusLabel(item.status)) + (item.needs_reconcile ? ' · 待核对' : '') + '</td><td>' + esc(item.error || '-') + '</td></tr>').join('') + '</tbody></table></div><div class="form-actions"><button class="btn btn-xs" type="button" data-task-detail-page="-1" ' + (page <= 1 ? 'disabled' : '') + '>上一页</button><span>第 ' + page + ' / ' + Math.max(1, Math.ceil(total / 20)) + ' 页 · 共：' + total + ' 项</span><button class="btn btn-xs" type="button" data-task-detail-page="1" ' + (page * 20 >= total ? 'disabled' : '') + '>下一页</button></div></div></section>';
       }
       const taskToolbar = '<div class="task-toolbar"><div class="task-toolbar-summary"><span class="task-toolbar-metric"><span>后台任务：</span><strong>' + tasks.length + '</strong><span>个</span></span><span class="task-toolbar-metric"><span>同步记录：</span><strong>' + state.proxyChanges.length + '</strong><span>条</span></span></div><button class="btn btn-xs" id="proxyTasksRefreshBtn" type="button">' + icon('refresh') + '刷新</button></div>';
-      replaceProxyHTML(document.getElementById('proxySourceEditor'), errors + taskToolbar + '<h3>后台任务</h3><div class="table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>进度 / 结果</th><th>操作</th></tr></thead><tbody>' + (taskRows || '<tr><td colspan="4">暂无任务</td></tr>') + '</tbody></table></div><h3>来源同步与回溯</h3><div class="table-wrap"><table><thead><tr><th>来源</th><th>状态</th><th>目标版本</th><th>操作</th></tr></thead><tbody>' + (changes || '<tr><td colspan="4">暂无同步记录</td></tr>') + '</tbody></table></div>' + detailHTML + cleanupHTML);
+      replaceProxyHTML(document.getElementById('proxySourceEditor'), errors + taskToolbar + '<h3>后台任务</h3><div class="table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>进度 / 结果</th><th>操作</th></tr></thead><tbody>' + (taskRows || '<tr><td colspan="4">暂无任务</td></tr>') + '</tbody></table></div><h3>代理同步与回溯</h3><div class="table-wrap"><table><thead><tr><th>代理</th><th>状态</th><th>目标版本</th><th>操作</th></tr></thead><tbody>' + (changes || '<tr><td colspan="4">暂无同步记录</td></tr>') + '</tbody></table></div>' + detailHTML + cleanupHTML);
     }
     function proxyPasswordFields(prefix, hasPassword, full) {
       return '<div class="field' + (full ? ' full' : '') + '"><label for="' + prefix + '_password_action">代理密码</label><select id="' + prefix + '_password_action"><option value="keep">保持现有密码' + (hasPassword ? ' · 已设置' : ' · 未设置') + '</option><option value="set">设置新密码</option><option value="clear">清除密码</option></select><span class="hint">选择处理方式</span></div><div class="field full" data-password-value-field="' + prefix + '" hidden><label for="' + prefix + '_password_value">新密码 · 可留空</label><input type="password" id="' + prefix + '_password_value" autocomplete="new-password"><span class="hint">也可从 URL 中解析</span></div>';
@@ -4474,7 +4474,7 @@
       document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyNodeEditorForm" class="drawer-form"><section class="card"><div class="form-section"><h3 class="section-title">连接信息</h3><div class="field-grid">' +
         proxyEditorField('名称', 'pnode_name', node.name || '', { placeholder: '例如 主代理', hint: '用于识别节点' }) +
         proxyEditorCheck('启用节点', 'pnode_enabled', source ? Boolean(source.enabled) : true, '关闭后不再参与新绑定') +
-        proxyEditorField('代理 URL', 'pnode_url', '', { full: true, placeholder: source ? '留空保持原地址' : 'http://user:pass@proxy.example:8080', hint: '支持用户名和密码；相同标准 URL 不能重复添加，名称也不能与其他来源重复' }) +
+        proxyEditorField('代理 URL', 'pnode_url', '', { full: true, placeholder: source ? '留空保持原地址' : 'http://user:pass@proxy.example:8080', hint: '支持用户名和密码；相同标准 URL 不能重复添加，名称也不能与其他代理重复' }) +
         proxyPasswordFields('pnode', Boolean(node.has_password || source?.password_set), true) +
         proxyEditorField('优先级', 'pnode_priority', node.priority || 0, { type: 'number', min: -1000000, max: 1000000, hint: '数值越大越优先' }) +
         proxyEditorField('绑定上限', 'pnode_max_bindings', node.max_bindings || 0, { type: 'number', min: 0, hint: '0 表示不限' }) +
@@ -4849,7 +4849,7 @@
       document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyTemplateEditorForm" class="drawer-form"><div class="stack"><section class="card"><div class="form-section"><h3 class="section-title">代理格式</h3><div class="field-grid">' +
         proxyEditorField('模板名称', 'ptpl_name', template.name || '', { hint: '用于识别模板' }) +
         proxyEditorCheck('启用模板', 'ptpl_enabled', source ? Boolean(source.enabled) : true, '关闭后不参与新绑定') +
-        proxyEditorField('模板 URL', 'ptpl_url', '', { full: true, placeholder: source ? '留空保持现有模板，输入新 URL 会重新识别变量' : 'socks5h://user-{vendor}-{plan}:password@proxy.example:1080', hint: (template.username_pattern ? ('当前用户名：' + template.username_pattern + '；URL 中的 password 优先') : 'URL 中的 password 优先；password 不可使用占位符') + '；相同定义不能重复添加，名称也不能与其他来源重复' }) +
+        proxyEditorField('模板 URL', 'ptpl_url', '', { full: true, placeholder: source ? '留空保持现有模板，输入新 URL 会重新识别变量' : 'socks5h://user-{vendor}-{plan}:password@proxy.example:1080', hint: (template.username_pattern ? ('当前用户名：' + template.username_pattern + '；URL 中的 password 优先') : 'URL 中的 password 优先；password 不可使用占位符') + '；相同定义不能重复添加，名称也不能与其他代理重复' }) +
         proxyEditorField('优先级', 'ptpl_priority', template.priority || 0, { type: 'number', min: -1000000, max: 1000000, hint: '数值越大越优先' }) +
         proxyEditorField('绑定上限', 'ptpl_max_bindings', template.max_bindings || 0, { type: 'number', min: 0, hint: '0 表示不限' }) +
         '<div class="field"><label for="ptpl_update_policy">保存修改时</label><select id="ptpl_update_policy"><option value="keep_bound">仅保存模板</option><option value="rerender_bound">同步已绑定账号</option></select><span class="hint">仅保存或同步已绑定账号</span></div>' +
@@ -5180,16 +5180,16 @@
     }
     async function deleteProxySource(sourceID, kind) {
       const confirmed = await confirmAction({
-        title: '删除代理来源',
-        detail: '将删除此来源并清理受管理代理；失败项保留并报告',
+        title: '删除代理',
+        detail: '将删除此代理并清理受管理代理；失败项保留并报告',
         confirmLabel: '删除并清理',
         icon: 'x',
         tone: 'danger'
       });
       if (!confirmed) return;
       try {
-        const result = await waitForTask(await api('proxy.sources.delete', { source_id: sourceID, kind: kind, force: true }), '来源删除与绑定清理');
-        reportProxyResult(result, '来源删除与清理');
+        const result = await waitForTask(await api('proxy.sources.delete', { source_id: sourceID, kind: kind, force: true }), '代理删除与绑定清理');
+        reportProxyResult(result, '代理删除与清理');
         state.proxySourceSelection.delete(sourceID);
         await loadProxyData();
         await refreshResin(null);
@@ -5216,13 +5216,13 @@
     async function selectProxySourceScope(all, button) {
       const count = all ? proxySourceAllCount() : pagedItems('sources').total;
       if (!count) return;
-      if (!await confirmAction({ title: all ? '全选所有代理来源' : '全选当前筛选', detail: '将跨页加载 ' + count + ' 个来源的 ID 并加入选择', confirmLabel: '加载并全选', icon: 'database' })) return;
+      if (!await confirmAction({ title: all ? '全选所有代理' : '全选当前筛选', detail: '将跨页加载 ' + count + ' 个代理的 ID 并加入选择', confirmLabel: '加载并全选', icon: 'database' })) return;
       setBusy(button, true);
       try {
         const ids = await loadAllProxySourceIDs(all);
         ids.forEach((id) => state.proxySourceSelection.add(id));
         renderProxySources();
-        toast('已选择：' + state.proxySourceSelection.size + ' 个来源', 'success');
+        toast('已选择：' + state.proxySourceSelection.size + ' 个代理', 'success');
       } catch (error) {
         toast(error.message, 'error');
       } finally {
@@ -5245,19 +5245,19 @@
       const ids = selectedProxySourceIDs();
       if (!ids.length) {
         syncProxySourceSelectionUI();
-        toast('请先勾选需要检测的代理来源', 'error');
+        toast('请先勾选需要检测的代理', 'error');
         return;
       }
       setBusy(button, true);
       try {
         const task = await api('proxy.sources.test_selected', { source_ids: ids });
-        toast('已提交 ' + ids.length + ' 个来源的连通性检测任务');
-        const result = await waitForTask(task, '检测已选代理来源');
+        toast('已提交 ' + ids.length + ' 个代理的连通性检测任务');
+        const result = await waitForTask(task, '检测已选代理');
         const counts = result?.counts || {};
         const reachable = Number(counts.reachable || 0);
         const unreachable = Number(counts.unreachable || 0);
         const failed = Number(counts.failed || 0);
-        const message = '来源检测完成：可连通 ' + reachable + ' · 不可达 ' + unreachable + ' · 失败 ' + failed;
+        const message = '代理检测完成：可连通 ' + reachable + ' · 不可达 ' + unreachable + ' · 失败 ' + failed;
         toast(message, unreachable || failed ? 'error' : 'success');
         await loadProxyData();
         renderProxySources();
@@ -5279,12 +5279,12 @@
       const ids = selectedProxySourceIDs();
       if (!ids.length) {
         syncProxySourceSelectionUI();
-        toast('请先勾选需要删除的代理来源', 'error');
+        toast('请先勾选需要删除的代理', 'error');
         return;
       }
       const confirmed = await confirmAction({
-        title: '删除所选代理来源',
-        detail: '将删除 ' + ids.length + ' 个来源并清理受管理代理；失败项保留并报告',
+        title: '删除所选代理',
+        detail: '将删除 ' + ids.length + ' 个代理并清理受管理代理；失败项保留并报告',
         confirmLabel: '删除所选',
         icon: 'x',
         tone: 'danger'
@@ -5293,18 +5293,18 @@
       setBusy(button, true);
       try {
         const task = await api('proxy.sources.delete_selected', { source_ids: ids, force: true });
-        toast('已提交 ' + ids.length + ' 个来源的删除与清理任务');
-        const result = await waitForTask(task, '删除已选代理来源');
+        toast('已提交 ' + ids.length + ' 个代理的删除与清理任务');
+        const result = await waitForTask(task, '删除已选代理');
         const items = Array.isArray(result?.items) ? result.items : [];
         const deleted = new Set(items.filter((item) => item.status === 'deleted').map((item) => item.source_id));
         deleted.forEach((id) => state.proxySourceSelection.delete(id));
         const failed = Number(result?.counts?.failed || 0);
         if (failed) {
-          const message = '已删除 ' + deleted.size + ' 个来源；' + failed + ' 个清理失败并保留，可在任务详情查看原因';
+          const message = '已删除 ' + deleted.size + ' 个代理；' + failed + ' 个清理失败并保留，可在任务详情查看原因';
           toast(message, 'error');
         } else {
           state.proxySourceSelection.clear();
-          toast('已删除 ' + deleted.size + ' 个代理来源', 'success');
+          toast('已删除 ' + deleted.size + ' 个代理', 'success');
         }
         await loadProxyData();
         renderProxySources();
@@ -5314,7 +5314,7 @@
         const deleted = new Set(items.filter((item) => item.status === 'deleted').map((item) => item.source_id));
         deleted.forEach((id) => state.proxySourceSelection.delete(id));
         if (deleted.size) {
-          toast(error.message + '；已完成删除 ' + deleted.size + ' 个来源', 'error');
+          toast(error.message + '；已完成删除 ' + deleted.size + ' 个代理', 'error');
           await loadProxyData();
           renderProxySources();
           renderResin();
@@ -5352,7 +5352,7 @@
       const policy = state.proxy?.auto_bind?.manual_clear_policy || 'rebind';
       const options = clear
         ? '<div class="field"><label for="proxyClearPolicy">清除后自动绑定</label><select id="proxyClearPolicy"><option value="global">遵循全局设置 · ' + (policy === 'pause' ? '暂停这些账号' : '允许重新绑定') + '</option><option value="rebind">本次允许重新绑定</option><option value="pause">本次暂停这些账号</option></select><span class="hint">已经暂停的账号保留暂停状态，可通过恢复自动绑定解除</span></div>'
-        : '<div class="field-grid"><div class="field"><label for="proxyBindScope">来源范围</label><select id="proxyBindScope"><option value="all">全部来源</option><option value="nodes">仅节点</option><option value="templates">仅模板</option><option value="resin">仅 Resin</option></select><span class="hint">限制自动分配和候选列表的来源类型</span></div><div class="field proxy-source-picker"><label for="proxyOperationSource">指定来源 · 可按名称搜索</label><div class="proxy-source-combobox"><input id="proxyOperationSource" type="text" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="proxyOperationSourceChoices" placeholder="留空按范围自动分配"><input id="proxyOperationSourceID" type="hidden" value=""><div class="proxy-source-picker-menu" id="proxyOperationSourceChoices" role="listbox" hidden></div></div><span class="hint">候选按来源范围过滤；也可填写来源 ID</span></div></div>';
+        : '<div class="field-grid"><div class="field"><label for="proxyBindScope">代理范围</label><select id="proxyBindScope"><option value="all">全部代理</option><option value="nodes">仅节点</option><option value="templates">仅模板</option><option value="resin">仅 Resin</option></select><span class="hint">限制自动分配和候选列表的代理类型</span></div><div class="field proxy-source-picker"><label for="proxyOperationSource">指定代理 · 可按名称搜索</label><div class="proxy-source-combobox"><input id="proxyOperationSource" type="text" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="proxyOperationSourceChoices" placeholder="留空按范围自动分配"><input id="proxyOperationSourceID" type="hidden" value=""><div class="proxy-source-picker-menu" id="proxyOperationSourceChoices" role="listbox" hidden></div></div><span class="hint">候选按代理范围过滤；也可填写代理 ID</span></div></div>';
       const pending = confirmAction({ title: label, detail: '将处理 ' + count + ' 个账号' + (action === 'clear-external' ? '仅清除本地代理 URL，不删除 Resin 租约' : clear ? '清除前核对当前代理与管理记录；漂移和读取失败项目会报告' : '仅绑定代理为空的 Grok/xAI 账号；已有外部代理或未解决操作会跳过'), confirmLabel: clear ? '开始清除' : '开始绑定', icon: clear ? 'x' : 'link', tone: clear ? 'danger' : '', wide: !clear, optionsHTML: options });
       const sourceField = document.getElementById('proxyOperationSource');
       if (sourceField) {
@@ -5362,10 +5362,13 @@
         let timer = 0;
         const scope = () => scopeField?.value || 'all';
         const renderChoices = () => renderProxyOperationSourceChoices(scope());
+        const refreshChoices = () => searchProxyOperationSourceChoices(sourceField.value, scope()).catch((error) => toast(error.message, 'error'));
         const openChoices = () => {
+          const needsRefresh = menu.hidden;
           proxyOperationSourceActiveIndex = -1;
           renderChoices();
           setProxyOperationSourceMenuOpen(true);
+          if (needsRefresh) refreshChoices();
         };
         renderChoices();
         scopeField?.addEventListener('change', () => {
@@ -5385,7 +5388,7 @@
           proxyOperationSourceActiveIndex = -1;
           renderChoices();
           setProxyOperationSourceMenuOpen(true);
-          timer = window.setTimeout(() => searchProxyOperationSourceChoices(sourceField.value, scope()).catch((error) => toast(error.message, 'error')), 250);
+          timer = window.setTimeout(refreshChoices, 250);
         });
         menu.addEventListener('mousedown', (event) => event.preventDefault());
         menu.addEventListener('click', (event) => {
@@ -5447,7 +5450,7 @@
     }
     async function retryProxySourceSync(sourceID, button) {
       setBusy(button, true);
-      try { const result = await waitForTask(await api('proxy.sources.retry_sync', { source_id: sourceID }), '重试来源同步'); reportProxyResult(result, '重试来源同步'); await loadProxyData(); renderProxySources(); }
+      try { const result = await waitForTask(await api('proxy.sources.retry_sync', { source_id: sourceID }), '重试代理同步'); reportProxyResult(result, '重试代理同步'); await loadProxyData(); renderProxySources(); }
       catch (error) { toast(error.message, 'error'); }
       finally { setBusy(button, false); }
     }
@@ -6005,7 +6008,7 @@
         '<div class="detail-cell"><div class="detail-label">探测退避</div><div class="detail-value">' + esc(formatFullTime(account.probe_backoff_until)) + '</div></div>',
         '</div></div>',
         '<div class="drawer-section"><h3>代理</h3><div class="detail-grid">',
-		'<div class="detail-cell"><div class="detail-label">来源</div><div class="detail-value">' + esc((account.proxy_source_kind ? proxySourceLabel(account.proxy_source_kind) + ' · ' : '') + (account.proxy_source_id || '-')) + '</div></div>',
+		'<div class="detail-cell"><div class="detail-label">代理</div><div class="detail-value">' + esc((account.proxy_source_kind ? proxySourceLabel(account.proxy_source_kind) + ' · ' : '') + (account.proxy_source_id || '-')) + '</div></div>',
         '<div class="detail-cell"><div class="detail-label">租约账号</div><div class="detail-value mono">' + esc(account.resin_account || '-') + '</div></div>',
         '<div class="detail-cell"><div class="detail-label">代理地址</div><div class="detail-value mono">' + esc(account.proxy || '-') + '</div></div>',
 		'<div class="detail-cell"><div class="detail-label">自动绑定</div><div class="detail-value">' + (account.auto_bind_excluded ? '已暂停' : '允许') + '</div></div>',
@@ -6275,7 +6278,7 @@
         if (target.hasAttribute('data-proxy-change-detail')) { const editor = state.proxyEditing; if (editor?.kind === 'tasks' && await loadProxyTaskDetail(editor, 'change', target.dataset.proxyChangeDetail, 1)) renderProxyTaskDrawer(); return; }
         if (target.hasAttribute('data-proxy-change-retry') || target.hasAttribute('data-proxy-change-cancel')) {
           const retry = target.hasAttribute('data-proxy-change-retry');
-          const result = await waitForTask(await api(retry ? 'proxy.changes.retry' : 'proxy.changes.cancel', { change_id: target.dataset.proxyChangeRetry || target.dataset.proxyChangeCancel }), retry ? '重试来源同步' : '取消未执行同步');
+          const result = await waitForTask(await api(retry ? 'proxy.changes.retry' : 'proxy.changes.cancel', { change_id: target.dataset.proxyChangeRetry || target.dataset.proxyChangeCancel }), retry ? '重试代理同步' : '取消未执行同步');
           reportProxyResult(result, retry ? '重试同步' : '取消同步'); await refreshProxyTasks(); renderProxyTaskDrawer(); return;
         }
         if (target.hasAttribute('data-task-detail-page')) {
