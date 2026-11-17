@@ -1125,7 +1125,7 @@ proxy:
 socks5h://{platform}.{account}:{proxy_token}@resin:2260
 ~~~
 
-新存储结构使用：
+每个 Resin 来源都以 `Template` 的 `kind=resin` 持久化，连接差异（平台、Admin URL、AccountFormat、LocalOnly 和 Admin Token）保存在按来源 ID 索引的 Resin 配置中。可以同时存在多个 Resin 来源，因此同一 Resin 服务可以按平台、Admin 地址或账号生成规则拆分。单个来源使用：
 
 ~~~text
 用户名模式：已解析的平台名.{account}
@@ -1133,17 +1133,17 @@ socks5h://{platform}.{account}:{proxy_token}@resin:2260
 协议/主机/端口：固定端点
 ~~~
 
-{platform} 先由配置解析成用户名 literal；{account} 为 Resin 内置身份生成器。Proxy Token 是固定密码，不是模板变量。
+平台名先由配置解析成用户名 literal；`{account}` 是保留占位符，只替换为 auth 邮箱 `@` 前的本地部分并转小写。除 `{account}` 外，账号格式可以继续使用普通模板的 enum/random 占位符和关联组，例如 `xai-{account}-{region}`。Proxy Token 是固定密码，不是模板变量。
 
-旧密码位置 {proxy_token} 仅由一次性迁移识别并抽出，不在新的通用模板语法中保留例外。普通用户变量仍只有 enum/random；系统 {account} 的专用解析器只对 Resin Provider 开放，不出现在普通类型下拉中。
+旧密码位置 {proxy_token} 仅由一次性迁移识别并抽出，不在新的通用模板语法中保留例外。普通用户变量仍只有 enum/random；`{account}` 的 reserved kind 只允许 Resin 模板使用，不出现在普通模板编辑器的生成方式下拉中。
 
-管理页只暴露 `{platform}.` 之后的 username 后缀，用户不需要也不能重复填写 `{platform}`。协议固定为 SOCKS5H，密码固定引用 Proxy Token，代理主机和端口从 Admin API URL 解析；完整的 `proxy_template` 仍作为内部持久化形式，用于兼容旧配置和租约清理。
+管理页只暴露平台名之后的 username 后缀，用户不需要也不能重复填写平台前缀。协议固定为 SOCKS5H，密码固定引用 Proxy Token，代理主机和端口从 Admin API URL 解析；完整的 username template 仍作为内部持久化形式，用于生成、预览和租约清理。
 
 ### 15.2 生成与清理
 
 平台名称与 UUID 在配置验证时解析，保存为不可变来源/集成版本。正常 Generate 使用已验证快照，不在每次绑定或请求轮换时访问平台 API。
 
-Resin 没有显式创建租约的管理调用；绑定生成新身份并保存 URL，实际代理请求可能惰性创建租约。新身份保证不与使用中、在途租约冲突；建议比旧 4 位随机后缀使用更充足的随机空间。
+Resin 没有显式创建租约的管理调用；绑定生成新身份并保存 URL，实际代理请求可能惰性创建租约。新身份保证不与使用中、在途租约冲突。默认账号格式为 `grok-{account}-{suffix}`，其中 `suffix` 是 random 变量；用户也可以自定义其他格式和更充足的随机空间。
 
 旧租约删除任务从 Binding.Cleanup 构建，按 SnapshotID 读取旧 URL、UUID 和凭据。不能因为用户修改了 Resin 地址或平台，把旧租约删除请求发给新平台。
 
@@ -1299,11 +1299,11 @@ Dashboard 的账号绑定列表默认只显示脱敏端点。用户点击眼睛�
 - 节点：小型抽屉，完整 URL 或分字段录入，解析反馈、启用、配额；有绑定的端点更新显示影响数量。
 - 批量节点导入：支持多行粘贴和本地文件；前端先过滤无效与重复项，显示总数、有效、无效、重复和体积；单次最多 100000 条且 16 MiB，不逐行创建 DOM。
 - 模板：宽编辑页/宽抽屉，三步创建流程；常用编辑直接定位段落。
-- Resin：专用连接面板，可配置来源名称、平台、Admin 地址与 Token、代理端点、内置身份说明、清理任务入口。来源名称持久化到 Resin 来源元数据，不参与生成配置 revision。
+- Resin：与模板共用列表行和编辑/检测/删除操作。新增类型下拉选择 Resin 后打开模板式编辑器，在通用账号格式、变量和关联组之外增加平台、Admin 地址与 Token、Proxy Token、本地轮换等连接字段；不提供独立于列表之外的配置入口或全局模式横幅。
 - 三种来源均能跳到账号绑定并自动筛选该来源。
 - 绑定选择器列出全部可用类型和不可用原因，支持多节点范围，不要求用户先跳到类型页。
 
-原设置页中的 Resin 连接编辑迁入代理来源；设置页可保留跳转链接，避免两份可独立修改的表单。
+原设置页中的 Resin 连接编辑迁入统一代理列表；设置页不保留第二份可独立修改的表单。列表中的 Resin 行用类型徽章和子行显示 API/本地模式，不在页面顶部重复全局模式状态。
 
 动态变量名和取值使用 textContent 或现有转义函数输出；前端索引使用 Map 或无原型对象，避免把用户输入直接当 HTML、CSS 选择器或普通对象属性路径。
 

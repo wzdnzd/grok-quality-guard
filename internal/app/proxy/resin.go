@@ -86,6 +86,17 @@ func (s *Service) ResinConfig() ResinSettings {
 	settings := resinSettingsFromConfig(resinCfg)
 	store := s.env.ProxyStore()
 	if store != nil {
+		sources := store.ProxySourcesSnapshot()
+		for _, template := range sources.Templates {
+			if template.Kind != proxy.TemplateResin {
+				continue
+			}
+			if config, ok := sources.ResinSources[template.ID]; ok {
+				settings = resinSettingsForSource(template, config)
+				settings.AutoRotateAfterQualityFailure = rotate
+				return normalizeResinSettingsBestEffort(settings)
+			}
+		}
 		if stored, configured := store.ResinSettings(); configured {
 			settings = stored
 			settings.Configured = true
@@ -797,7 +808,7 @@ func (s *Service) BindResin(ctx context.Context, authID string, dryRun bool) (Re
 	if cfg.LocalOnly {
 		return ResinBindResult{AuthID: authID, DryRun: dryRun, Error: "local rotation does not create new proxy bindings"}, proxyError("resin_local_only", 409, "resin API mode is required to bind new proxies")
 	}
-	result, err := s.bindProxy(ctx, authID, proxyBindOptions{SourceScope: "resin", SourceIDs: []string{resinSourceID}, DryRun: dryRun})
+	result, err := s.bindProxy(ctx, authID, proxyBindOptions{SourceScope: "resin", SourceIDs: []string{s.firstResinSourceID()}, DryRun: dryRun})
 	account := result.LeaseAccount
 	if account == "" {
 		state := s.env.ProxyStore().ProxyAccount(authID)
@@ -829,7 +840,7 @@ func (s *Service) BindUnboundResin(ctx context.Context, dryRun bool) ([]ResinBin
 	if cfg.LocalOnly {
 		return nil, proxyError("resin_local_only", 409, "resin API mode is required to bind new proxies")
 	}
-	items, err := s.proxyBindUnbound(ctx, proxyBindOptions{SourceScope: "resin", SourceIDs: []string{resinSourceID}, DryRun: dryRun})
+	items, err := s.proxyBindUnbound(ctx, proxyBindOptions{SourceScope: "resin", SourceIDs: []string{s.firstResinSourceID()}, DryRun: dryRun})
 	results := make([]ResinBindResult, len(items))
 	for i, item := range items {
 		state := s.env.ProxyStore().ProxyAccount(item.AuthID)
@@ -846,8 +857,18 @@ func (s *Service) RotateResin(ctx context.Context, authID string) error {
 	if !s.ResinConfig().Enabled {
 		return proxyError("resin_disabled", 409, "resin is disabled")
 	}
-	_, err := s.rotateProxy(ctx, authID, proxyBindOptions{SourceScope: "resin", ExpectedSourceID: resinSourceID})
+	_, err := s.rotateProxy(ctx, authID, proxyBindOptions{SourceScope: "resin", ExpectedSourceID: s.firstResinSourceID()})
 	return err
+}
+
+func (s *Service) firstResinSourceID() string {
+	state := s.env.ProxyStore().ProxySourcesSnapshot()
+	for _, template := range state.Templates {
+		if template.Kind == proxy.TemplateResin {
+			return template.ID
+		}
+	}
+	return resinSourceID
 }
 
 func resinAccountFromProxyURL(proxyURL string) string {

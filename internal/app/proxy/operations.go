@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -574,6 +575,36 @@ func (s *Service) replaceProxyEndpoint(ctx context.Context, authID string, kind 
 	return s.commitProxyOperationLocked(ctx, response, raw, operation, false)
 }
 
+func resinTemplateBindingMatches(entry *proxySourceCandidate, current, account string) error {
+	if entry == nil || entry.Template == nil || entry.ResinSettings == nil {
+		return proxyError("proxy_legacy_unknown", 409, "legacy proxy binding requires explicit reconciliation")
+	}
+	endpoint, err := proxy.ParseEndpoint(current, proxy.ParseOptions{})
+	if err != nil || !endpoint.HasPassword || strings.TrimSpace(account) == "" {
+		return proxyError("proxy_legacy_unknown", 409, "legacy proxy endpoint is invalid")
+	}
+	if entry.ResinSettings.LocalOnly {
+		if resinAccountFromProxyURL(current) != account {
+			return proxyError("proxy_legacy_unknown", 409, "legacy proxy identity does not match its recorded lease")
+		}
+		return nil
+	}
+	prefix := strings.TrimSpace(entry.ResinSettings.Platform)
+	username := endpoint.Username
+	if prefix != "" {
+		if !strings.HasPrefix(username, prefix+".") || strings.TrimPrefix(username, prefix+".") != account {
+			return proxyError("proxy_legacy_unknown", 409, "legacy proxy identity does not match its recorded lease")
+		}
+	} else if !strings.HasSuffix(username, "."+account) {
+		return proxyError("proxy_legacy_unknown", 409, "legacy proxy identity does not match its recorded lease")
+	}
+	if endpoint.Protocol != entry.Template.Protocol || !strings.EqualFold(endpoint.Host, entry.Template.Host) ||
+		endpoint.Port != entry.Template.Port || endpoint.Password != entry.Template.Password {
+		return proxyError("proxy_legacy_unknown", 409, "legacy proxy endpoint does not match its configured Resin connection")
+	}
+	return nil
+}
+
 // Migration only fills a fingerprint after the recorded identity and the
 // complete configured endpoint agree. It never adopts an unrecorded proxy.
 func (s *Service) verifiedProxyBinding(state AccountState, current string, dryRun bool) (proxy.Binding, bool, error) {
@@ -590,16 +621,29 @@ func (s *Service) verifiedProxyBinding(state AccountState, current string, dryRu
 			settings = snapshot
 		}
 	}
-	if settings.LocalOnly {
+	templateBacked := false
+	if binding.SourceID != "" {
+		if entry := s.proxyCatalog().ByID[binding.SourceID]; entry != nil && entry.Template != nil && entry.ResinSettings != nil {
+			if errMatch := resinTemplateBindingMatches(entry, current, binding.Lease.Account); errMatch != nil {
+				return binding, managed, errMatch
+			}
+			templateBacked = true
+		}
+	}
+	if !templateBacked && settings.LocalOnly {
 		endpoint, err := proxy.ParseEndpoint(current, proxy.ParseOptions{})
 		if err != nil {
 			return binding, managed, err
 		}
 		settings.ProxyToken = endpoint.Password
 	}
-	expected, err := renderResinProxy(settings, binding.Lease.Account)
-	if err != nil || proxyURLHash(expected) != proxyURLHash(current) {
-		return binding, managed, proxyError("proxy_legacy_unknown", 409, "legacy proxy does not match its recorded integration; explicit reconciliation is required")
+	expected := ""
+	var err error
+	if !templateBacked {
+		expected, err = renderResinProxy(settings, binding.Lease.Account)
+		if err != nil || proxyURLHash(expected) != proxyURLHash(current) {
+			return binding, managed, proxyError("proxy_legacy_unknown", 409, "legacy proxy does not match its recorded integration; explicit reconciliation is required")
+		}
 	}
 	binding.EndpointHash = proxyURLHash(current)
 	binding.SourceRevision = max(1, binding.SourceRevision)
@@ -673,6 +717,34 @@ func (s *Service) adoptProxy(ctx context.Context, authID string, opts proxyBindO
 		rendered = proxy.RenderedProxy{URL: current, Endpoint: entry.Node.Endpoint}
 	} else if entry.Kind == proxy.SourceResin && !opts.Replace {
 		account := resinAccountFromProxyURL(current)
+		if entry.Template != nil {
+			parsedURL, errParse := url.Parse(strings.TrimSpace(current))
+			if errParse != nil || parsedURL.User == nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+				err := proxyError("proxy_binding_conflict", 409, "existing proxy URL is invalid")
+				return failedProxyResult(authID, "conflict", err), err
+			}
+			parsedEndpoint, errEndpoint := proxy.ParseEndpoint(current, proxy.ParseOptions{})
+			if errEndpoint != nil || !parsedEndpoint.HasPassword {
+				err := proxyError("proxy_binding_conflict", 409, "existing proxy URL is invalid")
+				return failedProxyResult(authID, "conflict", err), err
+			}
+			config := s.env.ProxyStore().ProxySourcesSnapshot().ResinSources[entry.ID]
+			prefix := strings.TrimSpace(config.Platform)
+			username := parsedURL.User.Username()
+			if prefix != "" {
+				if !strings.HasPrefix(username, prefix+".") {
+					err := proxyError("proxy_binding_conflict", 409, "proxy does not match the selected Resin platform")
+					return failedProxyResult(authID, "conflict", err), err
+				}
+				account = strings.TrimPrefix(username, prefix+".")
+			}
+			if !config.LocalOnly && (parsedEndpoint.Protocol != entry.Template.Protocol ||
+				!strings.EqualFold(parsedEndpoint.Host, entry.Template.Host) || parsedEndpoint.Port != entry.Template.Port ||
+				!parsedEndpoint.HasPassword || parsedEndpoint.Password != entry.Template.Password) {
+				err := proxyError("proxy_binding_conflict", 409, "proxy does not match the selected Resin connection")
+				return failedProxyResult(authID, "conflict", err), err
+			}
+		}
 		usage := s.env.ProxyStore().ProxyLeaseUsage(account)
 		if old.Lease != nil && old.Lease.Account == account {
 			usage--
@@ -681,19 +753,29 @@ func (s *Service) adoptProxy(ctx context.Context, authID string, opts proxyBindO
 			err := proxyError("resin_lease_in_use", 409, "Resin lease is referenced by another binding or cleanup operation")
 			return failedProxyResult(authID, "conflict", err), err
 		}
-		expected, renderErr := renderResinProxy(*entry.ResinSettings, account)
-		if account == "" || renderErr != nil || proxyURLHash(expected) != proxyURLHash(current) {
+		expected, renderErr := "", error(nil)
+		if entry.Template == nil {
+			expected, renderErr = renderResinProxy(*entry.ResinSettings, account)
+		}
+		if account == "" || renderErr != nil || (entry.Template == nil && proxyURLHash(expected) != proxyURLHash(current)) {
 			err := proxyError("proxy_binding_conflict", 409, "proxy does not match the selected Resin integration")
 			return failedProxyResult(authID, "conflict", err), err
 		}
 		if !opts.DryRun {
-			id, err := s.env.ProxyStore().EnsureResinSnapshot(*entry.ResinSettings)
-			if err != nil {
-				return failedProxyResult(authID, "failed", err), err
+			if entry.ResinSettings.LocalOnly {
+				lease = &proxy.LeaseRef{Provider: "resin-local", Account: account}
+			} else {
+				id, err := s.env.ProxyStore().EnsureResinSnapshot(*entry.ResinSettings)
+				if err != nil {
+					return failedProxyResult(authID, "failed", err), err
+				}
+				lease = &proxy.LeaseRef{Provider: "resin", Account: account, SnapshotID: id, PlatformID: entry.ResinSettings.PlatformID}
 			}
-			lease = &proxy.LeaseRef{Provider: "resin", Account: account, SnapshotID: id, PlatformID: entry.ResinSettings.PlatformID}
 		}
-		e, _ := proxy.ParseEndpoint(current, proxy.ParseOptions{})
+		e, errEndpoint := proxy.ParseEndpoint(current, proxy.ParseOptions{})
+		if errEndpoint != nil {
+			return failedProxyResult(authID, "conflict", errEndpoint), errEndpoint
+		}
 		rendered = proxy.RenderedProxy{URL: current, Endpoint: e}
 	} else {
 		if !opts.Replace {
@@ -965,6 +1047,7 @@ func (s *Service) runProxyChange(ctx context.Context, id string) (map[string]any
 								break
 							}
 						}
+						delete(state.Proxy.ResinSources, change.SourceID)
 						if change.SourceID == resinSourceID {
 							state.Resin = ResinSettings{Configured: true}
 							state.Proxy.ResinSource.Enabled = false
@@ -1007,6 +1090,9 @@ func (s *Service) proxyKindFromState(state State, id string) string {
 	}
 	for _, t := range state.Proxy.Templates {
 		if t.ID == id {
+			if t.Kind == proxy.TemplateResin {
+				return "resin"
+			}
 			return "template"
 		}
 	}
@@ -1066,7 +1152,7 @@ func (s *Service) createTemplateApplyChange(id string) (string, error) {
 	s.mgr.changeMu.Lock()
 	defer s.mgr.changeMu.Unlock()
 	entry := s.proxyCatalog().ByID[id]
-	if entry == nil || entry.Template == nil {
+	if entry == nil || entry.Template == nil || entry.Template.Kind == proxy.TemplateResin {
 		return "", proxyError("proxy_source_not_found", 404, "template not found")
 	}
 	var changeID string

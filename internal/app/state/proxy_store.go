@@ -270,18 +270,20 @@ func (s *Store) applyProxyCommitLocked(commit ProxyCommit) {
 			if j, ok := s.proxyChangeIndex[change.ID][commit.ChangeItem.AuthID]; ok {
 				before, after := proxyChangeBucket(change.Items[j].Status), proxyChangeBucket(commit.ChangeItem.Status)
 				if before != after {
-					if before == "succeeded" {
+					switch before {
+					case "succeeded":
 						change.Counts.Succeeded = max(0, change.Counts.Succeeded-1)
-					} else if before == "pending" {
+					case "pending":
 						change.Counts.Pending = max(0, change.Counts.Pending-1)
-					} else {
+					default:
 						change.Counts.Failed = max(0, change.Counts.Failed-1)
 					}
-					if after == "succeeded" {
+					switch after {
+					case "succeeded":
 						change.Counts.Succeeded++
-					} else if after == "pending" {
+					case "pending":
 						change.Counts.Pending++
-					} else {
+					default:
 						change.Counts.Failed++
 					}
 				}
@@ -576,17 +578,8 @@ func (s *Store) PrepareProxy(operation proxy.Operation, automatic bool) error {
 		if lifecycle.Lifecycle != "" && lifecycle.Lifecycle != "active" && lifecycle.ChangeID != operation.ChangeID {
 			return proxy.NewError("proxy_source_busy", 409, "source change is still in progress")
 		}
-		found := sourceID == resinSourceID
+		found := false
 		enabled, limit := false, 0
-		if found {
-			enabled = s.state.Proxy.ResinSource.Enabled
-			if s.state.Resin.Configured {
-				enabled = s.state.Resin.Enabled
-			}
-			if operation.Binding.SourceRevision != max(1, s.state.Proxy.ResinSource.Revision) {
-				return proxy.NewError("proxy_source_version_conflict", 409, "Resin revision changed before prepare")
-			}
-		}
 		for _, node := range s.state.Proxy.Nodes {
 			if node.ID == sourceID {
 				found = true
@@ -605,6 +598,16 @@ func (s *Store) PrepareProxy(operation proxy.Operation, automatic bool) error {
 				if template.Revision != operation.Binding.SourceRevision && operation.ChangeID == "" {
 					return proxy.NewError("proxy_source_version_conflict", 409, "template revision changed before proxy prepare")
 				}
+			}
+		}
+		if !found && sourceID == resinSourceID {
+			found = true
+			enabled = s.state.Proxy.ResinSource.Enabled
+			if s.state.Resin.Configured {
+				enabled = s.state.Resin.Enabled
+			}
+			if operation.Binding.SourceRevision != max(1, s.state.Proxy.ResinSource.Revision) {
+				return proxy.NewError("proxy_source_version_conflict", 409, "Resin revision changed before prepare")
 			}
 		}
 		if !found {

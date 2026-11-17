@@ -2526,7 +2526,6 @@
             <use href="#i-alert"></use>
           </svg>
           <span id="resinNoticeText"></span>
-          <span class="notice-actions"><button class="btn btn-xs" type="button" data-open-resin title="打开 Resin 连接设置">配置 Resin</button></span>
         </div>
         <div class="metric-grid" id="resinMetrics"></div>
         <section class="card proxy-lease-card" aria-labelledby="leaseTitle">
@@ -2609,20 +2608,12 @@
         </section>
         </div>
         <div class="proxy-subpanel" id="proxy-subpanel-sources" role="tabpanel" aria-labelledby="proxy-tab-sources">
-        <div class="notice" id="resinSourceBar">
-          <svg class="icon"><use href="#i-database"></use></svg>
-          <span id="resinSourceText" role="status" aria-live="polite">Resin 连接未配置</span>
-          <span class="notice-actions">
-            <span class="badge" id="resinSourceBadge">未配置</span>
-            <button class="btn btn-xs" type="button" data-open-resin title="打开 Resin 连接设置">配置 Resin</button>
-          </span>
-        </div>
           <section class="card" aria-labelledby="proxySourcesTitle">
             <div class="card-header">
               <div><h2 id="proxySourcesTitle"><svg class="icon"><use href="#i-database"></use></svg>代理</h2><p>节点、模板与代理服务统一参与绑定；启用状态与网络连通性分列显示，列表筛选只影响当前列表</p></div>
               <div class="card-actions">
                 <label class="inline-control source-filter-group" for="proxySourceFilter"><span>列表筛选</span><select class="control" id="proxySourceFilter" aria-label="筛选代理类型" title="筛选当前代理列表"><option value="all">全部代理</option><option value="node">节点</option><option value="template">模板</option><option value="resin">Resin</option></select></label>
-                <div class="inline-control source-filter-group add-source-control"><span>新增类型</span><select class="control" id="proxyAddSourceKind" aria-label="新增代理类型" title="选择要添加的代理类型"><option value="node">节点</option><option value="template">模板</option></select><button class="btn btn-xs" type="button" id="proxyAddSourceBtn"><svg class="icon"><use href="#i-plus"></use></svg>添加代理</button></div>
+                <div class="inline-control source-filter-group add-source-control"><span>新增类型</span><select class="control" id="proxyAddSourceKind" aria-label="新增代理类型" title="选择要添加的代理类型"><option value="node">节点</option><option value="template">模板</option><option value="resin">Resin</option></select><button class="btn btn-xs" type="button" id="proxyAddSourceBtn"><svg class="icon"><use href="#i-plus"></use></svg>添加代理</button></div>
                 <button class="btn btn-xs btn-ghost" type="button" id="proxyImportNodesBtn"><svg class="icon"><use href="#i-link"></use></svg>批量导入节点</button>
               </div>
             </div>
@@ -2862,49 +2853,6 @@
       </div>
       <div class="drawer-body" id="proxySourceEditor"></div>
     </aside>
-  </div>
-  <div id="resinFormHost" hidden>
-    <form id="resinForm" class="drawer-form">
-      <section class="card">
-        <div class="form-section">
-          <h3 class="section-title"><svg class="icon"><use href="#i-database"></use></svg>Resin 连接</h3>
-          <div class="field-grid">
-            <label class="check-card full"><input id="r_enabled" type="checkbox"><span class="check-copy"><span class="check-title">启用代理轮换</span><span class="check-desc">关闭后不会自动写入或轮换账号代理</span></span></label>
-            <label class="check-card full"><input id="r_local_only" type="checkbox"><span class="check-copy"><span class="check-title">仅本地轮换</span><span class="check-desc">不调用 Resin API，只改写 OAuth 文件中已有代理的用户名</span></span></label>
-            <div class="field"><label for="r_name">代理名称</label><input id="r_name" type="text" autocomplete="off" placeholder="Resin"><span class="hint">用于代理列表和自动绑定选择；名称不能与其他代理重复</span></div>
-            <div class="field"><label for="r_platform">平台名称</label><input id="r_platform" type="text" autocomplete="off" placeholder="例如 Default"><span class="hint">保存时按名称查询 Resin 平台并取得 UUID</span></div>
-            <div class="field full"><label for="r_admin_url">Admin API URL</label><input id="r_admin_url" type="url" autocomplete="off" placeholder="http://resin:2260"><span class="hint">仅 API 模式需要，必须可从 CPA 插件进程访问</span></div>
-          </div>
-        </div>
-      </section>
-      <section class="card">
-        <div class="form-section">
-          <h3 class="section-title"><svg class="icon"><use href="#i-shield"></use></svg>凭据</h3>
-          <div class="field-grid">
-            <div class="field"><label for="r_admin_token">Admin Token</label><input id="r_admin_token" type="password" autocomplete="new-password" placeholder="留空保持已保存值"><span class="hint" id="r_admin_token_hint">尚未配置</span></div>
-            <div class="field"><label for="r_proxy_token">Proxy Token</label><input id="r_proxy_token" type="password" autocomplete="new-password" placeholder="留空保持已保存值"><span class="hint" id="r_proxy_token_hint">尚未配置</span></div>
-          </div>
-        </div>
-      </section>
-      <section class="card">
-        <div class="form-section">
-          <h3 class="section-title"><svg class="icon"><use href="#i-link"></use></svg>Resin 代理账号</h3>
-          <div class="field-grid">
-            <div class="field full"><label for="r_account_format">账号格式</label><input id="r_account_format" type="text" autocomplete="off" placeholder="{account}"><span class="hint">无需填写 {platform}；只填写 username 后缀，例如 {account}；系统会拼成 socks5h://{platform}.&lt;填写内容&gt;:{proxy_token}@&lt;Admin API 主机&gt;:&lt;端口&gt;</span></div>
-            <label class="check-card full"><input id="r_auto_rotate" type="checkbox"><span class="check-copy"><span class="check-title">质量异常后自动轮换</span><span class="check-desc">下次尝试前切换代理；API 模式会异步清理旧租约</span></span></label>
-          </div>
-        </div>
-      </section>
-      <div class="drawer-status-row">
-        <span class="badge" id="resinValidateState">未验证</span>
-        <span class="status-line" id="resinStatus" role="status" aria-live="polite">API 模式可先验证再保存；本地模式无需验证</span>
-        <button class="btn btn-xs btn-ghost" type="button" id="resinReloadBtn" hidden>重试读取</button>
-      </div>
-      <div class="form-actions">
-        <button class="btn btn-primary" type="submit" id="resinSaveBtn"><svg class="icon"><use href="#i-check"></use></svg>验证并保存</button>
-        <button class="btn" type="button" id="resinValidateBtn"><svg class="icon"><use href="#i-play"></use></svg>仅验证</button>
-      </div>
-    </form>
   </div>
   <div class="confirm-backdrop" id="confirmDialog" hidden>
     <section class="confirm-card" id="confirmCard" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmDetail">
@@ -3522,9 +3470,8 @@
     }
     function refreshResin(button) {
       return refreshSection(button, '代理管理', async () => {
-        const [overview, , resin] = await Promise.all([api('overview'), loadList('leases'), api('resin.config.get')]);
+        const [overview] = await Promise.all([api('overview'), loadList('leases')]);
         state.overview = overview || {};
-        state.resin = resin || {};
         await loadProxyData();
         renderOverview();
         renderAccounts();
@@ -3552,7 +3499,6 @@
         loadAccounts ? loadList('accounts') : (loadLeases ? loadList('leases') : Promise.resolve(null)),
         api('events.list', { limit: 1000 }),
         api('policy.get'),
-        api('resin.config.get'),
         api('proxy.summary'),
         loadList('sources')
       ]);
@@ -3564,11 +3510,9 @@
       else errors.push(tasks[2].reason);
       if (tasks[3].status === 'fulfilled') state.policy = tasks[3].value || {};
       else errors.push(tasks[3].reason);
-      if (tasks[4].status === 'fulfilled') state.resin = tasks[4].value || {};
+      if (tasks[4].status === 'fulfilled') state.proxy = tasks[4].value || {};
       else errors.push(tasks[4].reason);
-      if (tasks[5].status === 'fulfilled') state.proxy = tasks[5].value || {};
-      else errors.push(tasks[5].reason);
-      if (tasks[6].status === 'rejected') errors.push(tasks[6].reason);
+      if (tasks[5].status === 'rejected') errors.push(tasks[5].reason);
       renderAll();
       state.refreshing = false;
       document.getElementById('syncLabel').textContent = '更新于 ' + formatTime(new Date().toISOString());
@@ -3842,9 +3786,7 @@
       const proxy = state.proxy || {};
       const counts = proxySummaryCounts(proxy);
       const sources = state.proxySources || [];
-      const resin = state.resin || {};
       const canBind = proxyCanBind();
-      const localMode = Boolean(resin.local_only);
       const sourceTotal = Number(proxy.source_count ?? state.proxySourceList?.total ?? sources.length);
       const configured = sourceTotal > 0;
       const available = Number(proxy.available_source_count ?? sources.filter((source) => source.enabled && source.valid).length);
@@ -3854,26 +3796,18 @@
         metricCard('alert', num(Number(counts.external || counts.conflict || 0) + Number(counts.unknown || 0) + Number(counts.drifted || 0) + Number(counts.reconcile_required || 0)), '需核对', '外部配置、漂移或读取失败', Number(counts.external || counts.conflict || 0) + Number(counts.drifted || 0) + Number(counts.unknown || 0) ? 'warn' : 'good'),
         metricCard('check', num(sourceTotal), '代理', '可绑定代理：' + available, available ? 'good' : 'warn')
       ].join('');
-      document.getElementById('resinConfigState').textContent = !configured ? '未配置' : (available ? '有可绑定代理' : '无可绑定代理');
+      document.getElementById('resinConfigState').textContent = !configured ? '未配置代理' : (available ? '有可绑定代理' : '无可绑定代理');
       const notice = document.getElementById('resinNotice');
       if (!configured) {
         notice.hidden = false;
         notice.className = 'notice warn';
-        document.getElementById('resinNoticeText').textContent = '尚未配置代理，请在代理添加节点或模板，或配置 Resin 连接';
+        document.getElementById('resinNoticeText').textContent = '尚未配置代理，请在“代理”页通过“新增类型”添加节点、模板或 Resin';
       } else if (!available) {
         notice.hidden = false;
         notice.className = 'notice warn';
         document.getElementById('resinNoticeText').textContent = '当前没有可用于新绑定的代理；已有代理路由保持不变';
       } else {
         notice.hidden = true;
-      }
-      const resinReady = Boolean(resin.configured || resin.local_only || resin.enabled);
-      const sourceText = document.getElementById('resinSourceText');
-      const sourceBadge = document.getElementById('resinSourceBadge');
-      if (sourceText) sourceText.textContent = resinReady ? ('Resin 已配置 · ' + (resin.local_only ? '本地轮换' : (resin.enabled ? 'API 轮换' : '已停用'))) : 'Resin 未配置；节点和模板仍可正常使用';
-      if (sourceBadge) {
-        sourceBadge.textContent = resinReady ? (resin.local_only ? '本地轮换' : (resin.enabled ? 'API 模式' : '已停用')) : '未配置';
-        sourceBadge.className = 'badge ' + (resinReady ? (resin.local_only ? 'info' : (resin.enabled ? 'good' : '')) : 'warn');
       }
       document.getElementById('bindUnboundBtn').disabled = !canBind;
       const result = pagedItems('leases');
@@ -4024,22 +3958,22 @@
       const selected = state.proxySourceSelection.has(source.id);
       const actions = [];
       if (source.change_id) actions.push('<button class="btn btn-xs" type="button" data-proxy-source-change="' + esc(source.change_id) + '">同步任务</button>');
-      if (source.kind === 'resin') {
-        actions.push('<button class="btn btn-xs" type="button" data-open-resin title="打开 Resin 连接设置">' + icon('sliders') + '配置 Resin</button>');
-      } else {
-        actions.push('<button class="btn btn-xs" type="button" data-proxy-source-edit="' + sourceID + '" data-kind="' + esc(source.kind) + '">' + icon('sliders') + '编辑</button>');
-        if (source.kind === 'template' && Number(source.binding_count || 0) > 0) {
-          actions.push('<button class="btn btn-xs btn-ghost" type="button" data-proxy-source-apply="' + sourceID + '">' + icon('refresh') + '应用到绑定</button>');
-        }
-        if (Number(source.sync_failed || source.failed_count || 0) > 0 || source.sync_status === 'partial' || source.sync_status === 'failed') {
-          actions.push('<button class="btn btn-xs" type="button" data-proxy-source-retry="' + sourceID + '">重试同步失败项</button>');
-        }
-        actions.push('<button class="btn btn-xs btn-ghost" type="button" data-proxy-source-test="' + sourceID + '">' + icon('activity') + '检测</button>');
-        actions.push('<button class="btn btn-xs btn-danger" type="button" data-proxy-source-delete="' + sourceID + '" data-kind="' + esc(source.kind) + '">' + icon('x') + '删除</button>');
+      actions.push('<button class="btn btn-xs" type="button" data-proxy-source-edit="' + sourceID + '" data-kind="' + esc(source.kind) + '">' + icon('sliders') + '编辑</button>');
+      if (source.kind === 'template' && Number(source.binding_count || 0) > 0) {
+        actions.push('<button class="btn btn-xs btn-ghost" type="button" data-proxy-source-apply="' + sourceID + '">' + icon('refresh') + '应用到绑定</button>');
       }
+      if (Number(source.sync_failed || source.failed_count || 0) > 0 || source.sync_status === 'partial' || source.sync_status === 'failed') {
+        actions.push('<button class="btn btn-xs" type="button" data-proxy-source-retry="' + sourceID + '">重试同步失败项</button>');
+      }
+      if (source.kind === 'resin' && source.local_only) {
+        actions.push('<button class="btn btn-xs btn-ghost" type="button" disabled title="本地轮换没有独立端点">' + icon('activity') + '检测</button>');
+      } else {
+        actions.push('<button class="btn btn-xs btn-ghost" type="button" data-proxy-source-test="' + sourceID + '">' + icon('activity') + '检测</button>');
+      }
+      actions.push('<button class="btn btn-xs btn-danger" type="button" data-proxy-source-delete="' + sourceID + '" data-kind="' + esc(source.kind) + '">' + icon('x') + '删除</button>');
       const endpoint = endpointCell(source.endpoint, state.sourceProxyDetails.get(source.id), 'data-source-endpoint', sourceID);
       return '<tr><td class="select-cell"><input type="checkbox" data-source-select="' + sourceID + '" aria-label="选择代理" ' + (selected ? 'checked' : '') + '></td><td><div class="account-name">' + esc(source.name || '未命名代理') + '</div></td>' +
-        '<td>' + badge(proxySourceLabel(source.kind), source.kind === 'resin' ? 'info' : '') + '</td>' +
+        '<td>' + badge(proxySourceLabel(source.kind), source.kind === 'resin' ? 'info' : '') + (source.kind === 'resin' ? '<div class="subline">' + (source.local_only ? '本地轮换' : 'API 轮换') + '</div>' : '') + '</td>' +
         '<td>' + endpoint + '</td>' +
         '<td>' + proxySourceEnabledState(source) + '</td><td>' + proxySourceConnectivity(source) + '</td><td class="nowrap">' + proxySourceCheckedAt(source) + '</td><td class="mono">' + esc(source.binding_count || 0) + '</td>' +
         '<td class="mono" title="v：标准端点内容版本，仅 schema://用户名:密码@主机:端口 变化时增加；r：生成配置版本，模板生成内容变化时增加">v' + esc(source.config_version || 1) + ' / r' + esc(source.revision || 1) + '</td>' +
@@ -4433,13 +4367,6 @@
       const editor = state.proxyEditing;
       if (force !== true && editor && editor.dirty && !await confirmAction({ title: '关闭未保存的编辑', detail: '当前草稿仍有修改；关闭后将放弃这些输入', confirmLabel: '放弃并关闭', tone: 'danger' })) return false;
       if (editor?.importTimer) window.clearTimeout(editor.importTimer);
-      if (editor?.kind === 'resin') {
-        const form = document.getElementById('resinForm');
-        const host = document.getElementById('resinFormHost');
-        if (form && host) host.appendChild(form);
-        clearFormDraft('resinForm');
-        populateResinForm();
-      }
       document.getElementById('proxySourceDrawer').hidden = true;
       document.getElementById('proxySourceEditor').innerHTML = '';
       if (document.getElementById('accountDrawer').hidden) document.body.classList.remove('drawer-open');
@@ -4527,51 +4454,6 @@
       });
       openProxyDrawer();
     }
-    async function loadResinEditorConfig(editor) {
-      if (state.proxyEditing !== editor || editor.kind !== 'resin') return false;
-      const status = document.getElementById('resinStatus');
-      const badge = document.getElementById('resinValidateState');
-      const reload = document.getElementById('resinReloadBtn');
-      const save = document.getElementById('resinSaveBtn');
-      const validate = document.getElementById('resinValidateBtn');
-      if (status) status.textContent = '正在读取 Resin 配置…';
-      if (badge) { badge.textContent = '读取中'; badge.className = 'badge warn'; }
-      if (reload) reload.hidden = true;
-      if (save) save.disabled = true;
-      if (validate) validate.disabled = true;
-      try {
-        const resin = await api('resin.config.get');
-        if (state.proxyEditing !== editor) return false;
-        state.resin = resin || {};
-        populateResinForm();
-        if (save) save.disabled = false;
-        if (validate) validate.disabled = false;
-        if (reload) reload.hidden = true;
-        return true;
-      } catch (error) {
-        if (state.proxyEditing !== editor) return false;
-        if (status) status.textContent = '配置读取失败：' + error.message;
-        if (badge) { badge.textContent = '读取失败'; badge.className = 'badge bad'; }
-        if (save) save.disabled = true;
-        if (validate) validate.disabled = true;
-        if (reload) reload.hidden = false;
-        toast(error.message, 'error');
-        return false;
-      }
-    }
-    async function openResinEditor() {
-      if (!document.getElementById('proxySourceDrawer').hidden && !await closeProxyDrawer()) return;
-      const editor = beginProxyEditor('resin', { id: 'resin', kind: 'resin', name: 'Resin' });
-      document.getElementById('proxySourceEditorTitle').textContent = 'Resin 连接';
-      document.getElementById('proxySourceEditorSubtitle').textContent = '配置代理轮换与 Resin 凭据，密钥不会回填';
-      const form = document.getElementById('resinForm');
-      const body = document.getElementById('proxySourceEditor');
-      if (!form || !body) { state.proxyEditing = null; return; }
-      body.appendChild(form);
-      populateResinForm();
-      openProxyDrawer();
-      await loadResinEditorConfig(editor);
-    }
     function templatePlaceholderNames(url) {
       const names = [];
       const seen = new Set();
@@ -4585,6 +4467,9 @@
     function proxyPlaceholderCard(name, definition, expanded) {
       const placeholder = definition || {};
       const kind = placeholder.kind || 'enum';
+      if (kind === 'reserved') {
+        return '<details class="proxy-template-variable" data-placeholder-card="' + esc(name) + '" open><summary><span class="proxy-variable-name">{' + esc(name) + '}</span><span class="proxy-variable-kind">保留变量</span></summary><div class="proxy-variable-body"><p class="hint">由账号邮箱前缀自动生成；只取 @ 前的本地部分并转为小写，不能改名或改成枚举/随机值</p></div></details>';
+      }
       const enumSpec = placeholder.enum || {};
       const random = placeholder.random || {};
       const enumInput = enumSpec.input || (enumSpec.values || []).join(enumSpec.separator || ',');
@@ -4607,7 +4492,9 @@
     }
     function syncProxyPlaceholderCards() {
       document.querySelectorAll('[data-placeholder-card]').forEach((card) => {
-        const enumKind = card.querySelector('[data-placeholder-kind]').value === 'enum';
+        const kindField = card.querySelector('[data-placeholder-kind]');
+        if (!kindField) return;
+        const enumKind = kindField.value === 'enum';
         const summaryKind = card.querySelector('[data-placeholder-summary-kind]');
         if (summaryKind) summaryKind.textContent = enumKind ? '枚举变量' : '随机变量';
         card.querySelectorAll('[data-enum-field]').forEach((field) => { field.hidden = !enumKind; });
@@ -4793,8 +4680,8 @@
     function renderProxyTemplateConditions() {
       const container = document.getElementById('proxyTemplateConditions');
       const editor = state.proxyEditing;
-      if (!container || editor?.kind !== 'template') return;
-      const names = Array.from(document.querySelectorAll('[data-placeholder-card]')).filter((card) => card.querySelector('[data-placeholder-kind]').value === 'enum').map((card) => card.dataset.placeholderCard);
+      if (!container || !['template', 'resin'].includes(editor?.kind)) return;
+      const names = Array.from(document.querySelectorAll('[data-placeholder-card]')).filter((card) => card.querySelector('[data-placeholder-kind]')?.value === 'enum').map((card) => card.dataset.placeholderCard);
       container.innerHTML = names.map((name, index) => '<div class="field"><label>' + esc(name) + ' 固定值<input data-proxy-assignment="' + esc(name) + '" list="proxy-condition-' + index + '" value="' + esc(editor.assignments[name] || '') + '" placeholder="留空随机" autocomplete="off"></label><datalist id="proxy-condition-' + index + '">' + proxyTemplateConditionValues(name).slice(0, 50).map((value) => '<option value="' + esc(value) + '"></option>').join('') + '</datalist><span class="hint">留空则随机</span></div>').join('') || '<p class="hint">当前没有可固定的枚举变量</p>';
     }
     function updateProxyTemplateConditionLists() {
@@ -4925,6 +4812,158 @@
       renderProxyTemplateConditions();
       openProxyDrawer();
     }
+    async function openProxyResinEditor(source) {
+      if (!document.getElementById('proxySourceDrawer').hidden && !await closeProxyDrawer()) return;
+      const editor = beginProxyEditor('resin', source);
+      let detail = null;
+      if (source) detail = await api('proxy.sources.get', { source_id: source.id, edit_fields: true });
+      if (state.proxyEditing !== editor) return;
+      if (detail) source = Object.assign({}, source, detail.view || detail.source || detail);
+      editor.source = source;
+      const resin = detail?.kind === 'resin' ? detail : (detail || {});
+	  const accountFormat = resin.account_format || 'grok-{account}-{suffix}';
+	  const existing = new Map((resin.placeholders || []).map((item) => [item.name, item]));
+	  existing.set('account', { name: 'account', kind: 'reserved' });
+	  if (!existing.has('suffix') && !source) existing.set('suffix', { name: 'suffix', kind: 'random', random: { length: 4, case_sensitive: false } });
+	  editor.placeholderDrafts = existing;
+	  const initialNames = templatePlaceholderNames(accountFormat);
+	  const groups = resin.value_groups || [];
+	  document.getElementById('proxySourceEditorTitle').textContent = source ? '编辑 Resin 代理' : '添加 Resin 代理';
+	  document.getElementById('proxySourceEditorSubtitle').textContent = source ? '按模板方式维护账号格式与生成规则；密钥不会回填' : 'Resin 是带租约清理能力的特殊模板；可添加多个代理';
+	  document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyResinEditorForm" class="drawer-form"><div class="stack"><section class="card"><div class="form-section"><h3 class="section-title">Resin 连接</h3><div class="field-grid">' +
+	    proxyEditorField('代理名称', 'presin_name', resin.name || 'Resin', { placeholder: '例如 主 Resin', hint: '用于代理列表和自动绑定选择，不能与其他代理重名' }) +
+	    proxyEditorCheck('启用来源', 'presin_enabled', source ? Boolean(source.enabled) : true, '关闭后不参与新绑定') +
+	    proxyEditorCheck('仅本地轮换', 'presin_local_only', Boolean(resin.local_only), '只改写已有 Resin 用户名，不调用 Admin API，也不创建新绑定') +
+	    proxyEditorField('平台名称', 'presin_platform', resin.platform || '', { placeholder: '例如 Default', hint: '保存时通过 Admin API 解析平台 UUID' }) +
+	    proxyEditorField('Admin API URL', 'presin_admin_url', resin.admin_url || '', { placeholder: 'http://resin:2260', hint: '仅 API 模式需要，必须是 CPA 插件进程可访问的地址' }) +
+	    proxyEditorField('Admin Token', 'presin_admin_token', '', { type: 'password', placeholder: '留空保持已保存值', hint: resin.admin_token_set ? '已配置，留空保持' : 'API 模式必填' }) +
+	    proxyEditorField('Proxy Token', 'presin_proxy_token', '', { type: 'password', placeholder: '留空保持已保存值', hint: resin.proxy_token_set ? '已配置，留空保持' : 'API 模式必填；本地轮换不需要' }) +
+	    proxyEditorField('优先级', 'presin_priority', resin.priority || 0, { type: 'number', min: -1000000, max: 1000000, hint: '数值越大越优先' }) +
+	    proxyEditorField('绑定上限', 'presin_max_bindings', resin.max_bindings || 0, { type: 'number', min: 0, hint: '0 表示不限' }) +
+	    '</div><p class="hint">同一 Resin 服务可以创建多个代理，分别使用不同平台、Admin 地址或账号生成规则</p></div></section>' +
+	    '<section class="card"><div class="form-section"><h3 class="section-title">代理账号格式 <span class="section-count" id="proxyResinVariableCount">' + initialNames.length + ' 个变量</span></h3>' +
+	    proxyEditorField('账号格式', 'presin_account_format', accountFormat, { full: true, placeholder: 'xai-{account}-{region}', hint: '只填写平台名后的 username 后缀；{account} 是保留变量，取邮箱 @ 前的前缀并转小写；其他变量与模板一样支持枚举、随机和关联组' }) +
+	    '<p class="hint">系统会生成 socks5h://&lt;平台&gt;.&lt;账号格式&gt;:&lt;Proxy Token&gt;@&lt;Admin API 主机&gt;:&lt;端口&gt;；仅本地轮换只使用账号格式生成新后缀</p>' +
+	    '<div id="proxyTemplateVariables">' + (initialNames.map((name, index) => proxyPlaceholderCard(name, existing.get(name), index === 0)).join('') || '<p class="hint">在账号格式中使用 {account} 或其他变量</p>') + '</div>' +
+	    '<div id="proxyTemplateGroups">' + groups.map((group, index) => proxyGroupCard(group, index)).join('') + '</div><div class="form-actions"><button class="btn btn-xs" type="button" id="proxyAddGroupBtn">' + icon('plus') + '添加关联组</button></div></div></section>' +
+	    '<section class="card"><div class="form-section"><h3 class="section-title">验证与预览</h3><p class="hint">预览使用示例邮箱前缀 preview，不会访问 Resin</p><div id="proxyTemplatePreviewResults" role="status" aria-live="polite"></div></div></section></div>' +
+	    '<div class="form-actions"><button class="btn" type="button" id="proxyResinPreviewBtn">' + icon('eye') + '生成预览</button><button class="btn btn-primary" type="submit">' + icon('check') + '验证并保存</button><span class="status-line" id="proxySourceEditorStatus" role="status" aria-live="polite"></span></div><p class="hint">当前绑定：' + Number(source?.binding_count || 0) + ' 个账号 · 修改账号格式后已有绑定保持不变</p></form>';
+	  const rerenderVariables = () => {
+	    const rawFormat = valueOf('presin_account_format');
+	    const names = templatePlaceholderNames(rawFormat || accountFormat);
+	    const container = document.getElementById('proxyTemplateVariables');
+	    Array.from(container.querySelectorAll('[data-placeholder-card]')).forEach((card) => {
+	      if (!card.querySelector('[data-placeholder-kind]')) return;
+	      editor.placeholderDrafts.set(card.dataset.placeholderCard, readProxyPlaceholder(card.dataset.placeholderCard));
+	    });
+	    container.innerHTML = names.map((name, index) => proxyPlaceholderCard(name, editor.placeholderDrafts.get(name), index === 0)).join('') || '<p class="hint">在账号格式中使用 {account} 或其他变量</p>';
+	    const count = document.getElementById('proxyResinVariableCount');
+	    if (count) count.textContent = names.length + ' 个变量';
+	    syncProxyPlaceholderCards();
+	    renderProxyTemplateConditions();
+	  };
+	  const updateMode = () => {
+	    const local = document.getElementById('presin_local_only').checked;
+	    ['presin_platform', 'presin_admin_url', 'presin_admin_token', 'presin_proxy_token'].forEach((id) => {
+	      const field = document.getElementById(id);
+	      if (field) field.disabled = local;
+	    });
+	    const status = document.getElementById('proxySourceEditorStatus');
+	    if (status && !editor.dirty) status.textContent = local ? '本地轮换不需要 Admin API 和 Proxy Token' : 'API 模式保存时会验证 Admin API、平台和 Proxy Token';
+	  };
+	  document.getElementById('presin_account_format').addEventListener('input', rerenderVariables);
+	  document.getElementById('presin_local_only').addEventListener('change', updateMode);
+	  document.getElementById('proxyAddGroupBtn').addEventListener('click', () => {
+	    const container = document.getElementById('proxyTemplateGroups');
+	    const index = editor.nextGroupIndex++;
+	    container.insertAdjacentHTML('beforeend', proxyGroupCard({ id: '', columns: [], rows: [] }, index));
+	    renderProxyGroup(index);
+	    markProxyEditorDirty();
+	  });
+	  document.getElementById('proxyResinPreviewBtn').addEventListener('click', (event) => previewProxyResin(editor, source, resin, event.currentTarget));
+	  document.getElementById('proxyResinEditorForm').addEventListener('submit', async (event) => {
+	    event.preventDefault();
+	    const button = event.submitter;
+	    const revision = editor.revision;
+	    if (source && !editor.dirty) {
+	      const message = '内容未发生变化，不能保存';
+	      document.getElementById('proxySourceEditorStatus').textContent = message;
+	      toast(message, 'error');
+	      return;
+	    }
+	    setBusy(button, true);
+	    document.getElementById('proxySourceEditorStatus').textContent = '正在验证并保存…';
+	    try {
+	      const input = collectProxyResinEditor(source, resin);
+	      const queued = await api(source ? 'proxy.sources.update' : 'proxy.sources.create', { kind: 'resin', source: input });
+	      const result = await waitForTask(queued, 'Resin 保存');
+	      if (state.proxyEditing !== editor) return;
+	      const savedSource = result?.source || result;
+	      if (savedSource?.id) source = Object.assign({}, source, savedSource);
+	      editor.source = source;
+	      if (editor.revision === revision) editor.dirty = false;
+	      document.getElementById('proxySourceEditorStatus').textContent = 'Resin 代理已保存';
+	      toast('Resin 代理已保存', 'success');
+	      await loadProxyData();
+	      renderProxySources();
+	      renderResin();
+	      if (!editor.dirty) await closeProxyDrawer(true);
+	    } catch (error) {
+	      document.getElementById('proxySourceEditorStatus').textContent = '保存失败：' + error.message;
+	      toast(error.message, 'error');
+	    } finally {
+	      setBusy(button, false);
+	    }
+	  });
+	  editor.groups.forEach((_, index) => renderProxyGroup(index));
+	  syncProxyPlaceholderCards();
+	  renderProxyTemplateConditions();
+	  updateMode();
+	  openProxyDrawer();
+	}
+	function collectProxyResinEditor(source, current) {
+	  const format = valueOf('presin_account_format');
+	  const names = templatePlaceholderNames(format || current.account_format || '');
+	  const placeholders = names.filter((name) => name !== 'account').map(readProxyPlaceholder).filter(Boolean);
+	  return {
+	    id: source ? source.id : '',
+	    name: valueOf('presin_name'),
+	    enabled: document.getElementById('presin_enabled').checked,
+	    local_only: document.getElementById('presin_local_only').checked,
+	    platform: valueOf('presin_platform'),
+	    admin_url: valueOf('presin_admin_url'),
+	    admin_token: valueOf('presin_admin_token'),
+	    proxy_token: valueOf('presin_proxy_token'),
+	    account_format: format,
+	    placeholders: placeholders,
+	    value_groups: collectProxyTemplateGroups(),
+	    priority: numberValue('presin_priority', 0),
+	    max_bindings: numberOrZero('presin_max_bindings'),
+	    update_policy: 'keep_bound',
+	    expected_version: source ? Number(source.config_version || 0) : 0
+	  };
+	}
+	async function previewProxyResin(editor, source, current, button) {
+	  const revision = editor.revision;
+	  setBusy(button, true);
+	  try {
+	    const input = collectProxyResinEditor(source, current);
+	    const result = await api('proxy.sources.preview', { kind: 'resin', source: input, count: 3 });
+	    if (state.proxyEditing !== editor || editor.revision !== revision) return;
+	    const output = document.getElementById('proxyTemplatePreviewResults');
+	    if (!result || !result.valid) {
+	      output.innerHTML = '<p class="proxy-field-error" role="alert">' + esc(result?.error || 'Resin 验证失败') + '</p>';
+	      return;
+	    }
+	    output.innerHTML = '<p class="hint">验证通过；以下样本使用邮箱前缀 preview 生成</p>' + (result.samples || []).map((sample) => '<div class="proxy-template-variable"><div class="mono">' + esc(sample.masked_url || '-') + '</div><div class="detail-grid">' + Object.entries(sample.values || {}).map(([name, value]) => evidenceCell(name, value)).join('') + '</div></div>').join('');
+	    document.getElementById('proxySourceEditorStatus').textContent = '预览通过';
+	  } catch (error) {
+	    if (state.proxyEditing === editor) document.getElementById('proxySourceEditorStatus').textContent = '预览失败：' + error.message;
+	    toast(error.message, 'error');
+	  } finally {
+	    setBusy(button, false);
+	  }
+	}
     function readProxyPlaceholder(name) {
       const card = document.querySelector('[data-placeholder-card="' + CSS.escape(name) + '"]');
       if (!card) return null;
@@ -5174,6 +5213,7 @@
       if (!source) return;
       if (source.kind === 'node') await openProxyNodeEditor(source);
       else if (source.kind === 'template') await openProxyTemplateEditor(source);
+      else if (source.kind === 'resin') await openProxyResinEditor(source);
     }
     async function deleteProxySource(sourceID, kind) {
       const confirmed = await confirmAction({
@@ -5809,127 +5849,12 @@
         toast(error.message, 'error');
       } finally { setBusy(button, false); }
     }
-    function resinAccountFormatFromTemplate(value, platform) {
-      const raw = String(value || '').trim();
-      if (!raw) return '';
-      const scheme = raw.indexOf('://');
-      let authority = scheme >= 0 ? raw.slice(scheme + 3) : raw;
-      authority = authority.split(/[/?#]/, 1)[0];
-      const at = authority.lastIndexOf('@');
-      const userinfo = at >= 0 ? authority.slice(0, at) : authority;
-      let username = userinfo.split(':')[0] || '';
-      try { username = decodeURIComponent(username); } catch (_) {}
-      if (username.startsWith('{platform}.')) return username.slice('{platform}.'.length);
-      const prefix = String(platform || '').trim();
-      if (prefix && username.startsWith(prefix + '.')) return username.slice(prefix.length + 1);
-      return username;
-    }
-    function populateResinForm() {
-      if (isFormDirty('resinForm')) return;
-      const resin = state.resin || {};
-      const draft = formDrafts.get('resinForm');
-      if (draft) draft.baseVersion = Number(resin.config_version || 1);
-      setChecked('r_enabled', Boolean(resin.enabled));
-      setChecked('r_local_only', Boolean(resin.local_only));
-      setValue('r_name', resin.name || 'Resin');
-      setValue('r_platform', resin.platform || '');
-      setValue('r_admin_url', resin.admin_url || '');
-      setValue('r_account_format', resin.account_format || resinAccountFormatFromTemplate(resin.proxy_template, resin.platform) || '{account}');
-      setChecked('r_auto_rotate', Boolean(resin.auto_rotate_after_quality_failure));
-      setValue('r_admin_token', '');
-      setValue('r_proxy_token', '');
-      document.getElementById('r_admin_token_hint').textContent = resin.admin_token_set ? '已配置，留空保持' : '尚未配置';
-      document.getElementById('r_proxy_token_hint').textContent = resin.proxy_token_set ? '已配置，留空保持' : '尚未配置';
-      updateResinModeFields();
-    }
-    function updateResinModeFields() {
-      const resin = state.resin || {};
-      const localMode = document.getElementById('r_local_only').checked;
-      ['r_platform', 'r_admin_url', 'r_admin_token', 'r_proxy_token', 'r_account_format'].forEach((id) => {
-        const el = document.getElementById(id);
-        if (el) el.disabled = localMode;
-      });
-      document.getElementById('resinValidateBtn').hidden = localMode;
-      document.getElementById('resinSaveBtn').innerHTML = icon('check') + (localMode ? '保存本地模式' : '验证并保存');
-      const stateBadge = document.getElementById('resinValidateState');
-      const status = document.getElementById('resinStatus');
-      if (localMode) {
-        stateBadge.textContent = resin.configured && resin.local_only ? '本地模式已保存' : '本地模式';
-        stateBadge.className = 'badge info';
-        status.textContent = '仅本地轮换不会调用 Resin API，只修改 OAuth 文件中已有代理的用户名';
-      } else if (resin.configured && !resin.local_only) {
-        stateBadge.textContent = '已验证';
-        stateBadge.className = 'badge good';
-        status.textContent = resin.validated_at ? '上次验证：' + formatFullTime(resin.validated_at) : '配置已保存';
-      } else {
-        stateBadge.textContent = '未验证';
-        stateBadge.className = 'badge';
-        status.textContent = 'API 模式可先验证再保存；本地模式无需验证';
-      }
-    }
-    function resinInput() {
-      return {
-        expected_version: Number(formDrafts.get('resinForm')?.baseVersion || state.resin?.config_version || 1),
-        enabled: document.getElementById('r_enabled').checked,
-        local_only: document.getElementById('r_local_only').checked,
-        name: valueOf('r_name'),
-        platform: valueOf('r_platform'),
-        admin_url: valueOf('r_admin_url'),
-        admin_token: valueOf('r_admin_token'),
-        proxy_token: valueOf('r_proxy_token'),
-        account_format: valueOf('r_account_format'),
-        auto_rotate_after_quality_failure: document.getElementById('r_auto_rotate').checked
-      };
-    }
-    async function validateResin(button, save) {
-      const revision = formDraftRevision('resinForm');
-      const input = resinInput();
-      setBusy(button, true);
-      document.getElementById('resinStatus').textContent = input.local_only ? '正在保存本地轮换模式…' : '正在验证 Admin API、平台与代理凭据…';
-      document.getElementById('resinValidateState').textContent = input.local_only ? '保存中' : '验证中';
-      document.getElementById('resinValidateState').className = 'badge warn';
-      try {
-        const task = await api(save ? 'resin.config.save' : 'resin.config.validate', input);
-        const result = await waitForTask(task, save ? '验证并保存 Resin 配置' : '验证 Resin 配置');
-        if (formDraftRevision('resinForm') !== revision) {
-          document.getElementById('resinStatus').textContent = '请求中的配置已' + (save ? '保存' : '通过验证') + '；当前仍有未保存修改';
-          document.getElementById('resinValidateState').textContent = '草稿已修改';
-          document.getElementById('resinValidateState').className = 'badge warn';
-          if (save) await refreshAll(true);
-          return;
-        }
-        if (result && result.platform && formDraftRevision('resinForm') === revision) setValue('r_platform', result.platform);
-        if (result && result.local_only) {
-          document.getElementById('resinStatus').textContent = save ? '本地轮换模式已保存' : '本地轮换模式无需验证';
-          document.getElementById('resinValidateState').textContent = save ? '本地模式已保存' : '本地模式';
-          document.getElementById('resinValidateState').className = 'badge info';
-          toast(save ? '本地轮换模式已保存' : '本地轮换模式无需验证', 'success');
-        } else {
-          document.getElementById('resinStatus').textContent = save ? '验证通过并已保存' : '验证通过，尚未保存';
-          document.getElementById('resinValidateState').textContent = save ? '已验证并保存' : '验证通过';
-          document.getElementById('resinValidateState').className = 'badge good';
-          toast(save ? 'Resin 配置已保存' : 'Resin 配置验证通过', 'success');
-        }
-        if (save) {
-          clearFormDraft('resinForm', revision);
-          await refreshAll(true);
-          if (state.proxyEditing?.kind === 'resin') await closeProxyDrawer(true);
-        }
-      } catch (error) {
-        const failureLabel = save ? '保存失败' : '验证失败';
-        document.getElementById('resinStatus').textContent = failureLabel + '：' + error.message;
-        document.getElementById('resinValidateState').textContent = failureLabel;
-        document.getElementById('resinValidateState').className = 'badge bad';
-        toast(error.message, 'error');
-      } finally { setBusy(button, false); }
-    }
     function renderAll() {
       renderOverview();
       renderAccounts();
       renderResin();
       renderProxySources();
       populatePolicyForm();
-      populateResinForm();
       populateProxyAutoBindForm();
       renderEvents();
       if (state.selectedAuthID) {
@@ -6256,7 +6181,8 @@
       const resinButton = event.target.closest('[data-open-resin]');
       if (!resinButton) return;
       setProxySubtab('sources');
-      openResinEditor().catch((error) => toast(error.message, 'error'));
+      const existing = (state.proxySources || []).find((source) => source.kind === 'resin');
+      openProxyResinEditor(existing || null).catch((error) => toast(error.message, 'error'));
     });
     document.getElementById('proxySourceEditor').addEventListener('click', async (event) => {
       const target = event.target.closest('button');
@@ -6431,7 +6357,8 @@
     });
     document.getElementById('proxyAddSourceBtn').addEventListener('click', () => {
       const kind = valueOf('proxyAddSourceKind');
-      (kind === 'template' ? openProxyTemplateEditor(null) : openProxyNodeEditor(null)).catch((error) => toast(error.message, 'error'));
+      const open = kind === 'template' ? openProxyTemplateEditor(null) : (kind === 'resin' ? openProxyResinEditor(null) : openProxyNodeEditor(null));
+      open.catch((error) => toast(error.message, 'error'));
     });
     document.getElementById('proxyImportNodesBtn').addEventListener('click', () => openProxyImportEditor().catch((error) => toast(error.message, 'error')));
     document.getElementById('proxySourceRefreshBtn').addEventListener('click', (event) => refreshResin(event.currentTarget));
@@ -6462,12 +6389,6 @@
       } catch (error) { toast(error.message, 'error'); }
       finally { setBusy(button, false); }
     });
-    document.getElementById('r_local_only').addEventListener('change', updateResinModeFields);
-    document.getElementById('resinForm').addEventListener('submit', (event) => {
-      event.preventDefault();
-      validateResin(event.submitter || document.querySelector('#resinForm button[type="submit"]'), true);
-    });
-    document.getElementById('resinValidateBtn').addEventListener('click', (event) => validateResin(event.currentTarget, false));
     document.addEventListener('click', (event) => {
       const button = event.target.closest('[data-page-kind][data-page-action]');
       if (!button) return;
@@ -6487,10 +6408,6 @@
     document.getElementById('drawerClose').addEventListener('click', closeDrawer);
     document.getElementById('accountDrawer').addEventListener('click', (event) => { if (event.target === event.currentTarget) closeDrawer(); });
     document.getElementById('proxySourceEditorClose').addEventListener('click', closeProxyDrawer);
-    document.getElementById('resinReloadBtn').addEventListener('click', async () => {
-      const editor = state.proxyEditing;
-      if (editor?.kind === 'resin') await loadResinEditorConfig(editor);
-    });
     document.getElementById('proxySourceDrawer').addEventListener('click', (event) => { if (event.target === event.currentTarget) closeProxyDrawer(); });
     document.getElementById('confirmCancel').addEventListener('click', () => settleConfirm(false));
     document.getElementById('confirmAccept').addEventListener('click', () => settleConfirm(true));
@@ -6525,7 +6442,8 @@
       if (hash === 'settings/resin') {
         setTab('resin', false);
         setProxySubtab('sources', false);
-        openResinEditor().catch((error) => toast(error.message, 'error'));
+        const existing = (state.proxySources || []).find((source) => source.kind === 'resin');
+        openProxyResinEditor(existing || null).catch((error) => toast(error.message, 'error'));
         return;
       }
       if (hash.startsWith('settings/')) { setTab('settings', false); return; }
@@ -6533,10 +6451,6 @@
     }
     window.addEventListener('hashchange', applyLocationHash);
     trackFormDraft('policyForm', populatePolicyForm);
-    trackFormDraft('resinForm', populateResinForm);
-    const resinForm = document.getElementById('resinForm');
-    resinForm.addEventListener('input', () => { if (state.proxyEditing?.kind === 'resin') markProxyEditorDirty(); });
-    resinForm.addEventListener('change', () => { if (state.proxyEditing?.kind === 'resin') markProxyEditorDirty(); });
     trackFormDraft('proxyAutoBindForm', populateProxyAutoBindForm);
     window.addEventListener('beforeunload', (event) => {
       if (state.proxyEditing?.dirty || Array.from(formDrafts.values()).some((draft) => draft.dirty)) { event.preventDefault(); event.returnValue = ''; }

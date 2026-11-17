@@ -608,6 +608,10 @@ func (s *Service) updateProxyTemplateContext(ctx context.Context, input proxyTem
 		s.mgr.changeMu.Unlock()
 		return proxy.Template{}, nil, proxyError("proxy_source_not_found", 404, "proxy template not found")
 	}
+	if current.Kind == proxy.TemplateResin {
+		s.mgr.changeMu.Unlock()
+		return proxy.Template{}, nil, proxyError("proxy_source_kind_mismatch", 409, "Resin sources must be updated with kind=resin")
+	}
 	if input.ExpectedVersion > 0 && input.ExpectedVersion != current.ConfigVersion {
 		s.mgr.changeMu.Unlock()
 		return proxy.Template{}, nil, proxyError("proxy_source_version_conflict", 409, "template configuration changed; reload before saving")

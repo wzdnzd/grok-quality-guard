@@ -14,6 +14,7 @@ import (
 	"time"
 
 	actionpkg "grok-quality-guard/internal/app/action"
+	resinpkg "grok-quality-guard/internal/app/proxy/resin"
 	"grok-quality-guard/internal/app/redact"
 	"grok-quality-guard/internal/app/tasks"
 	"grok-quality-guard/internal/config"
@@ -143,12 +144,72 @@ func (s *Service) actionProxySourceValidate(params map[string]any) (any, int, er
 		report := proxy.ValidateTemplate(t)
 		return map[string]any{"valid": report.Valid, "validation": report, "source": proxyTemplateView(t, 0)}, 200, nil
 	case "resin":
-		return s.actionResinConfigValidate(context.Background(), params)
+		input, err := decodeProxyParams[proxyResinInput](params, "source")
+		if err != nil {
+			return nil, 400, err
+		}
+		var current *proxy.Template
+		var currentConfig *proxy.ResinSourceConfig
+		if input.ID != "" {
+			if existing, ok := s.proxyExistingTemplate(input.ID); ok && existing.Kind == proxy.TemplateResin {
+				current = existing
+				if config, ok := s.env.ProxyStore().ProxySourcesSnapshot().ResinSources[input.ID]; ok {
+					currentConfig = &config
+				}
+			}
+		}
+		template, config, errBuild := buildResinSource(input, current, currentConfig)
+		if errBuild != nil {
+			return proxyValidationFailure(errBuild), 200, nil
+		}
+		report := proxy.ValidateTemplate(template)
+		return map[string]any{"valid": report.Valid, "validation": report, "source": s.resinSourceView(template, config, 0)}, 200, nil
 	default:
 		return nil, 400, errors.New("kind must be node, template, or resin")
 	}
 }
 func (s *Service) actionProxySourcePreview(params map[string]any) (any, int, error) {
+	if strings.EqualFold(strings.TrimSpace(actionpkg.String(params["kind"])), "resin") {
+		input, err := decodeProxyParams[proxyResinInput](params, "source")
+		if err != nil {
+			return nil, 400, err
+		}
+		var current *proxy.Template
+		var currentConfig *proxy.ResinSourceConfig
+		if input.ID != "" {
+			if existing, ok := s.proxyExistingTemplate(input.ID); ok && existing.Kind == proxy.TemplateResin {
+				current = existing
+				if snapshot, ok := s.env.ProxyStore().ProxySourcesSnapshot().ResinSources[input.ID]; ok {
+					currentConfig = &snapshot
+				}
+			}
+		}
+		template, config, errBuild := buildResinSource(input, current, currentConfig)
+		if errBuild != nil {
+			return proxyValidationFailure(errBuild), 200, nil
+		}
+		provider, errProvider := resinpkg.NewTemplateProvider(template, resinpkg.ProviderSettings{
+			Platform: config.Platform, ProxyToken: template.Password, LocalOnly: config.LocalOnly,
+		})
+		if errProvider != nil {
+			return proxyValidationFailure(errProvider), 200, nil
+		}
+		count := actionpkg.Int(params, "count", 3)
+		if count < 1 || count > 20 {
+			count = 3
+		}
+		samples := make([]proxy.TemplateSample, 0, count)
+		for i := 0; i < count; i++ {
+			rendered, errRender := provider.Generate(context.Background(), proxy.GenerateRequest{
+				SourceID: template.ID, SourceKind: proxy.SourceResin, Revision: template.Revision, AccountBase: "preview",
+			})
+			if errRender != nil {
+				return proxyValidationFailure(errRender), 200, nil
+			}
+			samples = append(samples, proxy.TemplateSample{MaskedURL: rendered.MaskedURL, Values: rendered.Values, VariantKey: rendered.VariantKey})
+		}
+		return map[string]any{"valid": true, "samples": samples, "validation": proxy.ValidateTemplate(template), "source": s.resinSourceView(template, config, 0)}, 200, nil
+	}
 	input, err := decodeProxyParams[proxyTemplateInput](params, "source")
 	if err != nil {
 		return nil, 400, err
@@ -227,8 +288,17 @@ func (s *Service) actionProxySourceCreate(params map[string]any) (any, int, erro
 			return nil, proxyInputErrorStatus(err), err
 		}
 		return proxyTemplateView(t, 0), 201, nil
+	case "resin":
+		input, err := decodeProxyParams[proxyResinInput](params, "source")
+		if err != nil {
+			return nil, 400, err
+		}
+		task := s.env.ProxyStartTask("proxy.source.create", nil, "正在验证并添加 Resin 来源", func(ctx context.Context) (any, error) {
+			return s.createResinSource(ctx, input)
+		})
+		return task, 202, nil
 	default:
-		return nil, 400, errors.New("kind must be node or template")
+		return nil, 400, errors.New("kind must be node, template, or resin")
 	}
 }
 func proxyInputErrorStatus(err error) int {
@@ -340,6 +410,9 @@ func (s *Service) actionProxySourceUpdate(params map[string]any) (any, int, erro
 		if !ok {
 			return nil, 404, errors.New("proxy template not found")
 		}
+		if current.Kind == proxy.TemplateResin {
+			return nil, 409, errors.New("Resin sources must be updated with kind=resin")
+		}
 		next, err := buildProxyTemplate(input, current)
 		if err != nil {
 			return proxyValidationFailure(err), proxyInputErrorStatus(err), err
@@ -353,14 +426,21 @@ func (s *Service) actionProxySourceUpdate(params map[string]any) (any, int, erro
 		})
 		return task, 202, nil
 	case "resin":
-		values := params
-		if nested, ok := params["source"].(map[string]any); ok {
-			values = nested
+		input, err := decodeProxyParams[proxyResinInput](params, "source")
+		if err != nil {
+			return nil, 400, err
 		}
-		if actionpkg.Int(values, "expected_version", 0) < 1 {
+		if input.ID == "" {
+			input.ID = id
+		}
+		if input.ExpectedVersion < 1 {
 			return nil, 400, proxyError("proxy_version_required", 400, "expected_version is required for updates")
 		}
-		return s.actionResinConfigSave(context.Background(), values)
+		task := s.env.ProxyStartTask("proxy.source.update", nil, "正在验证并保存 Resin 来源", func(ctx context.Context) (any, error) {
+			_, result, err := s.updateResinSource(ctx, input)
+			return result, err
+		})
+		return task, 202, nil
 	default:
 		return nil, 404, errors.New("proxy source not found")
 	}
@@ -394,6 +474,9 @@ func (s *Service) testProxySource(ctx context.Context, id, target string) (map[s
 		return nil, entry.Error
 	}
 	if entry.Provider == nil {
+		return nil, proxyError("proxy_test_unavailable", 409, "local Resin rotation has no independent endpoint")
+	}
+	if entry.Kind == proxy.SourceResin && entry.ResinSettings != nil && entry.ResinSettings.LocalOnly {
 		return nil, proxyError("proxy_test_unavailable", 409, "local Resin rotation has no independent endpoint")
 	}
 	parentCtx := ctx
@@ -778,7 +861,7 @@ func (s *Service) actionProxyBindingsAutoBind(params map[string]any) (any, int, 
 }
 func (s *Service) actionProxyTemplateApply(_ context.Context, params map[string]any) (any, int, error) {
 	id := strings.TrimSpace(actionpkg.String(params["source_id"]))
-	if entry := s.proxyCatalog().ByID[id]; entry == nil || entry.Template == nil {
+	if entry := s.proxyCatalog().ByID[id]; entry == nil || entry.Template == nil || entry.Template.Kind == proxy.TemplateResin {
 		return nil, 404, errors.New("proxy template not found")
 	}
 	count := s.env.ProxyStore().ProxyBindingCount(id)
@@ -857,6 +940,13 @@ func (s *Service) proxySourcesView() []proxySourceView {
 		case proxy.SourceTemplate:
 			view = proxyTemplateView(*entry.Template, counts[entry.ID])
 		case proxy.SourceResin:
+			if entry.Template != nil && entry.ResinSettings != nil {
+				config, ok := s.env.ProxyStore().ProxySourcesSnapshot().ResinSources[entry.ID]
+				if ok {
+					view = s.resinSourceView(*entry.Template, config, counts[entry.ID])
+					break
+				}
+			}
 			s := *entry.ResinSettings
 			if !s.Configured && !s.LocalOnly {
 				continue
@@ -910,6 +1000,19 @@ func (s *Service) proxySourceEndpoint(id string) (string, error) {
 		if entry.ResinSettings == nil {
 			return "", proxyError("proxy_source_not_found", 404, "Resin source not found")
 		}
+		if entry.Template != nil {
+			if entry.ResinSettings != nil && entry.ResinSettings.LocalOnly {
+				return "", proxyError("proxy_test_unavailable", 409, "local Resin rotation has no independent endpoint")
+			}
+			if entry.Provider == nil {
+				return "", proxyError("proxy_source_invalid", 409, "Resin source cannot generate a preview endpoint")
+			}
+			rendered, err := entry.Provider.Generate(context.Background(), proxy.GenerateRequest{SourceID: entry.ID, SourceKind: entry.Kind, Revision: entry.Revision, AccountBase: "preview"})
+			if err != nil {
+				return "", err
+			}
+			return rendered.URL, nil
+		}
 		return renderResinProxy(*entry.ResinSettings, "preview")
 	default:
 		return "", proxyError("proxy_source_not_found", 404, "proxy source not found")
@@ -921,6 +1024,13 @@ func (s *Service) proxySourceDetailsForEdit(id string, edit bool) (any, error) {
 		return nil, proxyError("proxy_source_not_found", 404, "proxy source not found")
 	}
 	if entry.Kind == proxy.SourceResin {
+		if entry.Template != nil {
+			config, ok := s.env.ProxyStore().ProxySourcesSnapshot().ResinSources[entry.ID]
+			if !ok {
+				return nil, proxyError("proxy_source_details_missing", 409, "Resin source details are missing")
+			}
+			return s.resinSourceDetails(*entry.Template, config), nil
+		}
 		return s.resinConfigView(*entry.ResinSettings), nil
 	}
 	count := s.env.ProxyStore().ProxyBindingCount(id)

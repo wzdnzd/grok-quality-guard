@@ -151,6 +151,8 @@ func templateVariablesEquivalent(left, right compiledVariable) bool {
 		return enumMatchesRandomAlphabet(left.values, right.random)
 	case left.kind == PlaceholderRandom && right.kind == PlaceholderEnum:
 		return enumMatchesRandomAlphabet(right.values, left.random)
+	case left.kind == PlaceholderReserved && right.kind == PlaceholderReserved:
+		return left.name == right.name
 	default:
 		return false
 	}

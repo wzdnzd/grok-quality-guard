@@ -346,7 +346,7 @@ plugins:
 
 1. **节点**：直接保存 `协议://用户名:密码@主机:端口`，支持无认证、仅用户名、IPv4、IPv6 和 URL 编码凭据。无 scheme 的导入行会被忽略。
 2. **模板**：占位符只允许出现在用户名中；每个变量可选 `enum` 或 `random`。枚举值使用用户配置的分隔符解析，替换时随机选择；随机值由英文字母和数字组成，可配置长度与大小写敏感。
-3. **Resin**：复用通用来源选择、绑定状态和轮换入口；API 模式额外负责远端租约删除。
+3. **Resin**：一种特殊模板。与节点、模板共用新增类型下拉、列表、编辑、检测、删除、绑定和轮换流程；API 模式额外负责远端租约删除。可以添加多个 Resin 代理，以同一 Resin 服务的不同平台、Admin 地址或账号生成规则分别参与选择。
 
 任意变量之间都可以建立级联限制。系统不内置 `country`、`state` 等字段或地理树，而是持久化用户定义的合法组合行。例如 `vendor/plan/profile` 可由同一组 rows 表达多父级约束；中文变量名同样可用。
 
@@ -354,11 +354,11 @@ plugins:
 
 自动绑定默认关闭。开启后，插件会把代理 URL 为空的 Grok/xAI auth 放入有界队列，跳过外部代理、读取失败和未解决绑定；来源选择支持范围、ID allowlist、优先级、配额、并发预留、健康年龄和失败退避。
 
-代理来源统一使用绑定、轮换和清除流程；Resin 在通用流程之外还支持 API 模式与本地轮换。
+代理来源统一使用绑定、轮换和清除流程；Resin 在通用流程之外还支持 API 模式与本地轮换。管理页不再提供独立的 Resin 配置入口或全局模式横幅，Resin 的类型、启用状态和 API/本地模式都显示在统一代理列表对应行中。
 
 ### API 模式
 
-API 模式用于创建新的代理绑定，并管理 Resin 远端租约。来源名称、Admin API URL、Platform、Admin Token、Proxy Token 和账号格式在管理页中配置。来源名称用于代理来源列表和自动绑定选择，可自定义。用户只填写平台名称与 username 后缀；系统自动添加 `{platform}.` 前缀。协议固定为 SOCKS5H，密码固定使用 Proxy Token，代理主机和端口从 Admin API URL 解析。保存时会按顺序验证：
+API 模式用于创建新的代理绑定，并管理 Resin 远端租约。在“新增类型”选择 Resin 后，会打开与模板一致但包含连接字段的编辑器；来源名称、Admin API URL、Platform、Admin Token、Proxy Token 和账号格式在这里配置。来源名称用于代理列表和自动绑定选择，可自定义，并可与节点、模板或其他 Resin 代理并存。用户只填写平台名称与 username 后缀；系统自动添加平台名和点号前缀。协议固定为 SOCKS5H，密码固定使用 Proxy Token，代理主机和端口从 Admin API URL 解析。保存时会按顺序验证：
 
 1. 使用 Admin Token 请求 Resin `GET /api/v1/system/info`
 2. 使用同一 Admin Token 请求 `GET /api/v1/platforms?keyword={platform}`，按名称精确解析平台 UUID 并读取规范平台名称
@@ -370,7 +370,7 @@ Resin 平台名称在 Resin 中唯一。管理页只要求填写名称，保存�
 
 Resin 绑定必须由管理员显式触发，不会在首次启动时自动覆盖已有 `proxy_url`。API 模式轮换顺序固定为：
 
-1. 生成新的 `grok-<email-local>-<4位随机 base36>` account
+1. 按账号格式生成新的 account：`{account}` 是保留变量，只替换为邮箱 `@` 前的本地部分并转小写；其他占位符按模板规则生成。例如 `xai-{account}-{region}` 可得到 `xai-alice-us`，系统再拼出 `Canonical.xai-alice-us` 的 username
 2. 写回 auth 的 `proxy_url`
 3. 保留 access/refresh token 等所有非代理字段
 4. 将旧租约删除任务写入 state 队列
@@ -398,7 +398,7 @@ resin:
 socks5h://Default.grok-alice-old1:proxy-secret@resin:2260
 ```
 
-轮换时只替换用户名中的 account 后缀，生成新的 `grok-<email-local>-<4位随机 base36>`，同时保留 scheme、代理主机、端口、密码和路径等其余部分：
+轮换时只替换用户名中的 account 后缀，按该 Resin 代理配置的账号格式生成新后缀，同时保留 scheme、代理主机、端口、密码和路径等其余部分：
 
 ```text
 socks5h://Default.grok-alice-new1:proxy-secret@resin:2260
@@ -509,7 +509,7 @@ services:
 
 管理页“设置 / 守护策略”中的状态文件路径可以直接编辑。保存新路径时，插件会把当前完整 state 写入目标文件并立即切换；为避免覆盖已有数据，目标文件必须尚不存在。引导路径旁会生成 `<state_file>.location` 指针文件，使插件重启后继续使用新路径。修改 YAML 中的 `state_file` 会产生新的引导位置，因此可以借此重新指定路径；如要回退到旧引导文件，需要先删除对应指针文件。
 
-状态文件使用 schema v2、原子替换写入，Unix 权限为目录 `0700`、文件 `0600`。策略首次从 YAML 初始化，之后管理页修改会持久化到 state；`policy.reset` 会恢复为当前 YAML 的默认值。通过管理页保存的 Resin 配置和 API 模式 token 也存储在 state 中，API 与页面只返回是否已设置的布尔标记。管理页设置区会显示当前实际使用的状态文件路径。
+状态文件使用 schema v2、原子替换写入，Unix 权限为目录 `0700`、文件 `0600`。策略首次从 YAML 初始化，之后管理页修改会持久化到 state；`policy.reset` 会恢复为当前 YAML 的默认值。通过管理页保存的多个 Resin 代理配置和 API 模式 token 也存储在 state 中，API 与页面只返回是否已设置的布尔标记。管理页设置区会显示当前实际使用的状态文件路径。
 
 插件运行时只会修改 auth 文件中的原生字段 `disabled` 和 `proxy_url`。冷却原因、strike、禁用所有权、Resin 租约及其他控制信息全部保存在 `state.json`，不再向 auth 写入 `grok_quality_guard` 或其他插件私有字段。
 

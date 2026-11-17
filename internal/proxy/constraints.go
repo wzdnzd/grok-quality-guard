@@ -256,8 +256,17 @@ func CompileTemplate(template Template) (*CompiledTemplate, error) {
 			variable.random = *placeholder.Random
 			compiled.maximumBytes += counts[placeholder.Name] * variable.random.Length
 			compiled.hasRandom = true
+		case PlaceholderReserved:
+			if template.Kind != TemplateResin || placeholder.Name != ReservedAccountPlaceholder {
+				return nil, invalid("reserved_placeholder_invalid", path, "only the resin account placeholder may be reserved")
+			}
+			if placeholder.Enum != nil || placeholder.Random != nil || placeholder.GroupID != "" {
+				return nil, invalid("placeholder_config_invalid", path, "reserved placeholders do not accept enum, random, or group configuration")
+			}
+			// resinAccountBase caps the auth-derived value at 48 bytes.
+			compiled.maximumBytes += counts[placeholder.Name] * 48
 		default:
-			return nil, invalid("placeholder_kind_invalid", path+".kind", "placeholder kind must be enum or random")
+			return nil, invalid("placeholder_kind_invalid", path+".kind", "placeholder kind must be enum, random, or reserved")
 		}
 		compiled.byName[placeholder.Name] = len(compiled.variables)
 		compiled.variables = append(compiled.variables, variable)
@@ -470,6 +479,8 @@ func (c *CompiledTemplate) RenderWithReader(reader io.Reader, fixed map[string]s
 			value, err = randomChoice(reader, variable.values)
 		case PlaceholderRandom:
 			value, err = randomString(reader, variable.random.Length, variable.random.CaseSensitive)
+		case PlaceholderReserved:
+			return RenderedProxy{}, invalid("reserved_value_required", "assignments."+variable.name, "reserved placeholder requires a supplied value")
 		}
 		if err != nil {
 			return RenderedProxy{}, err

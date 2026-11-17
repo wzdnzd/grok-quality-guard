@@ -317,6 +317,33 @@ func (s *Service) proxyCatalog() *proxySourceCatalog {
 	for i := range state.Templates {
 		template := state.Templates[i]
 		entry := proxySourceCandidate{ID: template.ID, Kind: proxy.SourceTemplate, Name: template.Name, Priority: template.Priority, Max: template.MaxBindings, Revision: template.Revision, Template: &template, Runtime: state.SourceRuntime[template.ID]}
+		if template.Kind == proxy.TemplateResin {
+			entry.Kind = proxy.SourceResin
+			entry.Resin = true
+			config, ok := state.ResinSources[template.ID]
+			if !ok {
+				settings := resinSettingsForSource(template, proxy.ResinSourceConfig{AccountFormat: template.UsernamePattern})
+				entry.ResinSettings = &settings
+				entry.Error = proxyError("proxy_source_not_found", 404, "Resin configuration is missing")
+				catalog.Sources = append(catalog.Sources, entry)
+				continue
+			}
+			settings := resinSettingsForSource(template, config)
+			entry.ResinSettings = &settings
+			cachedEntry := (*proxySourceCandidate)(nil)
+			if cached != nil && cached.Store == store {
+				cachedEntry = cached.ByID[template.ID]
+			}
+			if cachedEntry != nil && cachedEntry.Revision == template.Revision && cachedEntry.ResinSettings != nil &&
+				statepkg.ResinSnapshotID(*cachedEntry.ResinSettings) == statepkg.ResinSnapshotID(settings) {
+				entry.Provider = cachedEntry.Provider
+				entry.Error = cachedEntry.Error
+			} else {
+				entry.Provider, entry.Error = resinProviderForSource(template, config)
+			}
+			catalog.Sources = append(catalog.Sources, entry)
+			continue
+		}
 		if cached != nil && cached.Store == store && cached.ByID[template.ID] != nil && cached.ByID[template.ID].Revision == template.Revision {
 			entry.Provider = cached.ByID[template.ID].Provider
 			entry.Error = cached.ByID[template.ID].Error
@@ -330,7 +357,7 @@ func (s *Service) proxyCatalog() *proxySourceCatalog {
 		catalog.Sources = append(catalog.Sources, entry)
 	}
 	settings := s.ResinConfig()
-	if !state.ResinSource.Deleted && (settings.Configured || settings.Enabled || settings.LocalOnly) {
+	if !state.ResinSourcesInitialized && !state.ResinSource.Deleted && (settings.Configured || settings.Enabled || settings.LocalOnly) {
 		revision := max(state.ResinSource.Revision, 1)
 		entry := proxySourceCandidate{ID: resinSourceID, Kind: proxy.SourceResin, Name: firstNonEmptyString(state.ResinSource.Name, "Resin"), Revision: revision, Resin: true, ResinSettings: &settings, Runtime: state.SourceRuntime[resinSourceID]}
 		entry.ConfigVersion = state.ResinSource.ConfigVersion
@@ -608,6 +635,64 @@ func (s *Service) generateProxySource(ctx context.Context, candidate proxySource
 	if base == "" {
 		base = "grok"
 	}
+	if candidate.Template != nil {
+		if candidate.Provider == nil {
+			return proxy.RenderedProxy{}, nil, nil, errors.New("resin generator is unavailable")
+		}
+		request.AccountBase = base
+		store := s.env.ProxyStore()
+		for attempt := 0; attempt < 16; attempt++ {
+			rendered, err := candidate.Provider.Generate(ctx, request)
+			if err != nil {
+				return proxy.RenderedProxy{}, nil, nil, err
+			}
+			identity := rendered.GeneratedAccount
+			s.mgr.mu.Lock()
+			_, reserved := s.mgr.resinReserved[identity]
+			used := store.ProxyLeaseUsage(identity) > 0
+			if !used && !reserved && !dryRun {
+				s.mgr.resinReserved[identity] = struct{}{}
+			}
+			s.mgr.mu.Unlock()
+			if used || reserved {
+				continue
+			}
+			release := func() {
+				s.mgr.mu.Lock()
+				delete(s.mgr.resinReserved, identity)
+				s.mgr.mu.Unlock()
+			}
+			if settings.LocalOnly {
+				current, err := proxyURLFromRaw(raw)
+				if err != nil {
+					release()
+					return proxy.RenderedProxy{}, nil, nil, err
+				}
+				value, err := rewriteResinProxyAccount(current, identity)
+				if err != nil {
+					release()
+					return proxy.RenderedProxy{}, nil, nil, err
+				}
+				e, err := proxy.ParseEndpoint(value, proxy.ParseOptions{})
+				if err != nil {
+					release()
+					return proxy.RenderedProxy{}, nil, nil, err
+				}
+				rendered.Endpoint = e
+				rendered.URL = e.CanonicalURL()
+				rendered.MaskedURL = e.MaskedURL()
+				return rendered, &proxy.LeaseRef{Provider: "resin-local", Account: identity}, release, nil
+			}
+			if !dryRun {
+				if _, err = store.EnsureResinSnapshot(settings); err != nil {
+					release()
+					return proxy.RenderedProxy{}, nil, nil, err
+				}
+			}
+			return rendered, rendered.Cleanup, release, nil
+		}
+		return proxy.RenderedProxy{}, nil, nil, errors.New("unable to generate a different proxy identity")
+	}
 	for attempt := 0; attempt < 16; attempt++ {
 		suffix, err := randomBase36(12)
 		if err != nil {
@@ -679,6 +764,24 @@ func (s *Service) captureLegacyLease(binding proxy.Binding, current string) (*pr
 		return nil, nil
 	}
 	lease := *binding.Lease
+	if binding.SourceID != "" {
+		if entry := s.proxyCatalog().ByID[binding.SourceID]; entry != nil && entry.Template != nil && entry.ResinSettings != nil {
+			if entry.ResinSettings.LocalOnly {
+				lease.Provider = "resin-local"
+				return &lease, nil
+			}
+			if resinCleanupConfigured(*entry.ResinSettings) {
+				id, err := s.env.ProxyStore().EnsureResinSnapshot(*entry.ResinSettings)
+				if err != nil {
+					return nil, err
+				}
+				lease.Provider = "resin"
+				lease.PlatformID = entry.ResinSettings.PlatformID
+				lease.SnapshotID = id
+				return &lease, nil
+			}
+		}
+	}
 	settings := s.ResinConfig()
 	// A shared hostname is insufficient evidence for deleting a historical lease.
 	if settings.LocalOnly {

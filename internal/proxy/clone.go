@@ -8,16 +8,28 @@ func CloneProxyState(source ProxyState) ProxyState {
 		cloned.Templates[index] = CloneTemplate(template)
 	}
 	cloned.AutoBind = cloneAutoBindConfig(source.AutoBind)
+	if source.ResinSources != nil {
+		cloned.ResinSources = make(map[string]ResinSourceConfig, len(source.ResinSources))
+		for id, config := range source.ResinSources {
+			cloned.ResinSources[id] = config
+		}
+	}
 	cloned.NodeVersions = append([]Node(nil), source.NodeVersions...)
 	cloned.TemplateVersions = make([]Template, len(source.TemplateVersions))
-	for i, t := range source.TemplateVersions { cloned.TemplateVersions[i] = CloneTemplate(t) }
+	for i, t := range source.TemplateVersions {
+		cloned.TemplateVersions[i] = CloneTemplate(t)
+	}
 	if source.SourceRuntime != nil {
 		cloned.SourceRuntime = make(map[string]SourceRuntime, len(source.SourceRuntime))
-		for id, runtime := range source.SourceRuntime { cloned.SourceRuntime[id] = runtime }
+		for id, runtime := range source.SourceRuntime {
+			cloned.SourceRuntime[id] = runtime
+		}
 	}
 	if source.Operations != nil {
 		cloned.Operations = make(map[string]Operation, len(source.Operations))
-		for id, operation := range source.Operations { cloned.Operations[id] = CloneOperation(operation) }
+		for id, operation := range source.Operations {
+			cloned.Operations[id] = CloneOperation(operation)
+		}
 	}
 	cloned.Changes = make([]SourceChange, len(source.Changes))
 	for index, change := range source.Changes {
@@ -31,7 +43,10 @@ func CloneProxyState(source ProxyState) ProxyState {
 func CloneOperation(operation Operation) Operation {
 	cloned := operation
 	cloned.Binding = CloneBinding(operation.Binding)
-	if operation.OldLease != nil { lease := *operation.OldLease; cloned.OldLease = &lease }
+	if operation.OldLease != nil {
+		lease := *operation.OldLease
+		cloned.OldLease = &lease
+	}
 	return cloned
 }
 func CloneTemplate(template Template) Template {

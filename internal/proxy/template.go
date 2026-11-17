@@ -32,9 +32,14 @@ const (
 type PlaceholderKind string
 
 const (
-	PlaceholderEnum   PlaceholderKind = "enum"
-	PlaceholderRandom PlaceholderKind = "random"
+	PlaceholderEnum     PlaceholderKind = "enum"
+	PlaceholderRandom   PlaceholderKind = "random"
+	PlaceholderReserved PlaceholderKind = "reserved"
 )
+
+// ReservedAccountPlaceholder is supplied by the host for every Resin lease.
+// Its value is the normalized local part of the auth email.
+const ReservedAccountPlaceholder = "account"
 
 type EnumSpec struct {
 	Separator string   `json:"separator"`
@@ -88,13 +93,14 @@ type Template struct {
 }
 
 type RenderedProxy struct {
-	Endpoint       Endpoint          `json:"-"`
-	Cleanup        *LeaseRef         `json:"-"`
-	URL            string            `json:"url"`
-	MaskedURL      string            `json:"masked_url"`
-	Values         map[string]string `json:"values,omitempty"`
-	VariantKey     string            `json:"variant_key,omitempty"`
-	UsernameLength int               `json:"username_length,omitempty"`
+	Endpoint         Endpoint          `json:"-"`
+	Cleanup          *LeaseRef         `json:"-"`
+	GeneratedAccount string            `json:"-"`
+	URL              string            `json:"url"`
+	MaskedURL        string            `json:"masked_url"`
+	Values           map[string]string `json:"values,omitempty"`
+	VariantKey       string            `json:"variant_key,omitempty"`
+	UsernameLength   int               `json:"username_length,omitempty"`
 }
 
 type TemplateSample struct {

@@ -114,7 +114,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, resinAccountFormatFromTemplate, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openProxyResinEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -222,28 +222,19 @@ test('Changing an enum separator preserves values and refuses collisions', () =>
   assert.equal(card.querySelector('[data-enum-input]').value, 'basic;pro');
 });
 
-test('Periodic form population leaves dirty policy, Resin, and auto-bind values intact', async () => {
+test('Periodic form population leaves dirty policy and auto-bind values intact', async () => {
   const { dashboard: ui, get } = harness();
   ui.state.policy = { quality: { hard_tps: 800 } };
-  ui.state.resin = { platform: 'Old', admin_token_set: true };
   ui.state.proxy = { auto_bind: { source_scope: 'nodes' } };
-  ui.populatePolicyForm(); ui.populateResinForm(); ui.populateProxyAutoBindForm();
+  ui.populatePolicyForm(); ui.populateProxyAutoBindForm();
   get('p_hard_tps').value = '777';
-  get('r_platform').value = 'Draft'; get('r_admin_token').value = 'new-secret';
   get('pab_source_scope').value = 'templates';
   await get('policyForm').emit('input');
-  await get('resinForm').emit('input');
   await get('proxyAutoBindForm').emit('input');
-  const revision = ui.formDraftRevision('resinForm');
-  await get('resinForm').emit('input');
-  assert.equal(ui.clearFormDraft('resinForm', revision), false);
   ui.state.policy = { quality: { hard_tps: 900 } };
-  ui.state.resin = { platform: 'Server' };
   ui.state.proxy = { auto_bind: { source_scope: 'all' } };
-  ui.populatePolicyForm(); ui.populateResinForm(); ui.populateProxyAutoBindForm();
+  ui.populatePolicyForm(); ui.populateProxyAutoBindForm();
   assert.equal(get('p_hard_tps').value, '777');
-  assert.equal(get('r_platform').value, 'Draft');
-  assert.equal(get('r_admin_token').value, 'new-secret');
   assert.equal(get('pab_source_scope').value, 'templates');
 });
 
@@ -605,31 +596,25 @@ test('A flat source detail response preserves existing template relations', asyn
   assert.equal(editFields, true);
 });
 
-test('A dirty Resin form retains its original version when the server changes', async () => {
-  const { dashboard: ui, get } = harness();
-  ui.state.resin = { config_version: 5, platform: 'Original' };
-  ui.populateResinForm();
-  get('r_platform').value = 'Draft';
-  await get('resinForm').emit('input');
-  ui.state.resin = { config_version: 8, platform: 'Other administrator' };
-  ui.populateResinForm();
-  assert.equal(ui.resinInput().platform, 'Draft');
-  assert.equal(ui.resinInput().expected_version, 5);
-});
-
-test('Resin form edits only the username account format', () => {
-  const { dashboard: ui, get } = harness();
-  assert.equal(ui.resinAccountFormatFromTemplate('socks5h://CPA.grok-{account}:secret@resin:2260', 'CPA'), 'grok-{account}');
-  ui.state.resin = { config_version: 5, name: 'Primary Resin', account_format: 'grok-{account}' };
-  ui.populateResinForm();
-  assert.equal(get('r_name').value, 'Primary Resin');
-  assert.equal(get('r_account_format').value, 'grok-{account}');
-  get('r_account_format').value = 'svc-{account}';
-  get('r_admin_url').value = 'https://resin.example:8443/base';
-  const input = ui.resinInput();
+test('Resin source editor uses the shared template lifecycle and reserved account placeholder', async () => {
+  const { dashboard: ui, get, placeholder } = harness();
+  await ui.openProxyResinEditor(null);
+  const editorHTML = get('proxySourceEditor').innerHTML;
+  assert.match(editorHTML, /账号格式/);
+  assert.match(editorHTML, /\{account\}/);
+  assert.match(editorHTML, /data-placeholder-card="account"[^>]*>.*?保留变量/s);
+  assert.doesNotMatch(editorHTML, /data-placeholder-kind="account"|data-enum-input="account"/);
+  assert.match(editorHTML, /grok-\{account\}-\{suffix\}/);
+  assert.match(editorHTML, /仅本地轮换/);
+  get('presin_name').value = 'Primary Resin';
+  get('presin_account_format').value = 'xai-{account}-{region}';
+  placeholder('region', { input: 'us,jp', separator: ',' });
+  const input = ui.collectProxyResinEditor(null, {});
   assert.equal(input.name, 'Primary Resin');
-  assert.equal(input.account_format, 'svc-{account}');
-  assert.equal(Object.hasOwn(input, 'proxy_template'), false);
+  assert.equal(input.account_format, 'xai-{account}-{region}');
+  assert.equal(input.placeholders.length, 1);
+  assert.equal(input.placeholders[0].name, 'region');
+  assert.equal(input.placeholders.some((item) => item.name === 'account'), false);
 });
 
 test('Lease endpoints stay masked until the eye reveals the full endpoint', async () => {
@@ -792,6 +777,17 @@ test('Proxy source selection enables batch test and delete actions', () => {
   assert.match(get('proxySourceRows').innerHTML, /data-source-select="node-1" aria-label="选择代理" checked/);
 });
 
+test('Resin rows use the unified edit, delete, and mode presentation', () => {
+  const { dashboard: ui, get } = harness();
+  ui.state.proxySources = [];
+  const row = ui.proxySourceRow({ id: 'resin-1', kind: 'resin', name: 'Resin A', enabled: true, valid: true, local_only: true, config_version: 2, revision: 3 });
+  assert.match(row, /data-proxy-source-edit="resin-1" data-kind="resin"/);
+  assert.match(row, /data-proxy-source-delete="resin-1" data-kind="resin"/);
+  assert.match(row, /本地轮换/);
+  assert.match(row, /本地轮换没有独立端点/);
+  assert.doesNotMatch(row, /data-open-resin|配置 Resin/);
+});
+
 test('Proxy delete confirms stay concise and avoid trailing full stops', () => {
   assert.match(html, /将删除此代理并清理受管理代理；失败项保留并报告/);
   assert.match(html, /将删除 ' \+ ids\.length \+ ' 个代理并清理受管理代理；失败项保留并报告/);
@@ -900,22 +896,19 @@ test('Routing affinity cards share a row and parameter hints explain their effec
   assert.doesNotMatch(html, /class="check-desc">健康账号不做周期探测/);
   assert.match(html, /默认显示脱敏端点，点击眼睛查看完整端点/);
   assert.match(html, /<th>端点<\/th>/);
-  assert.match(html, /for="r_account_format">账号格式/);
-  assert.match(html, /for="r_name">代理名称/);
-  assert.match(html, /无需填写 \{platform\}；只填写 username 后缀，例如 \{account\}；系统会拼成 socks5h:\/\/\{platform\}\.&lt;填写内容&gt;:\{proxy_token\}@&lt;Admin API 主机&gt;:&lt;端口&gt;/);
-  assert.doesNotMatch(html, /for="r_proxy_template">模板/);
+  assert.match(html, /<option value="resin">Resin<\/option>/);
+  assert.match(html, /proxyAddSourceKind/);
+  assert.match(html, /新增类型/);
+  assert.doesNotMatch(html, /resinFormHost|resinSourceBar|data-open-resin title=/);
 });
 
 test('Network and management API failures use actionable Chinese copy', async () => {
   const { dashboard: ui, context, mock, get } = harness();
   context.fetch = async () => { throw new TypeError('Failed to fetch'); };
   await assert.rejects(ui.api('overview'), /无法连接管理接口，请检查 CPA 服务和插件状态/);
-  mock('api', async () => { throw new Error('配置读取失败'); });
-  await ui.openResinEditor();
+  await ui.openProxyResinEditor(null);
   assert.equal(get('proxySourceDrawer').hidden, false);
-  assert.equal(get('resinReloadBtn').hidden, false);
-  assert.equal(get('resinSaveBtn').disabled, true);
-  assert.match(get('resinStatus').textContent, /配置读取失败/);
+  assert.match(get('proxySourceEditor').innerHTML, /Resin 连接/);
 });
 
 test('Deep relations show two ancestors and a child with breadcrumb navigation', () => {

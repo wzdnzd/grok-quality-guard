@@ -4,6 +4,7 @@ import "time"
 
 // ResinSettings is the persisted runtime configuration for Resin integration.
 type ResinSettings struct {
+	ID                            string    `json:"id,omitempty"`
 	Configured                    bool      `json:"configured"`
 	Name                          string    `json:"name,omitempty"`
 	Enabled                       bool      `json:"enabled"`
@@ -11,6 +12,7 @@ type ResinSettings struct {
 	Platform                      string    `json:"platform"`
 	PlatformID                    string    `json:"platform_id"`
 	AdminURL                      string    `json:"admin_url"`
+	AccountFormat                 string    `json:"account_format,omitempty"`
 	ProxyTemplate                 string    `json:"proxy_template"`
 	AutoRotateAfterQualityFailure bool      `json:"auto_rotate_after_quality_failure"`
 	AdminToken                    string    `json:"admin_token,omitempty"`

@@ -21,6 +21,7 @@ type GenerateRequest struct {
 	SourceKind        SourceKind
 	Revision          uint64
 	AvoidEndpointHash string
+	AccountBase       string
 }
 
 // Provider is the common generation seam for every proxy source. Host and
@@ -229,17 +230,31 @@ type SourceRuntime struct {
 }
 
 type ProxyState struct {
-	Nodes            []Node                   `json:"nodes,omitempty"`
-	Templates        []Template               `json:"templates,omitempty"`
-	AutoBind         AutoBindConfig           `json:"auto_bind,omitempty"`
-	AutoBindRuntime  AutoBindRuntime          `json:"auto_bind_runtime,omitempty"`
-	Changes          []SourceChange           `json:"changes,omitempty"`
-	ResinSource      ResinSourceState         `json:"resin_source,omitempty"`
-	Operations       map[string]Operation     `json:"operations,omitempty"`
-	SourceRuntime    map[string]SourceRuntime `json:"source_runtime,omitempty"`
-	TemplateVersions []Template               `json:"template_versions,omitempty"`
-	NodeVersions     []Node                   `json:"node_versions,omitempty"`
-	JournalSequence  uint64                   `json:"journal_sequence,omitempty"`
+	Nodes                   []Node                       `json:"nodes,omitempty"`
+	Templates               []Template                   `json:"templates,omitempty"`
+	ResinSources            map[string]ResinSourceConfig `json:"resin_sources,omitempty"`
+	ResinSourcesInitialized bool                         `json:"resin_sources_initialized,omitempty"`
+	AutoBind                AutoBindConfig               `json:"auto_bind,omitempty"`
+	AutoBindRuntime         AutoBindRuntime              `json:"auto_bind_runtime,omitempty"`
+	Changes                 []SourceChange               `json:"changes,omitempty"`
+	ResinSource             ResinSourceState             `json:"resin_source,omitempty"`
+	Operations              map[string]Operation         `json:"operations,omitempty"`
+	SourceRuntime           map[string]SourceRuntime     `json:"source_runtime,omitempty"`
+	TemplateVersions        []Template                   `json:"template_versions,omitempty"`
+	NodeVersions            []Node                       `json:"node_versions,omitempty"`
+	JournalSequence         uint64                       `json:"journal_sequence,omitempty"`
+}
+
+// ResinSourceConfig holds the Resin connection fields that are not part of the
+// common template contract. The visible endpoint, username pattern,
+// placeholders, enable state, limits, and revision live in Template.
+type ResinSourceConfig struct {
+	Platform      string `json:"platform"`
+	PlatformID    string `json:"platform_id,omitempty"`
+	AdminURL      string `json:"admin_url,omitempty"`
+	AccountFormat string `json:"account_format"`
+	LocalOnly     bool   `json:"local_only,omitempty"`
+	AdminToken    string `json:"admin_token,omitempty"`
 }
 
 type ResinSourceState struct {
