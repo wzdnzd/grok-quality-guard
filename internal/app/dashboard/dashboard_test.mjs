@@ -114,7 +114,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, resinAccountFormatFromTemplate, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateResinForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, syncProxySourceSelectionUI, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openResinEditor, resinInput, resinAccountFormatFromTemplate, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -642,6 +642,79 @@ test('Source endpoints keep the proxy URL shape and reveal full credentials on d
   });
   await ui.toggleSourceEndpoint('node-1', new Element());
   assert.equal(ui.state.sourceProxyDetails.get('node-1'), full);
+});
+
+test('Proxy source enabled and connectivity statuses stay independent', () => {
+  const { dashboard: ui } = harness();
+  const row = ui.proxySourceRow({
+    id: 'node-1', kind: 'node', name: 'Node one', enabled: true, valid: true,
+    health: 'unhealthy', health_checked: '2026-11-17T10:00:00Z', binding_count: 0
+  });
+  assert.match(row, /已启用/);
+  assert.match(row, /不可达/);
+  assert.doesNotMatch(row, />可用</);
+  assert.match(row, /仅表示最近一次通过网络代理建立测试目标隧道的检测结果/);
+
+  const templateRow = ui.proxySourceRow({
+    id: 'template-1', kind: 'template', name: 'Region template', enabled: true, valid: true,
+    health: 'healthy', health_checked: '2026-11-17T10:00:00Z', binding_count: 0
+  });
+  assert.match(templateRow, /可连通/);
+  assert.match(templateRow, /已启用/);
+  assert.doesNotMatch(templateRow, /样本可连通/);
+
+  const unknown = ui.proxySourceConnectivity({ id: 'template-2', kind: 'template', enabled: true, valid: true, health_checked: '0001-01-01T00:00:00Z' });
+  assert.match(unknown, /未检测/);
+  assert.match(unknown, /检测时生成临时端点/);
+  assert.doesNotMatch(unknown, /检测：-/);
+  assert.doesNotMatch(unknown, /不适用|无法检测|样本/);
+
+  const localResin = ui.proxySourceConnectivity({ id: 'resin', kind: 'resin', enabled: true, valid: true, local_only: true });
+  assert.match(localResin, /未检测/);
+  assert.match(localResin, /本地轮换无独立端点/);
+  assert.doesNotMatch(localResin, /不适用|无法检测/);
+});
+
+test('Proxy source filters include enabled and connectivity dimensions', () => {
+  const { dashboard: ui } = harness();
+  ui.state.proxySourceEnabledFilter = 'disabled';
+  ui.state.proxySourceHealthFilter = 'unhealthy';
+  ui.state.proxySourceQuery = 'proxy';
+  assert.equal(JSON.stringify(ui.listParams('sources')), JSON.stringify({
+    page: 1,
+    page_size: 50,
+    kind: '',
+    enabled: 'disabled',
+    health: 'unhealthy',
+    query: 'proxy'
+  }));
+});
+
+test('Proxy source selection enables batch test and delete actions', () => {
+  const { dashboard: ui, get } = harness();
+  ui.state.proxySources = [
+    { id: 'node-1', kind: 'node', name: 'Node one', enabled: true, valid: true },
+    { id: 'template-1', kind: 'template', name: 'Template one', enabled: false, valid: true }
+  ];
+  ui.state.proxySourceList = { total: 2, page: 1, page_size: 50 };
+  ui.state.proxySourceSelection.add('node-1');
+  ui.renderProxySources();
+  assert.equal(get('proxySourceSelectionCount').textContent, '已选：1 个来源');
+  assert.equal(get('proxySourceTestSelectedBtn').disabled, false);
+  assert.equal(get('proxySourceDeleteSelectedBtn').disabled, false);
+  assert.match(get('proxySourceRows').innerHTML, /data-source-select="node-1"/);
+  assert.match(get('proxySourceRows').innerHTML, /data-source-select="node-1" aria-label="选择来源" checked/);
+});
+
+test('Proxy source versions explain endpoint and generation semantics', () => {
+  const { dashboard: ui } = harness();
+  const row = ui.proxySourceRow({
+    id: 'template-1', kind: 'template', name: 'Region template', enabled: true, valid: true,
+    config_version: 4, revision: 7, binding_count: 0
+  });
+  assert.match(row, /v4 \/ r7/);
+  assert.match(row, /title="v：标准端点内容版本/);
+  assert.match(row, /r：生成配置版本/);
 });
 
 test('A late task-detail refresh cannot restore an older selected page', async () => {

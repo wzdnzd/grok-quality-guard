@@ -277,6 +277,9 @@ func (s *Service) saveResinConfigVersioned(ctx context.Context, normalized Resin
 		if state.Proxy.SourceRuntime[resinSourceID].ChangeID != "" {
 			return proxyError("proxy_source_busy", 409, "Resin source change is unfinished")
 		}
+		if proxySourceNameTaken(state, normalized.Name, resinSourceID) {
+			return proxyDuplicateNameError()
+		}
 		if state.ResinSnapshots == nil {
 			state.ResinSnapshots = make(map[string]ResinSettings)
 		}

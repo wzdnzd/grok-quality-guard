@@ -147,6 +147,8 @@ func (p *Plugin) HasActiveTask(kind, authID string) bool {
 
 func (p *Plugin) TaskByID(taskID string) (tasks.Task, bool) { return p.taskByID(taskID) }
 
+func (p *Plugin) CancelTask(taskID string) (tasks.Task, error) { return p.cancelTask(taskID) }
+
 func (p *Plugin) ListTasks(limit int) []tasks.Task { return p.listTasks(limit) }
 
 func (p *Plugin) AccountProxyURL(ctx context.Context, account model.Account, allowFallback bool) string {
@@ -398,6 +400,13 @@ func (p *Plugin) taskByID(taskID string) (tasks.Task, bool) {
 		return tasks.Task{}, false
 	}
 	return p.taskMgr.ByID(taskID)
+}
+
+func (p *Plugin) cancelTask(taskID string) (tasks.Task, error) {
+	if p == nil || p.taskMgr == nil {
+		return tasks.Task{}, tasks.ErrTaskNotFound
+	}
+	return p.taskMgr.CancelTask(taskID)
 }
 
 func (p *Plugin) listTasks(limit int) []tasks.Task {

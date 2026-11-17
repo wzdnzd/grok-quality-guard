@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	appauth "grok-quality-guard/internal/app/auth"
@@ -137,7 +138,7 @@ func TestManagementResourceAndActionAccess(t *testing.T) {
 	if strings.Contains(string(response.Body), "对齐旧插件") {
 		t.Fatal("dashboard should describe the setting semantically instead of referencing the old plugin")
 	}
-	for _, expected := range []string{"概览", "账号质量", "代理管理", "代理来源", "事件日志", "设置", "24 小时统计", "resin.config.get", "proxy.bindings.clear", "proxy.sources.list", "proxy.auto_bind.update", "proxySyncFailures", "data-proxy-source-edit", "data-proxy-source-apply", "proxy.template.apply", "leaseSelectAll", "clearSelectedBtn", "accountsPager", "leasesPager", "eventsPager", "selectFilteredBtn", "selectAllAccountsBtn", "全选当前筛选", "全选所有账号", "选择本页全部账号", "r_local_only", "本地轮换", "state_file.update", "id=\"p_state_file\" type=\"text\"", "p_selection_strategy", "p_prefer_last_success", "p_session_affinity", "policy.routing.selection_strategy", "session_affinity_max_entries", "summary-value truncate", "连续检测到缺少真实思考的响应达到该次数后触发处置或交叉验证", `type="password"`, "const REASON_DETAIL_LABELS", "'expected marker missing': '探测标记缺失'", "'output tokens per second exceeded hard threshold': '输出 Token 速度超过硬阈值'", "'output tokens per second exceeded soft threshold': '输出 Token 速度超过软阈值'", "'probe stream produced no parseable events': '探测流未产生可解析事件'", "'probe stream ended without a terminal event': '探测流结束但未收到终止事件'", "真实思考：", "终止：", "解析失败：", "<td class=\"nowrap\">", "actions-cell", "includeTime: false", "accountRefreshBtn", "leaseRefreshBtn", "eventRefreshBtn", "accountProbeAllBtn", "accountRestoreAllBtn", "accountSelectionCount", "accountSelectAll", "accountSelectFilteredBtn", "accountSelectAllBtn", "accountClearSelectionBtn", "检测所选", "恢复所选", "accounts.probe_selected", "accounts.restore_selected", "accountDetails: new Map()", "summary: true", "api('accounts.get'", "confirmDialog", "confirmAction", "confirmAccept", "confirmCancel"} {
+	for _, expected := range []string{"概览", "账号质量", "代理管理", "代理来源", "事件日志", "设置", "24 小时统计", "resin.config.get", "proxy.bindings.clear", "proxy.sources.list", "proxy.auto_bind.update", "proxySyncFailures", "data-proxy-source-edit", "data-proxy-source-apply", "proxy.template.apply", "leaseSelectAll", "clearSelectedBtn", "accountsPager", "leasesPager", "eventsPager", "selectFilteredBtn", "selectAllAccountsBtn", "全选当前筛选", "全选所有账号", "选择本页全部账号", "r_local_only", "本地轮换", "state_file.update", "id=\"p_state_file\" type=\"text\"", "p_selection_strategy", "p_prefer_last_success", "p_session_affinity", "policy.routing.selection_strategy", "session_affinity_max_entries", "summary-value truncate", "连续检测到缺少真实思考的响应达到该次数后触发处置或交叉验证", `type="password"`, "const REASON_DETAIL_LABELS", "'expected marker missing': '探测标记缺失'", "'output tokens per second exceeded hard threshold': '输出 Token 速度超过硬阈值'", "'output tokens per second exceeded soft threshold': '输出 Token 速度超过软阈值'", "'probe stream produced no parseable events': '探测流未产生可解析事件'", "'probe stream ended without a terminal event': '探测流结束但未收到终止事件'", "真实思考：", "终止：", "解析失败：", "<td class=\"nowrap\">", "actions-cell", "includeTime: false", "accountRefreshBtn", "leaseRefreshBtn", "eventRefreshBtn", "accountProbeAllBtn", "accountRestoreAllBtn", "accountSelectionCount", "accountSelectAll", "accountSelectFilteredBtn", "accountSelectAllBtn", "accountClearSelectionBtn", "检测所选", "恢复所选", "accounts.probe_selected", "accounts.restore_selected", "accountDetails: new Map()", "summary: true", "api('accounts.get'", "proxySourceSelectAll", "proxySourceTestSelectedBtn", "proxySourceDeleteSelectedBtn", "proxy.sources.test_selected", "proxy.sources.delete_selected", "proxySourceEnabledFilter", "proxySourceHealthFilter", "tasks.cancel", "data-task-cancel", "网络连通性", "confirmDialog", "confirmAction", "confirmAccept", "confirmCancel"} {
 		if !strings.Contains(string(response.Body), expected) {
 			t.Fatalf("dashboard is missing %q", expected)
 		}
@@ -666,5 +667,48 @@ func TestManagementActionDoesNotRequireUIHeader(t *testing.T) {
 	response := callManagementForTest(t, plugin, http.MethodPost, "/plugins/grok-quality-guard/api", http.Header{"Content-Type": []string{"application/json"}}, body)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("unmarked request status = %d body=%s", response.StatusCode, response.Body)
+	}
+}
+func TestManagementTaskCancelAction(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	started := make(chan struct{})
+	task := plugin.startTask("test.cancel", nil, "running", func(ctx context.Context) (any, error) {
+		close(started)
+		<-ctx.Done()
+		return map[string]any{"partial": true}, ctx.Err()
+	})
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("task did not start")
+	}
+	response := actionManagementForTest(t, plugin, "tasks.cancel", map[string]any{"task_id": task.ID})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("cancel task status = %d body=%s", response.StatusCode, response.Body)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		current, ok := plugin.taskByID(task.ID)
+		if !ok {
+			t.Fatal("task disappeared")
+		}
+		if current.Status == "cancelled" {
+			if result, okResult := current.Result.(map[string]any); !okResult || result["partial"] != true {
+				t.Fatalf("cancelled task result = %#v", current.Result)
+			}
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	current, _ := plugin.taskByID(task.ID)
+	if current.Status != "cancelled" {
+		t.Fatalf("task did not cancel: %#v", current)
+	}
+	if repeated := actionManagementForTest(t, plugin, "tasks.cancel", map[string]any{"task_id": task.ID}); repeated.StatusCode != http.StatusConflict {
+		t.Fatalf("repeat cancel status = %d body=%s", repeated.StatusCode, repeated.Body)
+	}
+	if missing := actionManagementForTest(t, plugin, "tasks.cancel", map[string]any{"task_id": "missing"}); missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing cancel status = %d body=%s", missing.StatusCode, missing.Body)
 	}
 }

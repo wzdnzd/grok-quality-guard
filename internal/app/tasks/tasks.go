@@ -18,9 +18,15 @@ const (
 	taskStatusRunning   = "running"
 	taskStatusSucceeded = "succeeded"
 	taskStatusFailed    = "failed"
+	taskStatusCancelled = "cancelled"
 
 	taskRetention = time.Hour
 	taskLimit     = 200
+)
+
+var (
+	ErrTaskNotFound = errors.New("task not found")
+	ErrTaskFinished = errors.New("task already finished")
 )
 
 // Task is the management-facing view of one long-running operation.
@@ -40,8 +46,9 @@ type Task struct {
 }
 
 type record struct {
-	task   Task
-	cancel context.CancelFunc
+	task            Task
+	cancel          context.CancelFunc
+	cancelRequested bool
 }
 
 var taskSequence atomic.Uint64
@@ -120,18 +127,23 @@ func (m *Manager) runTask(ctx context.Context, taskID string, fn func(context.Co
 	}
 	record.task.Status = taskStatusRunning
 	record.task.StartedAt = time.Now().UTC()
+	cancelledBeforeRun := record.cancelRequested || ctx.Err() != nil
 	m.mu.Unlock()
 
 	var result any
 	var errTask error
-	func() {
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				errTask = fmt.Errorf("task panic: %v", recovered)
-			}
+	if cancelledBeforeRun {
+		errTask = context.Canceled
+	} else {
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					errTask = fmt.Errorf("task panic: %v", recovered)
+				}
+			}()
+			result, errTask = fn(ctx)
 		}()
-		result, errTask = fn(ctx)
-	}()
+	}
 
 	m.mu.Lock()
 	record = m.tasks[taskID]
@@ -141,7 +153,12 @@ func (m *Manager) runTask(ctx context.Context, taskID string, fn func(context.Co
 		if len(record.task.AuthIDs) > 20 {
 			record.task.AuthIDs = append([]string(nil), record.task.AuthIDs[:20]...)
 		}
-		if errTask != nil {
+		if record.cancelRequested || errors.Is(errTask, context.Canceled) {
+			record.task.Status = taskStatusCancelled
+			record.task.Result = result
+			record.task.Error = ""
+			record.task.ErrorStatus = 0
+		} else if errTask != nil {
 			record.task.Status = taskStatusFailed
 			record.task.Error = redact.SanitizeError(errTask)
 			record.task.ErrorStatus = taskErrorStatus(errTask)
@@ -297,7 +314,7 @@ func (m *Manager) pruneLocked(now time.Time) {
 			delete(m.tasks, id)
 			continue
 		}
-		finished := record.task.Status == taskStatusSucceeded || record.task.Status == taskStatusFailed
+		finished := record.task.Status == taskStatusSucceeded || record.task.Status == taskStatusFailed || record.task.Status == taskStatusCancelled
 		if finished && !record.task.EndedAt.IsZero() && now.Sub(record.task.EndedAt) > taskRetention {
 			delete(m.tasks, id)
 		}
@@ -328,12 +345,40 @@ func (m *Manager) pruneLocked(now time.Time) {
 	}
 }
 
+// CancelTask requests cancellation for one queued or running task. Cancellation
+// is cooperative: the task stops admitting queued work and the active worker
+// exits when its context-aware operation returns.
+func (m *Manager) CancelTask(taskID string) (Task, error) {
+	taskID = strings.TrimSpace(taskID)
+	if m == nil {
+		return Task{}, ErrTaskNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	record := m.tasks[taskID]
+	if record == nil {
+		return Task{}, ErrTaskNotFound
+	}
+	if record.task.Status != taskStatusQueued && record.task.Status != taskStatusRunning {
+		return Clone(record.task), ErrTaskFinished
+	}
+	record.cancelRequested = true
+	record.task.Progress = "正在取消任务"
+	if record.cancel != nil {
+		record.cancel()
+	}
+	return Clone(record.task), nil
+}
+
 func (m *Manager) Cancel() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, record := range m.tasks {
-		if record != nil && record.cancel != nil {
-			record.cancel()
+		if record != nil {
+			record.cancelRequested = true
+			if record.cancel != nil {
+				record.cancel()
+			}
 		}
 	}
 }

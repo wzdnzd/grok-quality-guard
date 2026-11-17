@@ -197,6 +197,10 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 		return s.actionProxySourcePreview(request.Params)
 	case "proxy.sources.test":
 		return s.actionProxySourceTest(ctx, request.Params)
+	case "proxy.sources.test_selected":
+		return s.actionProxySourcesTestSelected(ctx, request.Params)
+	case "proxy.sources.delete_selected":
+		return s.actionProxySourcesDeleteSelected(ctx, request.Params)
 	case "proxy.sources.create":
 		return s.actionProxySourceCreate(request.Params)
 	case "proxy.sources.import_nodes":
@@ -269,6 +273,8 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 		return s.actionEventsList(request.Params)
 	case "tasks.get":
 		return s.actionTaskGet(request.Params)
+	case "tasks.cancel":
+		return s.actionTaskCancel(request.Params)
 	case "tasks.list":
 		return s.actionTaskList(request.Params)
 	default:

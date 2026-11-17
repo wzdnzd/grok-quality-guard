@@ -122,6 +122,12 @@ func (s *Service) ActionSourcePreview(params map[string]any) (any, int, error) {
 func (s *Service) ActionSourceTest(ctx context.Context, params map[string]any) (any, int, error) {
 	return s.actionProxySourceTest(ctx, params)
 }
+func (s *Service) ActionSourcesTestSelected(ctx context.Context, params map[string]any) (any, int, error) {
+	return s.actionProxySourcesTestSelected(ctx, params)
+}
+func (s *Service) ActionSourcesDeleteSelected(ctx context.Context, params map[string]any) (any, int, error) {
+	return s.actionProxySourcesDeleteSelected(ctx, params)
+}
 func (s *Service) ActionSourceCreate(params map[string]any) (any, int, error) {
 	return s.actionProxySourceCreate(params)
 }

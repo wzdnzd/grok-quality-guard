@@ -543,6 +543,62 @@ func TestProxyImportAllowsMoreThanLegacyTenThousandNodes(t *testing.T) {
 		t.Fatalf("unexpected import result: %#v", value)
 	}
 }
+func TestProxySourceBatchActionsReportMissingAndDeleteSelected(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	response := actionManagementForTest(t, plugin, "proxy.sources.test_selected", map[string]any{
+		"source_ids": []any{"missing-source"},
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("batch test status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var testResult struct {
+		Data struct {
+			Counts map[string]int `json:"counts"`
+			Items  []struct {
+				SourceID string `json:"source_id"`
+				Status   string `json:"status"`
+				Error    string `json:"error"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	if errDecode := json.Unmarshal(response.Body, &testResult); errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	if testResult.Data.Counts["failed"] != 1 || len(testResult.Data.Items) != 1 || testResult.Data.Items[0].Status != "failed" || testResult.Data.Items[0].Error == "" {
+		t.Fatalf("unexpected batch test result: %#v", testResult.Data)
+	}
+
+	first, errCreate := plugin.createProxyNode(proxyapp.NodeInput{URL: "http://u:p@one.example:8080"})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	second, errCreate := plugin.createProxyNode(proxyapp.NodeInput{URL: "http://u:p@two.example:8080"})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	response = actionManagementForTest(t, plugin, "proxy.sources.delete_selected", map[string]any{
+		"source_ids": []any{first.ID, second.ID}, "force": true,
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("batch delete status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var deleteResult struct {
+		Data struct {
+			Counts map[string]int `json:"counts"`
+		} `json:"data"`
+	}
+	if errDecode := json.Unmarshal(response.Body, &deleteResult); errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	if deleteResult.Data.Counts["deleted"] != 2 || deleteResult.Data.Counts["failed"] != 0 {
+		t.Fatalf("unexpected batch delete result: %#v", deleteResult.Data)
+	}
+	if state := plugin.stateStore().Snapshot(); len(state.Proxy.Nodes) != 0 {
+		t.Fatalf("batch delete retained nodes: %#v", state.Proxy.Nodes)
+	}
+}
+
 func TestProxyNodeUpdateCanRetrySyncWithSameEndpoint(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
 	host := newMockHostCall(entries, auths)
@@ -574,6 +630,186 @@ func TestProxyNodeUpdateCanRetrySyncWithSameEndpoint(t *testing.T) {
 	raw, _ := rawAuthToMap(host.saves["auth-1"])
 	if appauth.RawString(raw, "proxy_url") != updated.Endpoint.CanonicalURL() {
 		t.Fatalf("retry did not synchronize auth proxy_url: %q", appauth.RawString(raw, "proxy_url"))
+	}
+}
+
+func TestProxySourceUnchangedSaveIsRejected(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	node, errCreate := plugin.createProxyNode(proxyapp.NodeInput{URL: "http://u:p@node.example:8080"})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	enabled := node.Enabled
+	_, _, errUpdate := plugin.updateProxyNode(proxyapp.NodeInput{
+		ID: node.ID, Name: node.Name, Enabled: &enabled, Priority: node.Priority, MaxBindings: node.MaxBindings,
+	})
+	if errUpdate == nil || !strings.Contains(errUpdate.Error(), "未发生变化") {
+		t.Fatalf("unchanged node save was not rejected: %v", errUpdate)
+	}
+	currentNode, _ := plugin.proxyExistingNode(node.ID)
+	if currentNode.ConfigVersion != node.ConfigVersion || currentNode.Revision != node.Revision {
+		t.Fatalf("unchanged node advanced versions: before=%#v after=%#v", node, currentNode)
+	}
+
+	template, errCreate := plugin.createProxyTemplate(proxyapp.TemplateInput{
+		Name: "region", URL: "http://user-{region}:secret@template.example:8080",
+		Placeholders: []proxy.Placeholder{{Name: "region", Kind: proxy.PlaceholderEnum, Enum: &proxy.EnumSpec{Separator: ",", Input: "us"}}},
+	})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	enabled = template.Enabled
+	_, _, errUpdate = plugin.updateProxyTemplate(proxyapp.TemplateInput{
+		ID: template.ID, Name: template.Name, Enabled: &enabled, Priority: template.Priority,
+		MaxBindings: template.MaxBindings, UpdatePolicy: template.UpdatePolicy,
+	})
+	if errUpdate == nil || !strings.Contains(errUpdate.Error(), "未发生变化") {
+		t.Fatalf("unchanged template save was not rejected: %v", errUpdate)
+	}
+	state := plugin.stateStore().Snapshot()
+	for _, current := range state.Proxy.Templates {
+		if current.ID != template.ID {
+			continue
+		}
+		if current.ConfigVersion != template.ConfigVersion || current.Revision != template.Revision {
+			t.Fatalf("unchanged template advanced versions: before=%#v after=%#v", template, current)
+		}
+		return
+	}
+	t.Fatal("template disappeared after unchanged save")
+}
+
+func TestProxyNodeRejectsDuplicateCanonicalEndpoint(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	if _, errCreate := plugin.createProxyNode(proxyapp.NodeInput{URL: "HTTP://u:p@Example.COM:8080/"}); errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	_, errDuplicate := plugin.createProxyNode(proxyapp.NodeInput{Name: "same endpoint", URL: "http://u:p@example.com:8080"})
+	if errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "代理节点已存在") {
+		t.Fatalf("duplicate node was not rejected: %v", errDuplicate)
+	}
+	state := plugin.stateStore().Snapshot()
+	if len(state.Proxy.Nodes) != 1 {
+		t.Fatalf("duplicate node was persisted: %#v", state.Proxy.Nodes)
+	}
+}
+
+func TestProxyTemplateRejectsDuplicateDefinition(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	base := proxyapp.TemplateInput{
+		Name: "base", URL: "http://user-{region}-{plan}:secret@template.example:8080",
+		Placeholders: []proxy.Placeholder{
+			{Name: "region", Kind: proxy.PlaceholderEnum, GroupID: "plans", Enum: &proxy.EnumSpec{Separator: ","}},
+			{Name: "plan", Kind: proxy.PlaceholderEnum, GroupID: "plans", Enum: &proxy.EnumSpec{Separator: ","}},
+		},
+		ValueGroups: []proxy.ValueGroup{{ID: "plans", Name: "Plans", Columns: []string{"region", "plan"}, Rows: [][]string{{"us", "basic"}, {"cn", "pro"}}}},
+	}
+	first, errCreate := plugin.createProxyTemplate(base)
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	duplicate := base
+	duplicate.Name = "duplicate name"
+	duplicate.ValueGroups = []proxy.ValueGroup{{ID: "plans", Name: "Different display name", Columns: []string{"region", "plan"}, Rows: [][]string{{"us", "basic"}, {"cn", "pro"}}}}
+	_, errDuplicate := plugin.createProxyTemplate(duplicate)
+	if errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "代理模板已存在") {
+		t.Fatalf("duplicate template was not rejected: %v", errDuplicate)
+	}
+	state := plugin.stateStore().Snapshot()
+	if len(state.Proxy.Templates) != 1 {
+		t.Fatalf("duplicate template was persisted: %#v", state.Proxy.Templates)
+	}
+
+	different := base
+	different.Name = "different rows"
+	different.ValueGroups = []proxy.ValueGroup{{ID: "plans", Columns: []string{"region", "plan"}, Rows: [][]string{{"us", "basic"}, {"cn", "enterprise"}}}}
+	second, errCreate := plugin.createProxyTemplate(different)
+	if errCreate != nil {
+		t.Fatalf("different template definition was rejected: %v", errCreate)
+	}
+	_, _, errUpdate := plugin.updateProxyTemplate(proxyapp.TemplateInput{
+		ID: second.ID, URL: base.URL, Placeholders: base.Placeholders, ValueGroups: base.ValueGroups,
+	})
+	if errUpdate == nil || !strings.Contains(errUpdate.Error(), "代理模板已存在") {
+		t.Fatalf("template update was allowed to create a duplicate: %v", errUpdate)
+	}
+	state = plugin.stateStore().Snapshot()
+	for _, current := range state.Proxy.Templates {
+		if current.ID != second.ID {
+			continue
+		}
+		if len(current.ValueGroups) != 1 || len(current.ValueGroups[0].Rows) != 2 || current.ValueGroups[0].Rows[1][1] != "enterprise" {
+			t.Fatalf("rejected update changed the existing template: %#v", current)
+		}
+		if current.ID == first.ID {
+			t.Fatal("template IDs collided")
+		}
+		return
+	}
+	t.Fatal("updated template disappeared")
+}
+
+func TestProxyVersionTracksEndpointAndGenerationChanges(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	node, errCreate := plugin.createProxyNode(proxyapp.NodeInput{URL: "http://u:p@node.example:8080"})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	renamed, _, errUpdate := plugin.updateProxyNode(proxyapp.NodeInput{ID: node.ID, Name: "renamed-node"})
+	if errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if renamed.ConfigVersion != node.ConfigVersion || renamed.Revision != node.Revision {
+		t.Fatalf("metadata-only node edit advanced content versions: before=%#v after=%#v", node, renamed)
+	}
+	changed, _, errUpdate := plugin.updateProxyNode(proxyapp.NodeInput{ID: node.ID, URL: "http://u:p@changed-node.example:8080"})
+	if errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if changed.ConfigVersion != node.ConfigVersion+1 || changed.Revision != node.Revision+1 {
+		t.Fatalf("endpoint change did not advance node versions: before=%#v after=%#v", node, changed)
+	}
+
+	placeholders := []proxy.Placeholder{{Name: "region", Kind: proxy.PlaceholderEnum, Enum: &proxy.EnumSpec{Separator: ",", Input: "us"}}}
+	template, errCreate := plugin.createProxyTemplate(proxyapp.TemplateInput{
+		Name: "region", URL: "http://user-{region}:secret@template.example:8080", Placeholders: placeholders,
+	})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	renamedTemplate, templateResult, errUpdate := plugin.updateProxyTemplate(proxyapp.TemplateInput{ID: template.ID, Name: "renamed-template"})
+	if errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if templateResult["endpoint_changed"] != false || templateResult["generated_changed"] != false {
+		t.Fatalf("metadata-only template edit changed generated content: %#v", templateResult)
+	}
+	if renamedTemplate.ConfigVersion != template.ConfigVersion || renamedTemplate.Revision != template.Revision {
+		t.Fatalf("metadata-only template edit advanced content versions: before=%#v after=%#v", template, renamedTemplate)
+	}
+	placeholders[0].Enum = &proxy.EnumSpec{Separator: ",", Input: "cn"}
+	generated, generatedResult, errUpdate := plugin.updateProxyTemplate(proxyapp.TemplateInput{ID: template.ID, Placeholders: placeholders})
+	if errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if generatedResult["endpoint_changed"] != false || generatedResult["generated_changed"] != true {
+		t.Fatalf("placeholder edit classification is wrong: %#v", generatedResult)
+	}
+	if generated.ConfigVersion != template.ConfigVersion || generated.Revision != template.Revision+1 {
+		t.Fatalf("generation-only edit advanced the endpoint version: before=%#v after=%#v", template, generated)
+	}
+	endpoint, _, errUpdate := plugin.updateProxyTemplate(proxyapp.TemplateInput{
+		ID: template.ID, URL: "http://user-{region}:secret@changed-template.example:8080", Placeholders: placeholders,
+	})
+	if errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if endpoint.ConfigVersion != generated.ConfigVersion+1 || endpoint.Revision != generated.Revision+1 {
+		t.Fatalf("template endpoint change did not advance both versions: before=%#v after=%#v", generated, endpoint)
 	}
 }
 
@@ -922,5 +1158,101 @@ func TestProxyChangeProgressTracksCommittedItems(t *testing.T) {
 	change, _ := store.ProxyChange("progress")
 	if change.Counts.Succeeded != 1 || change.Counts.Pending != 1 {
 		t.Fatalf("live progress not updated: %#v", change.Counts)
+	}
+}
+func TestProxySourceNamesAreUniqueAcrossKinds(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	first, errCreate := plugin.createProxyNode(proxyapp.NodeInput{Name: "Primary", URL: "http://u:p@one.example:8080"})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	if _, errDuplicate := plugin.createProxyNode(proxyapp.NodeInput{Name: "primary", URL: "http://u:p@two.example:8080"}); errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "名称已存在") {
+		t.Fatalf("duplicate node name was not rejected: %v", errDuplicate)
+	}
+	if _, errDuplicate := plugin.createProxyTemplate(proxyapp.TemplateInput{Name: "PRIMARY", URL: "http://user-{region}:secret@template.example:8080", Placeholders: []proxy.Placeholder{{Name: "region", Kind: proxy.PlaceholderEnum, Enum: &proxy.EnumSpec{Separator: ",", Input: "us"}}}}); errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "名称已存在") {
+		t.Fatalf("cross-kind duplicate name was not rejected: %v", errDuplicate)
+	}
+	template, errCreate := plugin.createProxyTemplate(proxyapp.TemplateInput{Name: "Template one", URL: "http://user-{region}:secret@template.example:8080", Placeholders: []proxy.Placeholder{{Name: "region", Kind: proxy.PlaceholderEnum, Enum: &proxy.EnumSpec{Separator: ",", Input: "us"}}}})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	if _, _, errUpdate := plugin.updateProxyNode(proxyapp.NodeInput{ID: first.ID, Name: template.Name}); errUpdate == nil || !strings.Contains(errUpdate.Error(), "名称已存在") {
+		t.Fatalf("node rename to template name was not rejected: %v", errUpdate)
+	}
+	renamed, _, errUpdate := plugin.updateProxyNode(proxyapp.NodeInput{ID: first.ID, Name: "Primary renamed"})
+	if errUpdate != nil || renamed.Name != "Primary renamed" {
+		t.Fatalf("valid node rename failed: node=%#v err=%v", renamed, errUpdate)
+	}
+}
+
+func TestProxySourceListFiltersEnabledAndConnectivity(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	enabled, errCreate := plugin.createProxyNode(proxyapp.NodeInput{Name: "Enabled node", URL: "http://u:p@one.example:8080"})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	disabled, errCreate := plugin.createProxyNode(proxyapp.NodeInput{Name: "Disabled node", URL: "http://u:p@two.example:8080"})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	disabledFlag := false
+	if _, _, errUpdate := plugin.updateProxyNode(proxyapp.NodeInput{ID: disabled.ID, Enabled: &disabledFlag}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if errHealth := plugin.stateStore().RecordProxyHealth(enabled.ID, enabled.Revision, proxy.HealthHealthy, time.Now().UTC(), nil); errHealth != nil {
+		t.Fatal(errHealth)
+	}
+	if errHealth := plugin.stateStore().RecordProxyHealth(disabled.ID, disabled.Revision, proxy.HealthUnhealthy, time.Now().UTC(), nil); errHealth != nil {
+		t.Fatal(errHealth)
+	}
+
+	decode := func(params map[string]any) []proxyapp.SourceView {
+		response := actionManagementForTest(t, plugin, "proxy.sources.list", params)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("source list status = %d body=%s", response.StatusCode, response.Body)
+		}
+		var envelope struct {
+			Data struct {
+				Items []proxyapp.SourceView `json:"items"`
+				Total int                   `json:"total"`
+			} `json:"data"`
+		}
+		if errDecode := json.Unmarshal(response.Body, &envelope); errDecode != nil {
+			t.Fatal(errDecode)
+		}
+		return envelope.Data.Items
+	}
+	if items := decode(map[string]any{"enabled": "enabled", "health": "healthy"}); len(items) != 1 || items[0].ID != enabled.ID {
+		t.Fatalf("enabled+healthy filter = %#v", items)
+	}
+	if items := decode(map[string]any{"enabled": "disabled", "health": "unhealthy"}); len(items) != 1 || items[0].ID != disabled.ID {
+		t.Fatalf("disabled+unhealthy filter = %#v", items)
+	}
+	if items := decode(map[string]any{"health": "unknown"}); len(items) != 0 {
+		t.Fatalf("unknown filter unexpectedly matched tested sources: %#v", items)
+	}
+}
+func TestProxySourceListHidesUnconfiguredResin(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), func(cfg *appconfig.Config) {
+		cfg.Resin.Enabled = true
+	})
+	response := actionManagementForTest(t, plugin, "proxy.sources.list", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("source list status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var envelope struct {
+		Data struct {
+			Items []proxyapp.SourceView `json:"items"`
+			Total int                   `json:"total"`
+		} `json:"data"`
+	}
+	if errDecode := json.Unmarshal(response.Body, &envelope); errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	if envelope.Data.Total != 0 || len(envelope.Data.Items) != 0 {
+		t.Fatalf("unconfigured Resin leaked into the source list: %#v", envelope.Data)
 	}
 }

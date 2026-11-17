@@ -82,6 +82,7 @@ func (s *Service) startTask(kind string, authIDs []string, progress string, fn f
 }
 func (s *Service) hasActiveTask(kind, authID string) bool { return s.env.HasActiveTask(kind, authID) }
 func (s *Service) taskByID(taskID string) (Task, bool)    { return s.env.TaskByID(taskID) }
+func (s *Service) cancelTask(taskID string) (Task, error) { return s.env.CancelTask(taskID) }
 func (s *Service) listTasks(limit int) []Task             { return s.env.ListTasks(limit) }
 func (s *Service) probeQueueSize() int                    { return s.env.ProbeQueueSize() }
 func (s *Service) probeConcurrency() int                  { return s.env.ProbeConcurrency() }
@@ -137,6 +138,12 @@ func (s *Service) actionProxySourcePreview(params map[string]any) (any, int, err
 }
 func (s *Service) actionProxySourceTest(ctx context.Context, params map[string]any) (any, int, error) {
 	return s.env.Proxy().ActionSourceTest(ctx, params)
+}
+func (s *Service) actionProxySourcesTestSelected(ctx context.Context, params map[string]any) (any, int, error) {
+	return s.env.Proxy().ActionSourcesTestSelected(ctx, params)
+}
+func (s *Service) actionProxySourcesDeleteSelected(ctx context.Context, params map[string]any) (any, int, error) {
+	return s.env.Proxy().ActionSourcesDeleteSelected(ctx, params)
 }
 func (s *Service) actionProxySourceCreate(params map[string]any) (any, int, error) {
 	return s.env.Proxy().ActionSourceCreate(params)

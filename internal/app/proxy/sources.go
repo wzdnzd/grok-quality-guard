@@ -84,6 +84,120 @@ func proxyNodeName(input proxyNodeInput, endpoint proxy.Endpoint) string {
 	}
 	return string(endpoint.Protocol) + "://" + net.JoinHostPort(endpoint.Host, strconv.Itoa(endpoint.Port))
 }
+func buildProxyNodeUpdate(input proxyNodeInput, current proxy.Node) (proxy.Node, bool, bool, bool, error) {
+	next := current
+	changedEndpoint := false
+	syncRequested := input.URL != "" || input.Protocol != "" || input.Host != "" || input.Port != 0 || input.UsernameSet || input.PasswordUpdate != nil
+	if syncRequested {
+		var endpoint proxy.Endpoint
+		var err error
+		if input.URL != "" {
+			endpoint, err = proxyInputEndpoint(input)
+		} else {
+			endpoint = current.Endpoint
+			if input.Protocol != "" {
+				endpoint.Protocol = proxy.Protocol(strings.ToLower(input.Protocol))
+			}
+			if input.Host != "" {
+				endpoint.Host = input.Host
+			}
+			if input.Port != 0 {
+				endpoint.Port = input.Port
+			}
+			if input.UsernameSet || input.Username != "" {
+				endpoint.Username = input.Username
+				endpoint.HasUser = input.Username != ""
+			}
+			err = applyPasswordUpdate(&endpoint, input.PasswordUpdate)
+			if err == nil {
+				endpoint, err = endpoint.Normalize()
+			}
+		}
+		if err != nil {
+			return proxy.Node{}, false, false, syncRequested, err
+		}
+		changedEndpoint = endpoint.Fingerprint() != current.Endpoint.Fingerprint()
+		next.Endpoint = endpoint
+	}
+	if input.Name != "" {
+		next.Name = strings.TrimSpace(input.Name)
+	}
+	if input.Enabled != nil {
+		next.Enabled = *input.Enabled
+	}
+	if input.PrioritySet || input.Priority != 0 {
+		next.Priority = input.Priority
+	}
+	if input.MaxBindingsSet || input.MaxBindings != 0 {
+		next.MaxBindings = input.MaxBindings
+	}
+	if err := validateSourceMetadata(next.Name, next.Priority, next.MaxBindings); err != nil {
+		return proxy.Node{}, false, false, syncRequested, err
+	}
+	return next, changedEndpoint, !proxyNodeEditorConfigEqual(next, current), syncRequested, nil
+}
+
+func proxyNodeEditorConfigEqual(left, right proxy.Node) bool {
+	return left.Name == right.Name && left.Enabled == right.Enabled && left.Priority == right.Priority &&
+		left.MaxBindings == right.MaxBindings && left.Endpoint.Fingerprint() == right.Endpoint.Fingerprint()
+}
+
+func proxySourceUnchangedError() error {
+	return proxyError("proxy_source_unchanged", 400, "代理来源内容未发生变化，不能保存")
+}
+
+func proxyDuplicateNodeError() error {
+	return proxyError("proxy_duplicate", 409, "相同标准 URL 的代理节点已存在")
+}
+
+func proxyDuplicateTemplateError() error {
+	return proxyError("proxy_duplicate", 409, "相同标准 URL、占位符配置和关联关系的代理模板已存在")
+}
+
+func proxyDuplicateNameError() error {
+	return proxyError("proxy_name_duplicate", 409, "代理来源名称已存在")
+}
+
+func proxySourceNameTaken(state *State, name, exceptID string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	for _, node := range state.Proxy.Nodes {
+		if node.ID != exceptID && strings.EqualFold(strings.TrimSpace(node.Name), name) {
+			return true
+		}
+	}
+	for _, template := range state.Proxy.Templates {
+		if template.ID != exceptID && strings.EqualFold(strings.TrimSpace(template.Name), name) {
+			return true
+		}
+	}
+	if resinSourceID != exceptID && !state.Proxy.ResinSource.Deleted && (state.Resin.Configured || state.Resin.LocalOnly) {
+		resinName := firstNonEmptyString(state.Proxy.ResinSource.Name, "Resin")
+		if strings.EqualFold(strings.TrimSpace(resinName), name) {
+			return true
+		}
+	}
+	return false
+}
+
+func templateDefinitionEqual(left, right proxy.Template) bool {
+	if left.Kind != right.Kind || !templateEndpointEqual(left, right) || !reflect.DeepEqual(left.Placeholders, right.Placeholders) {
+		return false
+	}
+	if len(left.ValueGroups) != len(right.ValueGroups) {
+		return false
+	}
+	for index := range left.ValueGroups {
+		leftGroup, rightGroup := left.ValueGroups[index], right.ValueGroups[index]
+		if leftGroup.ID != rightGroup.ID || !reflect.DeepEqual(leftGroup.Columns, rightGroup.Columns) || !reflect.DeepEqual(leftGroup.Rows, rightGroup.Rows) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Service) createProxyNode(input proxyNodeInput) (proxy.Node, error) {
 	endpoint, err := proxyInputEndpoint(input)
 	if err != nil {
@@ -95,9 +209,12 @@ func (s *Service) createProxyNode(input proxyNodeInput) (proxy.Node, error) {
 		return proxy.Node{}, err
 	}
 	err = s.env.ProxyStore().Update(func(state *State) error {
+		if proxySourceNameTaken(state, node.Name, node.ID) {
+			return proxyDuplicateNameError()
+		}
 		for _, existing := range state.Proxy.Nodes {
 			if existing.Endpoint.Fingerprint() == node.Endpoint.Fingerprint() {
-				return proxyError("proxy_duplicate", 409, "proxy node already exists")
+				return proxyDuplicateNodeError()
 			}
 		}
 		if len(state.Proxy.Nodes)+len(state.Proxy.Templates) >= maxProxySourceCount {
@@ -146,9 +263,14 @@ func (s *Service) importProxyNodes(inputs []proxyNodeInput, text string) (map[st
 	details := make([]map[string]any, 0)
 	skipped, invalid, duplicate := 0, 0, 0
 	seen := make(map[string]struct{})
-	for _, node := range s.proxyCatalog().Sources {
-		if node.Node != nil {
-			seen[node.Node.Endpoint.Fingerprint()] = struct{}{}
+	names := make(map[string]struct{})
+	for _, source := range s.proxyCatalog().Sources {
+		if source.Node != nil {
+			seen[source.Node.Endpoint.Fingerprint()] = struct{}{}
+		}
+		visible := source.Node != nil || source.Template != nil || (source.ResinSettings != nil && (source.ResinSettings.Configured || source.ResinSettings.LocalOnly))
+		if name := strings.ToLower(strings.TrimSpace(source.Name)); visible && name != "" {
+			names[name] = struct{}{}
 		}
 	}
 	for _, item := range items {
@@ -175,10 +297,17 @@ func (s *Service) importProxyNodes(inputs []proxyNodeInput, text string) (map[st
 			details = append(details, map[string]any{"line": item.Line, "code": "invalid", "error": err.Error()})
 			continue
 		}
+		nameKey := strings.ToLower(strings.TrimSpace(name))
+		if _, exists := names[nameKey]; exists {
+			invalid++
+			details = append(details, map[string]any{"line": item.Line, "code": "duplicate_name", "error": "代理来源名称已存在"})
+			continue
+		}
 		now := time.Now().UTC()
 		node := proxy.Node{ID: newProxyID("node"), Name: name, Endpoint: endpoint, Enabled: item.Input.Enabled == nil || *item.Input.Enabled, Priority: item.Input.Priority, MaxBindings: item.Input.MaxBindings, Health: proxy.HealthUnknown, ConfigVersion: 1, Revision: 1, CreatedAt: now, UpdatedAt: now}
 		created = append(created, node)
 		seen[endpoint.Fingerprint()] = struct{}{}
+		names[nameKey] = struct{}{}
 	}
 	if len(created) > 0 {
 		if err := s.env.ProxyStore().Update(func(state *State) error {
@@ -192,6 +321,9 @@ func (s *Service) importProxyNodes(inputs []proxyNodeInput, text string) (map[st
 			for _, node := range created {
 				if _, ok := current[node.Endpoint.Fingerprint()]; ok {
 					return proxyError("proxy_duplicate", 409, "source list changed during import; retry the import")
+				}
+				if proxySourceNameTaken(state, node.Name, node.ID) {
+					return proxyError("proxy_name_duplicate", 409, "source list changed during import; retry the import")
 				}
 			}
 			state.Proxy.Nodes = append(state.Proxy.Nodes, created...)
@@ -220,66 +352,26 @@ func (s *Service) updateProxyNodeContext(ctx context.Context, input proxyNodeInp
 		s.mgr.changeMu.Unlock()
 		return proxy.Node{}, nil, proxyError("proxy_source_version_conflict", 409, "node configuration changed; reload before saving")
 	}
-	next := current
-	changedEndpoint := false
-	syncRequested := input.URL != "" || input.Protocol != "" || input.Host != "" || input.Port != 0 || input.UsernameSet || input.PasswordUpdate != nil
-	if syncRequested {
-		var endpoint proxy.Endpoint
-		var err error
-		if input.URL != "" {
-			endpoint, err = proxyInputEndpoint(input)
-		} else {
-			endpoint = current.Endpoint
-			if input.Protocol != "" {
-				endpoint.Protocol = proxy.Protocol(strings.ToLower(input.Protocol))
-			}
-			if input.Host != "" {
-				endpoint.Host = input.Host
-			}
-			if input.Port != 0 {
-				endpoint.Port = input.Port
-			}
-			if input.UsernameSet || input.Username != "" {
-				endpoint.Username = input.Username
-				endpoint.HasUser = input.Username != ""
-			}
-			err = applyPasswordUpdate(&endpoint, input.PasswordUpdate)
-			if err == nil {
-				endpoint, err = endpoint.Normalize()
-			}
-		}
-		if err != nil {
-			s.mgr.changeMu.Unlock()
-			return proxy.Node{}, nil, err
-		}
-		changedEndpoint = endpoint.Fingerprint() != current.Endpoint.Fingerprint()
-		next.Endpoint = endpoint
-	}
-	if input.Name != "" {
-		next.Name = strings.TrimSpace(input.Name)
-	}
-	if input.Enabled != nil {
-		next.Enabled = *input.Enabled
-	}
-	if input.PrioritySet || input.Priority != 0 {
-		next.Priority = input.Priority
-	}
-	if input.MaxBindingsSet || input.MaxBindings != 0 {
-		next.MaxBindings = input.MaxBindings
-	}
-	if err := validateSourceMetadata(next.Name, next.Priority, next.MaxBindings); err != nil {
+	next, changedEndpoint, changedConfig, syncRequested, err := buildProxyNodeUpdate(input, current)
+	if err != nil {
 		s.mgr.changeMu.Unlock()
 		return proxy.Node{}, nil, err
 	}
-	next.ConfigVersion++
+	if !changedConfig && !input.RetryExistingChange {
+		s.mgr.changeMu.Unlock()
+		return proxy.Node{}, nil, proxySourceUnchangedError()
+	}
+	next.ConfigVersion = current.ConfigVersion
+	next.Revision = current.Revision
 	next.UpdatedAt = time.Now().UTC()
 	if changedEndpoint {
+		next.ConfigVersion++
 		next.Revision++
 		next.Health = proxy.HealthUnknown
 		next.HealthChecked = time.Time{}
 	}
 	var changeID string
-	err := s.env.ProxyStore().Update(func(state *State) error {
+	err = s.env.ProxyStore().Update(func(state *State) error {
 		for i, node := range state.Proxy.Nodes {
 			if node.ID != input.ID {
 				continue
@@ -287,9 +379,12 @@ func (s *Service) updateProxyNodeContext(ctx context.Context, input proxyNodeInp
 			if node.ConfigVersion != current.ConfigVersion {
 				return proxyError("proxy_source_version_conflict", 409, "node configuration changed before save")
 			}
+			if proxySourceNameTaken(state, next.Name, next.ID) {
+				return proxyDuplicateNameError()
+			}
 			for _, other := range state.Proxy.Nodes {
 				if other.ID != next.ID && other.Endpoint.Fingerprint() == next.Endpoint.Fingerprint() {
-					return proxyError("proxy_duplicate", 409, "another node uses this endpoint")
+					return proxyDuplicateNodeError()
 				}
 			}
 			runtime := state.Proxy.SourceRuntime[next.ID]
@@ -303,6 +398,12 @@ func (s *Service) updateProxyNodeContext(ctx context.Context, input proxyNodeInp
 						break
 					}
 				}
+			}
+			if !changedConfig {
+				if changeID == "" {
+					return proxySourceUnchangedError()
+				}
+				return nil
 			}
 			if changedEndpoint && runtime.ChangeID != "" {
 				return proxyError("proxy_source_busy", 409, "complete the previous node synchronization first")
@@ -329,7 +430,7 @@ func (s *Service) updateProxyNodeContext(ctx context.Context, input proxyNodeInp
 	if err != nil {
 		return proxy.Node{}, nil, err
 	}
-	result := map[string]any{"source": proxyNodeView(next, s.env.ProxyStore().ProxyCounts()[next.ID]), "saved": true, "endpoint_changed": changedEndpoint, "sync_requested": syncRequested, "change_id": changeID}
+	result := map[string]any{"source": proxyNodeView(next, s.env.ProxyStore().ProxyCounts()[next.ID]), "saved": true, "config_changed": changedConfig, "endpoint_changed": changedEndpoint, "sync_requested": syncRequested, "change_id": changeID}
 	if changeID != "" {
 		changeResult, err := s.runProxyChange(ctx, changeID)
 		for key, value := range changeResult {
@@ -443,11 +544,8 @@ func buildProxyTemplate(input proxyTemplateInput, current *proxy.Template) (prox
 	if current != nil {
 		template.ID = current.ID
 		template.CreatedAt = current.CreatedAt
-		template.ConfigVersion = current.ConfigVersion + 1
+		template.ConfigVersion = current.ConfigVersion
 		template.Revision = current.Revision
-		if !templateGeneratedConfigEqual(template, *current) {
-			template.Revision++
-		}
 	} else {
 		template.ConfigVersion = 1
 		template.Revision = 1
@@ -457,6 +555,21 @@ func buildProxyTemplate(input proxyTemplateInput, current *proxy.Template) (prox
 	template.UpdatedAt = now
 	return template, nil
 }
+func templateEditorConfigEqual(left, right proxy.Template) bool {
+	left.CreatedAt, right.CreatedAt = time.Time{}, time.Time{}
+	left.UpdatedAt, right.UpdatedAt = time.Time{}, time.Time{}
+	left.ValidatedAt, right.ValidatedAt = time.Time{}, time.Time{}
+	left.ConfigVersion, right.ConfigVersion = 0, 0
+	left.Revision, right.Revision = 0, 0
+	return reflect.DeepEqual(left, right)
+}
+
+func templateEndpointEqual(left, right proxy.Template) bool {
+	return left.Protocol == right.Protocol && left.Host == right.Host && left.Port == right.Port &&
+		left.UsernamePattern == right.UsernamePattern && left.UsernamePatternEncoding == right.UsernamePatternEncoding &&
+		left.HasUser == right.HasUser && left.Password == right.Password && left.HasPassword == right.HasPassword
+}
+
 func templateGeneratedConfigEqual(left, right proxy.Template) bool {
 	left.CreatedAt, right.CreatedAt = time.Time{}, time.Time{}
 	left.UpdatedAt, right.UpdatedAt = time.Time{}, time.Time{}
@@ -477,6 +590,14 @@ func (s *Service) createProxyTemplate(input proxyTemplateInput) (proxy.Template,
 	}
 	template.ID = newProxyID("template")
 	err = s.env.ProxyStore().Update(func(state *State) error {
+		if proxySourceNameTaken(state, template.Name, template.ID) {
+			return proxyDuplicateNameError()
+		}
+		for _, existing := range state.Proxy.Templates {
+			if templateDefinitionEqual(existing, template) {
+				return proxyDuplicateTemplateError()
+			}
+		}
 		if len(state.Proxy.Nodes)+len(state.Proxy.Templates) >= maxProxySourceCount {
 			return proxyError("proxy_source_limit", 400, "maximum proxy source count reached")
 		}
@@ -508,7 +629,21 @@ func (s *Service) updateProxyTemplateContext(ctx context.Context, input proxyTem
 		s.mgr.changeMu.Unlock()
 		return proxy.Template{}, nil, err
 	}
-	rerender := next.UpdatePolicy == proxy.TemplateUpdateRerenderBound && next.Revision != current.Revision
+	if templateEditorConfigEqual(next, *current) {
+		s.mgr.changeMu.Unlock()
+		return proxy.Template{}, nil, proxySourceUnchangedError()
+	}
+	endpointChanged := !templateEndpointEqual(*current, next)
+	generatedChanged := !templateGeneratedConfigEqual(next, *current)
+	next.ConfigVersion = current.ConfigVersion
+	if endpointChanged {
+		next.ConfigVersion++
+	}
+	next.Revision = current.Revision
+	if generatedChanged {
+		next.Revision++
+	}
+	rerender := next.UpdatePolicy == proxy.TemplateUpdateRerenderBound && generatedChanged
 	var changeID string
 	boundCount := 0
 	err = s.env.ProxyStore().Update(func(state *State) error {
@@ -519,13 +654,21 @@ func (s *Service) updateProxyTemplateContext(ctx context.Context, input proxyTem
 			if template.ConfigVersion != current.ConfigVersion {
 				return proxyError("proxy_source_version_conflict", 409, "template configuration changed before save")
 			}
-			if next.Revision != current.Revision && state.Proxy.SourceRuntime[next.ID].ChangeID != "" {
+			if proxySourceNameTaken(state, next.Name, next.ID) {
+				return proxyDuplicateNameError()
+			}
+			for _, other := range state.Proxy.Templates {
+				if other.ID != next.ID && templateDefinitionEqual(other, next) {
+					return proxyDuplicateTemplateError()
+				}
+			}
+			if generatedChanged && state.Proxy.SourceRuntime[next.ID].ChangeID != "" {
 				return proxyError("proxy_source_busy", 409, "complete the previous template application first")
 			}
-			if next.Revision != current.Revision && hasPendingSourceOperation(*state, next.ID) {
+			if generatedChanged && hasPendingSourceOperation(*state, next.ID) {
 				return proxyError("proxy_source_busy", 409, "an auth operation is using this template")
 			}
-			if next.Revision != current.Revision {
+			if generatedChanged {
 				state.Proxy.TemplateVersions = append(state.Proxy.TemplateVersions, *current)
 			}
 			state.Proxy.Templates[i] = next
@@ -543,7 +686,7 @@ func (s *Service) updateProxyTemplateContext(ctx context.Context, input proxyTem
 	if err != nil {
 		return proxy.Template{}, nil, err
 	}
-	result := map[string]any{"source": proxyTemplateView(next, boundCount), "saved": true, "bound_count": boundCount, "rerender": rerender, "change_id": changeID, "previous_revision": current.Revision, "revision": next.Revision}
+	result := map[string]any{"source": proxyTemplateView(next, boundCount), "saved": true, "endpoint_changed": endpointChanged, "generated_changed": generatedChanged, "bound_count": boundCount, "rerender": rerender, "change_id": changeID, "previous_config_version": current.ConfigVersion, "config_version": next.ConfigVersion, "previous_revision": current.Revision, "revision": next.Revision}
 	if changeID != "" {
 		changeResult, err := s.runProxyChange(ctx, changeID)
 		for k, v := range changeResult {

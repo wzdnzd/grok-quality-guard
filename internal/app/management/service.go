@@ -45,6 +45,7 @@ type Environment interface {
 	StartTask(string, []string, string, func(context.Context) (any, error)) tasks.Task
 	HasActiveTask(string, string) bool
 	TaskByID(string) (tasks.Task, bool)
+	CancelTask(string) (tasks.Task, error)
 	ListTasks(int) []tasks.Task
 	UpdateStatePath(string) (string, error)
 	Proxy() *proxyapp.Service

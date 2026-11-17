@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"grok-quality-guard/internal/app/action"
+	"grok-quality-guard/internal/app/tasks"
 	"net/http"
 	"os"
 	"sort"
@@ -189,9 +190,27 @@ func (s *Service) actionTaskGet(params map[string]any) (any, int, error) {
 	}
 	task, okTask := s.taskByID(taskID)
 	if !okTask {
-		return nil, http.StatusNotFound, fmt.Errorf("task not found")
+		return nil, http.StatusNotFound, fmt.Errorf("任务不存在")
 	}
 	return task, http.StatusOK, nil
+}
+
+func (s *Service) actionTaskCancel(params map[string]any) (any, int, error) {
+	taskID := strings.TrimSpace(asString(params["task_id"]))
+	if taskID == "" {
+		return nil, http.StatusBadRequest, fmt.Errorf("task_id is required")
+	}
+	task, errCancel := s.cancelTask(taskID)
+	switch {
+	case errors.Is(errCancel, tasks.ErrTaskNotFound):
+		return nil, http.StatusNotFound, fmt.Errorf("任务不存在")
+	case errors.Is(errCancel, tasks.ErrTaskFinished):
+		return nil, http.StatusConflict, fmt.Errorf("任务已结束，无法取消")
+	case errCancel != nil:
+		return nil, http.StatusInternalServerError, errCancel
+	default:
+		return task, http.StatusOK, nil
+	}
 }
 
 func (s *Service) actionTaskList(params map[string]any) (any, int, error) {

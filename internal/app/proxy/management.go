@@ -309,8 +309,14 @@ func (s *Service) actionProxySourceUpdate(params map[string]any) (any, int, erro
 		input.PrioritySet = proxySourceParamPresent(params, "priority")
 		input.MaxBindingsSet = proxySourceParamPresent(params, "max_bindings")
 		input.UsernameSet = proxySourceParamPresent(params, "username")
-		if _, ok := s.proxyExistingNode(input.ID); !ok {
+		current, ok := s.proxyExistingNode(input.ID)
+		if !ok {
 			return nil, 404, errors.New("proxy node not found")
+		}
+		if _, _, changed, _, err := buildProxyNodeUpdate(input, current); err != nil {
+			return nil, proxyInputErrorStatus(err), err
+		} else if !changed {
+			return nil, 400, proxySourceUnchangedError()
 		}
 		task := s.env.ProxyStartTask("proxy.source.update", nil, "正在保存并同步代理节点", func(ctx context.Context) (any, error) {
 			_, result, err := s.updateProxyNodeContext(ctx, input)
@@ -334,8 +340,12 @@ func (s *Service) actionProxySourceUpdate(params map[string]any) (any, int, erro
 		if !ok {
 			return nil, 404, errors.New("proxy template not found")
 		}
-		if _, err := buildProxyTemplate(input, current); err != nil {
+		next, err := buildProxyTemplate(input, current)
+		if err != nil {
 			return proxyValidationFailure(err), proxyInputErrorStatus(err), err
+		}
+		if templateEditorConfigEqual(next, *current) {
+			return nil, 400, proxySourceUnchangedError()
 		}
 		task := s.env.ProxyStartTask("proxy.source.update", nil, "正在保存代理模板", func(ctx context.Context) (any, error) {
 			_, result, err := s.updateProxyTemplateContext(ctx, input)
@@ -426,6 +436,107 @@ func (s *Service) testProxySource(ctx context.Context, id, target string) (map[s
 	}
 	return result, nil
 }
+
+type proxySourceBatchItem struct {
+	SourceID  string             `json:"source_id"`
+	Kind      string             `json:"kind,omitempty"`
+	Status    string             `json:"status"`
+	Reachable bool               `json:"reachable,omitempty"`
+	LatencyMS int64              `json:"latency_ms,omitempty"`
+	Health    proxy.HealthStatus `json:"health,omitempty"`
+	Endpoint  string             `json:"endpoint,omitempty"`
+	Error     string             `json:"error,omitempty"`
+}
+
+func proxySourceIDs(params map[string]any) []string {
+	ids := config.UniqueNonEmptyStrings(stringListFromAny(params["source_ids"]))
+	if len(ids) == 0 {
+		if id := strings.TrimSpace(actionpkg.String(params["source_id"])); id != "" {
+			ids = []string{id}
+		}
+	}
+	return ids
+}
+
+func proxySourceBatchResult(items []proxySourceBatchItem) map[string]any {
+	counts := map[string]int{"total": len(items), "pending": 0, "reachable": 0, "unreachable": 0, "deleted": 0, "failed": 0}
+	for _, item := range items {
+		if item.Status != "" {
+			counts[item.Status]++
+		}
+	}
+	return map[string]any{"items": items, "count": len(items), "counts": counts, "reachable": counts["reachable"], "unreachable": counts["unreachable"], "deleted": counts["deleted"], "failed": counts["failed"]}
+}
+
+func (s *Service) actionProxySourcesTestSelected(_ context.Context, params map[string]any) (any, int, error) {
+	ids := proxySourceIDs(params)
+	if len(ids) == 0 || len(ids) > 10000 {
+		return nil, 400, errors.New("provide 1 to 10000 source IDs")
+	}
+	if s.env.ProxyHasActivePrefix("proxy.sources.test_selected") {
+		return nil, 409, proxyError("proxy_source_test_busy", 409, "代理来源批量检测任务已在执行")
+	}
+	task := s.env.ProxyStartTask("proxy.sources.test_selected", ids, "正在检测已选代理来源", func(taskCtx context.Context) (any, error) {
+		items := make([]proxySourceBatchItem, len(ids))
+		for index, id := range ids {
+			items[index] = proxySourceBatchItem{SourceID: id, Kind: s.proxySourceKind(id), Status: "pending"}
+		}
+		err := tasks.RunBoundedQueue(taskCtx, proxyIndices(len(ids)), min(64, len(ids)), min(4, s.proxyWorkerCount()), func(jobCtx context.Context, index int) {
+			id := ids[index]
+			item := proxySourceBatchItem{SourceID: id, Kind: s.proxySourceKind(id), Status: "failed"}
+			result, errTest := s.testProxySource(jobCtx, id, "")
+			if errTest != nil {
+				item.Error = redact.SanitizeError(errTest)
+			} else {
+				item.Reachable, _ = result["reachable"].(bool)
+				item.LatencyMS, _ = result["latency_ms"].(int64)
+				item.Health, _ = result["health"].(proxy.HealthStatus)
+				item.Endpoint, _ = result["endpoint"].(string)
+				if item.Reachable {
+					item.Status = "reachable"
+				} else {
+					item.Status = "unreachable"
+					item.Error, _ = result["error"].(string)
+				}
+			}
+			items[index] = item
+		})
+		return proxySourceBatchResult(items), err
+	})
+	return task, 202, nil
+}
+
+func (s *Service) actionProxySourcesDeleteSelected(_ context.Context, params map[string]any) (any, int, error) {
+	ids := proxySourceIDs(params)
+	if len(ids) == 0 || len(ids) > 10000 {
+		return nil, 400, errors.New("provide 1 to 10000 source IDs")
+	}
+	if s.env.ProxyHasActivePrefix("proxy.sources.delete_selected") {
+		return nil, 409, proxyError("proxy_source_delete_busy", 409, "代理来源批量删除任务已在执行")
+	}
+	force := actionpkg.Bool(params, "force")
+	task := s.env.ProxyStartTask("proxy.sources.delete_selected", ids, "正在清理并删除已选代理来源", func(taskCtx context.Context) (any, error) {
+		items := make([]proxySourceBatchItem, len(ids))
+		for index, id := range ids {
+			items[index] = proxySourceBatchItem{SourceID: id, Kind: s.proxySourceKind(id), Status: "pending"}
+		}
+		err := tasks.RunBoundedQueue(taskCtx, proxyIndices(len(ids)), min(64, len(ids)), 1, func(jobCtx context.Context, index int) {
+			id := ids[index]
+			item := proxySourceBatchItem{SourceID: id, Kind: s.proxySourceKind(id), Status: "failed"}
+			result, errDelete := s.deleteProxySource(jobCtx, id, force)
+			if errDelete != nil {
+				item.Error = redact.SanitizeError(errDelete)
+			} else {
+				item.Status = "deleted"
+				item.Endpoint, _ = result["proxy"].(string)
+			}
+			items[index] = item
+		})
+		return proxySourceBatchResult(items), err
+	})
+	return task, 202, nil
+}
+
 func (s *Service) actionProxySourceTest(ctx context.Context, params map[string]any) (any, int, error) {
 	result, err := s.testProxySource(ctx, strings.TrimSpace(actionpkg.String(params["source_id"])), strings.TrimSpace(actionpkg.String(params["target"])))
 	if err != nil {
@@ -747,6 +858,9 @@ func (s *Service) proxySourcesView() []proxySourceView {
 			view = proxyTemplateView(*entry.Template, counts[entry.ID])
 		case proxy.SourceResin:
 			s := *entry.ResinSettings
+			if !s.Configured && !s.LocalOnly {
+				continue
+			}
 			view = proxySourceView{ID: entry.ID, Kind: entry.Kind, Name: entry.Name, Enabled: s.Enabled, Valid: entry.Error == nil, ConfigVersion: entry.ConfigVersion, Revision: entry.Revision, BindingCount: counts[entry.ID], LocalOnly: s.LocalOnly, Configured: s.Configured, PasswordSet: s.ProxyToken != ""}
 			if rendered, err := renderResinProxy(s, "preview"); err == nil {
 				view.Endpoint = maskProxyURL(rendered)
@@ -759,8 +873,13 @@ func (s *Service) proxySourcesView() []proxySourceView {
 		view.Lifecycle = firstNonEmptyString(entry.Runtime.Lifecycle, "active")
 		view.ChangeID = entry.Runtime.ChangeID
 		if entry.Runtime.Health != "" {
-			view.Health = entry.Runtime.Health
-			view.HealthChecked = entry.Runtime.HealthChecked
+			if entry.Runtime.HealthRevision == entry.Revision {
+				view.Health = entry.Runtime.Health
+				view.HealthChecked = entry.Runtime.HealthChecked
+			} else if entry.Node == nil {
+				view.Health = proxy.HealthUnknown
+				view.HealthChecked = time.Time{}
+			}
 		}
 		views = append(views, view)
 	}
@@ -998,7 +1117,42 @@ func proxyPage(params map[string]any, total int) (page, size, start, end int) {
 func proxySourceMatches(view proxySourceView, params map[string]any) bool {
 	kind := strings.ToLower(strings.TrimSpace(actionpkg.String(params["kind"])))
 	query := strings.ToLower(strings.TrimSpace(actionpkg.String(params["query"])))
-	return (kind == "" || kind == "all" || kind == string(view.Kind)) && (query == "" || strings.Contains(strings.ToLower(view.Name+" "+view.Endpoint+" "+view.ID), query))
+	if kind != "" && kind != "all" && kind != string(view.Kind) {
+		return false
+	}
+	if query != "" && !strings.Contains(strings.ToLower(view.Name+" "+view.Endpoint+" "+view.ID), query) {
+		return false
+	}
+	switch enabled := strings.ToLower(strings.TrimSpace(actionpkg.String(params["enabled"]))); enabled {
+	case "enabled", "true":
+		if !view.Enabled {
+			return false
+		}
+	case "disabled", "false":
+		if view.Enabled {
+			return false
+		}
+	}
+	health := strings.ToLower(strings.TrimSpace(actionpkg.String(params["health"])))
+	if health == "" || health == "all" {
+		return true
+	}
+	current := string(view.Health)
+	if current == "" {
+		current = string(proxy.HealthUnknown)
+	}
+	switch health {
+	case "healthy", "unhealthy", "unknown":
+		return current == health
+	case "reachable":
+		return current == string(proxy.HealthHealthy)
+	case "unreachable":
+		return current == string(proxy.HealthUnhealthy)
+	case "untested":
+		return current == string(proxy.HealthUnknown)
+	default:
+		return false
+	}
 }
 
 func resinCleanupID(job ResinLeaseDelete) string {
