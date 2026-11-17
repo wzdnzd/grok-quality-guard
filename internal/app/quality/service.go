@@ -12,6 +12,7 @@ import (
 	appstate "grok-quality-guard/internal/app/state"
 	"grok-quality-guard/internal/app/tasks"
 	"grok-quality-guard/internal/config"
+	"grok-quality-guard/internal/proxy"
 	domain "grok-quality-guard/internal/quality"
 )
 
@@ -85,6 +86,9 @@ type Environment interface {
 	ProbeAccount(context.Context, string, bool, string) error
 	HasActiveTask(string, string) bool
 	StartTask(string, []string, string, func(context.Context) (any, error)) tasks.Task
+	ProxyBindingForAccount(appstate.AccountState) (proxy.Binding, bool)
+	RotateProxy(context.Context, string, string) (string, error)
+	AutoRotateAfterQualityFailure() bool
 }
 
 type Service struct {

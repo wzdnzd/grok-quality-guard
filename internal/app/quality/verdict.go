@@ -12,9 +12,11 @@ import (
 )
 
 type verdictResult struct {
-	Actioned     bool
-	CrossVerify  bool
-	ThresholdHit bool
+	Actioned         bool
+	CrossVerify      bool
+	ThresholdHit     bool
+	ProxyRotate      bool
+	ProxyRotateAsync bool
 }
 
 const defaultStrikeDecayMinHealthy = 10
@@ -89,9 +91,20 @@ func (s *Service) ApplyVerdict(ctx context.Context, authID string, verdict Quali
 	}
 	lock := s.env.AccountLock(authID)
 	lock.Lock()
-	defer lock.Unlock()
-	_, errApply := s.applyVerdictLocked(ctx, authID, verdict, source, callbackID, nil, pluginapi.HostAuthGetResponse{}, false)
-	return errApply
+	outcome, errApply := func() (verdictResult, error) {
+		defer lock.Unlock()
+		return s.applyVerdictLocked(ctx, authID, verdict, source, callbackID, nil, pluginapi.HostAuthGetResponse{}, false)
+	}()
+	if errApply != nil {
+		return errApply
+	}
+	if outcome.ProxyRotate {
+		return s.finishProxyErrorRotation(ctx, authID, verdict)
+	}
+	if outcome.ProxyRotateAsync {
+		s.queueProxyErrorRotation(authID, verdict)
+	}
+	return nil
 }
 
 // applyVerdictLocked is shared by passive observations and active probes.
@@ -226,9 +239,22 @@ func (s *Service) applyVerdictLocked(
 			account.ThinkingStrikes = 0
 			account.ErrorStrikes++
 			threshold := positiveInt(policy.Quality.ConsecutiveErrors, 2)
+			proxyRotationReady := false
+			if s.env.AutoRotateAfterQualityFailure() && !preserveIsolation() {
+				if _, managed := s.env.ProxyBindingForAccount(previousState); managed {
+					proxyRotationReady = true
+				}
+			}
 			if account.ErrorStrikes >= threshold {
 				outcome.ThresholdHit = true
 				outcome.Actioned = true
+				if proxyRotationReady {
+					if source == "probe" {
+						outcome.ProxyRotate = true
+					} else {
+						outcome.ProxyRotateAsync = true
+					}
+				}
 				eventResult = "threshold_reached"
 				eventDetail = fmt.Sprintf("%s · 连续探测错误 %d/%d", source, account.ErrorStrikes, threshold)
 				if verdict.Reason != "" {
@@ -243,7 +269,7 @@ func (s *Service) applyVerdictLocked(
 				if verdict.Reason != "" {
 					eventDetail += " · " + verdict.Reason
 				}
-				if !preserveIsolation() {
+				if !preserveIsolation() && !proxyRotationReady {
 					account.State = StateSuspect
 				}
 			}
@@ -344,6 +370,9 @@ func (s *Service) applyVerdictLocked(
 
 	if outcome.CrossVerify {
 		s.scheduleVerdictCrossVerify(authID, verdict.Class, source)
+		return outcome, nil
+	}
+	if outcome.ProxyRotate || outcome.ProxyRotateAsync {
 		return outcome, nil
 	}
 	if !outcome.Actioned {

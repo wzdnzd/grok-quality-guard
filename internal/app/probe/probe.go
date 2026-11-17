@@ -252,7 +252,7 @@ func unknownProbeJitter(authID string, max time.Duration) time.Duration {
 	_, _ = hash.Write([]byte(authID))
 	return time.Duration(hash.Sum64() % uint64(max))
 }
-func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, callbackID string) error {
+func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, callbackID string) (errResult error) {
 	if strings.TrimSpace(authID) == "" {
 		return fmt.Errorf("auth_id is required")
 	}
@@ -279,8 +279,19 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 
 	lock := s.accountLock(authID)
 	lock.Lock()
-	defer lock.Unlock()
-
+	var proxyFailureOutcome VerdictResult
+	var proxyFailureVerdict QualityVerdict
+	defer func() {
+		lock.Unlock()
+		if !proxyFailureOutcome.ProxyRotate {
+			return
+		}
+		rotateCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if errRotate := s.env.Quality().FinishProxyErrorRotation(rotateCtx, authID, proxyFailureVerdict); errRotate != nil && errResult == nil {
+			errResult = errRotate
+		}
+	}()
 	account, response, raw, errResolve := s.resolveAuth(ctx, authID)
 	if errResolve != nil {
 		return errResolve
@@ -308,6 +319,12 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 		}
 		reEnabled = true
 	}
+	handleFailure := func(verdict QualityVerdict, errProbe error) error {
+		outcome, errApply := s.handleProbeFailureResult(authID, raw, response, reEnabled, verdict, errProbe)
+		proxyFailureOutcome = outcome
+		proxyFailureVerdict = verdict
+		return errApply
+	}
 	s.MarkProbeAuth(account.ID, 3*time.Minute)
 	policy := s.env.Policy()
 	probeCfg := policy.Probe
@@ -333,7 +350,7 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 	}, callbackID)
 	if errStream != nil {
 		class, reason := classifyTransportFailure(errStream)
-		return s.handleProbeFailure(authID, raw, response, reEnabled, QualityVerdict{Class: class, Reason: reason}, errStream)
+		return handleFailure(QualityVerdict{Class: class, Reason: reason}, errStream)
 	}
 	var reader *modelStreamReader
 	defer func() {
@@ -345,7 +362,7 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 	if stream.StatusCode < 200 || stream.StatusCode >= 300 {
 		errorBody := s.readModelStreamErrorBody(probeCtx, stream.StreamID)
 		class, reason := classifyUpstreamStatus(stream.StatusCode, errorBody)
-		return s.handleProbeFailure(authID, raw, response, reEnabled, QualityVerdict{Class: class, Reason: reason}, fmt.Errorf("probe %s", reason))
+		return handleFailure(QualityVerdict{Class: class, Reason: reason}, fmt.Errorf("probe %s", reason))
 	}
 	analyzer := NewStreamAnalyzerWithProtocolAt(probeCfg.ExitProtocol, probeStartedAt)
 	analyzer.SetEncryptedConfig(qualityCfg.MinEncryptedBytes, qualityCfg.EncryptedBytesPerReasoningToken)
@@ -355,25 +372,25 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 	for {
 		select {
 		case <-probeCtx.Done():
-			return s.handleProbeFailure(authID, raw, response, reEnabled, QualityVerdict{Class: ClassProbeError, Reason: "probe context ended"}, probeCtx.Err())
+			return handleFailure(QualityVerdict{Class: ClassProbeError, Reason: "probe context ended"}, probeCtx.Err())
 		default:
 		}
 		read, errRead := reader.Next()
 		if errRead != nil {
 			class, reason := classifyTransportFailure(errRead)
-			return s.handleProbeFailure(authID, raw, response, reEnabled, QualityVerdict{Class: class, Reason: reason}, errRead)
+			return handleFailure(QualityVerdict{Class: class, Reason: reason}, errRead)
 		}
 		if len(read.Payload) > 0 {
 			bufferBytes += int64(len(read.Payload))
 			if bufferBytes > qualityCfg.HoldMaxBufferBytes {
-				return s.handleProbeFailure(authID, raw, response, reEnabled, QualityVerdict{Class: ClassProbeError, Reason: "probe response exceeded buffer limit"}, fmt.Errorf("probe response exceeded buffer limit"))
+				return handleFailure(QualityVerdict{Class: ClassProbeError, Reason: "probe response exceeded buffer limit"}, fmt.Errorf("probe response exceeded buffer limit"))
 			}
 			analyzer.ObserveChunk(read.Payload)
 		}
 		if read.Error != "" {
 			readErr := fmt.Errorf("%s", read.Error)
 			class, reason := classifyTransportFailure(readErr)
-			return s.handleProbeFailure(authID, raw, response, reEnabled, QualityVerdict{Class: class, Reason: reason}, readErr)
+			return handleFailure(QualityVerdict{Class: class, Reason: reason}, readErr)
 		}
 		if read.Done {
 			terminal = true
@@ -395,7 +412,7 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 	if class == ClassNone {
 		class = ClassProbeError
 	}
-	return s.handleProbeFailure(authID, raw, response, reEnabled, verdict, fmt.Errorf("probe quality check failed: %s", verdict.Reason))
+	return handleFailure(verdict, fmt.Errorf("probe quality check failed: %s", verdict.Reason))
 }
 
 func (s *Service) markProbeSuccess(authID string, sig Signals) error {
@@ -448,11 +465,16 @@ func (s *Service) markProbeSuccess(authID string, sig Signals) error {
 }
 
 func (s *Service) handleProbeFailure(authID string, raw map[string]json.RawMessage, response pluginapi.HostAuthGetResponse, reEnabled bool, verdict QualityVerdict, errProbe error) error {
+	_, errApply := s.handleProbeFailureResult(authID, raw, response, reEnabled, verdict, errProbe)
+	return errApply
+}
+
+func (s *Service) handleProbeFailureResult(authID string, raw map[string]json.RawMessage, response pluginapi.HostAuthGetResponse, reEnabled bool, verdict QualityVerdict, errProbe error) (VerdictResult, error) {
 	// Keep marker and TPS verdicts out of internal error events
 	if errProbe != nil && verdict.Class == ClassProbeError {
 		_ = s.recordInternalError(authID, errProbe)
 	}
-	_, errApply := s.applyVerdictLocked(
+	return s.applyVerdictLocked(
 		context.Background(),
 		authID,
 		verdict,
@@ -462,7 +484,6 @@ func (s *Service) handleProbeFailure(authID string, raw map[string]json.RawMessa
 		response,
 		reEnabled,
 	)
-	return errApply
 }
 func (s *Service) saveAuthDisabled(name string, raw map[string]json.RawMessage, disabled bool) error {
 	setRawBool(raw, "disabled", disabled)

@@ -24,6 +24,7 @@ type Policy = config.Policy
 type ProbeConfig = config.ProbeConfig
 type QualityConfig = config.QualityConfig
 type QualityVerdict = domain.QualityVerdict
+type VerdictResult = qualityapp.VerdictResult
 type Signals = domain.Signals
 
 const (

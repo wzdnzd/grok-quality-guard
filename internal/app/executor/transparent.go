@@ -92,7 +92,7 @@ candidateLoop:
 			}
 			_ = s.recordAttemptError(account.ID, class, errAttempt)
 			selection.MarkFailure(account.ID, source, class)
-			if replayable && attempts < maxAttempts && !rotated && shouldRotateTransparentFailure(selection.TotalCandidates(), class) {
+			if replayable && attempts < maxAttempts && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
 				didRotate, errRotate := s.rotateAfterFailure(ctx, account.ID, class)
 				if errRotate == nil && didRotate {
 					rotated = true
@@ -175,7 +175,7 @@ candidateLoop:
 			}
 			_ = s.recordAttemptError(account.ID, class, errAttempt)
 			selection.MarkFailure(account.ID, source, class)
-			if replayable && attempts < maxAttempts && !rotated && shouldRotateTransparentFailure(selection.TotalCandidates(), class) {
+			if replayable && attempts < maxAttempts && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
 				didRotate, errRotate := s.rotateAfterFailure(ctx, account.ID, class)
 				if errRotate == nil && didRotate {
 					rotated = true
@@ -411,7 +411,7 @@ candidateLoop:
 			}
 			_ = s.recordAttemptError(account.ID, class, outcome.Err)
 			selection.MarkFailure(account.ID, source, class)
-			if replayable && attempts < maxAttempts && !rotated && shouldRotateTransparentFailure(selection.TotalCandidates(), class) {
+			if replayable && attempts < maxAttempts && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
 				didRotate, errRotate := s.rotateAfterFailure(ctx, account.ID, class)
 				if errRotate == nil && didRotate {
 					rotated = true

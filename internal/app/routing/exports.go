@@ -59,6 +59,9 @@ func (a selectionAdapter) MarkFailure(authID, source, class string) {
 	a.selection.MarkFailure(authID, source, class)
 }
 func (a selectionAdapter) TotalCandidates() int { return a.selection.totalCandidates }
+func (a selectionAdapter) HasRemainingCandidates() bool {
+	return a.selection.HasRemainingCandidates()
+}
 
 func (s *Service) NewTransparentSelection(req Request, body []byte, sourceFormat string) (*Selection, error) {
 	return s.newTransparentSelection(req, body, sourceFormat)

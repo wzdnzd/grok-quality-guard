@@ -26,6 +26,9 @@ func (s *Service) ApplyGuardDisable(authID, kind string, duration time.Duration,
 func (s *Service) ApplyAutoCooldown(authID string, verdict QualityVerdict, source string) error {
 	return s.applyAutoCooldown(authID, verdict, source)
 }
+func (s *Service) FinishProxyErrorRotation(ctx context.Context, authID string, verdict QualityVerdict) error {
+	return s.finishProxyErrorRotation(ctx, authID, verdict)
+}
 func (s *Service) SetStateExternal(authID, class string) error {
 	return s.setStateExternal(authID, class)
 }

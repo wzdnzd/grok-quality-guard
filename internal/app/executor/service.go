@@ -82,6 +82,7 @@ type Selection interface {
 	MarkSuccess(string, string)
 	MarkFailure(string, string, string)
 	TotalCandidates() int
+	HasRemainingCandidates() bool
 }
 
 type Environment interface {

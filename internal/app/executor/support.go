@@ -21,10 +21,25 @@ func transparentMaxAttempts(policy Policy, replayable bool) int {
 	return maxAttempts
 }
 
-func shouldRotateTransparentFailure(candidateCount int, class string) bool {
-	// Missing thinking is account-level evidence. Switch accounts first when an
-	// alternative exists; keep proxy rotation as the single-account fallback.
-	return class != ClassMissingThinking || candidateCount <= 1
+func shouldRotateTransparentFailure(hasAlternative bool, class string) bool {
+	// Account-level quality evidence and transport failures should switch
+	// accounts first. Proxy rotation is the single-account/low-latency fallback.
+	switch class {
+	case ClassMissingThinking, ClassProxyError, ClassProbeError:
+		return !hasAlternative
+	default:
+		return true
+	}
+}
+
+func proxyFailureReachedRotationThreshold(class string, strikes, threshold int) bool {
+	if class != ClassProxyError && class != ClassProbeError {
+		return false
+	}
+	if threshold <= 0 {
+		threshold = 2
+	}
+	return strikes+1 >= threshold
 }
 
 func executorRequestInput(req Request) ([]byte, string, error) {
@@ -177,10 +192,13 @@ func (s *Service) rotateAfterFailure(ctx context.Context, authID, class string) 
 	if !s.env.AutoRotateAfterQualityFailure() {
 		return false, nil
 	}
-	if class != ClassMissingThinking && class != ClassCipherDrool && class != ClassFakeEncryptedDump && class != ClassBufferedBurst {
+	stateAccount, _ := s.env.StateAccount(authID)
+	if proxyFailureReachedRotationThreshold(class, stateAccount.ErrorStrikes, s.env.Policy().Quality.ConsecutiveErrors) {
+		// Proxy failures rotate only after the same consecutive-error threshold
+		// used by account quality handling.
+	} else if class != ClassMissingThinking && class != ClassCipherDrool && class != ClassFakeEncryptedDump && class != ClassBufferedBurst {
 		return false, nil
 	}
-	stateAccount, _ := s.env.StateAccount(authID)
 	if isIsolatedState(stateAccount.State) {
 		return false, nil
 	}

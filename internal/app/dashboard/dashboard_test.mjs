@@ -687,6 +687,15 @@ test('Proxy source connectivity and check time use separate compact columns', ()
   assert.doesNotMatch(localResin, /本地轮换无独立端点|不适用|无法检测/);
 });
 
+test('Proxy table fits the page with wider name and endpoint columns', () => {
+  assert.match(html, /\.proxy-source-table\s*\{[^}]*min-width:\s*980px;/s);
+  assert.match(html, /\.proxy-source-table th:nth-child\(2\)\s*\{\s*width:\s*190px;/s);
+  assert.match(html, /\.proxy-source-table th:nth-child\(4\)\s*\{\s*width:\s*auto;/s);
+  assert.match(html, /\.proxy-source-table \.actions-cell\s*\{\s*width:\s*220px;/s);
+  assert.match(html, /\.proxy-source-table \.actions\s*\{[^}]*flex-wrap:\s*wrap;/s);
+  assert.match(html, /\.proxy-source-table th,\s*\.proxy-source-table td\s*\{[^}]*padding-left:\s*5px;[^}]*padding-right:\s*5px;/s);
+});
+
 test('Binding picker refreshes scoped proxy candidates before showing them', async () => {
   const { dashboard: ui, get, mock } = harness();
   ui.state.proxySources = [{ id: 'node-1', name: 'Node one', kind: 'node' }];

@@ -1366,6 +1366,8 @@ Resin 轮换语义保持不变：
 - 同一 candidate 最多轮换一次
 - 轮换后重新解析 auth，确保使用新的 `proxy_url`
 - `missing_thinking` 存在其他候选时优先换号，不先轮换代理
+- `proxy_error` / `probe_error` 达到 `consecutive_errors` 时，存在其他候选则先换号并异步轮换失败账号的代理
+- 没有其他候选时才同步轮换代理并重试同一 auth
 - 单账号池才使用代理轮换作为兜底
 - 轮换次数计入 `max_attempts`
 

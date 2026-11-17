@@ -118,6 +118,25 @@ func (s *Service) newTransparentSelectionWithSession(sessionKey string) (*transp
 	return selection, nil
 }
 
+// HasRemainingCandidates reports whether another currently eligible account
+// can be tried without reusing one that already failed in this request.
+func (selection *transparentSelection) HasRemainingCandidates() bool {
+	if selection == nil || selection.snapshot == nil {
+		return false
+	}
+	for _, key := range selection.layerOrder {
+		for _, candidate := range selection.snapshot.Layer(key) {
+			if _, tried := selection.tried[candidate.ID]; tried {
+				continue
+			}
+			if selection.candidateEligible(candidate.ID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (selection *transparentSelection) Next(ctx context.Context) (transparentCandidateAttempt, bool) {
 	if selection == nil || selection.totalCandidates <= 0 {
 		return transparentCandidateAttempt{}, false

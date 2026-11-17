@@ -294,7 +294,7 @@ plugins:
 连续阈值与旧 grok2api/egress guard 策略对齐：
 
 - `consecutive_soft`：连续软 TPS 样本达到次数后才进入处置；默认 `2`
-- `consecutive_errors`：连续传输/代理错误达到次数后才进入处置；上游 5xx、普通限流和无法确认的 403/429 只记录为 `ignored`，不计入 strike；默认 `2`
+- `consecutive_errors`：连续传输/代理错误达到次数后才进入处置；上游 5xx、普通限流和无法确认的 403/429 只记录为 `ignored`，不计入 strike；默认 `2`；开启自动轮换且 auth 绑定插件管理的代理时，达到阈值若还有可用账号先换号并异步轮换失败账号的代理，没有可用账号时再同步轮换后重试；轮换成功清除连续错误并恢复账号，轮换不可用再回退自动处置
 - 外部禁用只标记状态，插件无法得知外部原因，因此不写入 `disable_reason`；插件自身禁用会持久化简短的 `disable_reason`，dashboard 统一显示中文
 - 上游 `401` 标记为 `credential_invalid`，写入 `disabled=true` 并等待管理员更新凭据后手动恢复
 - 上游 `402`、包含明确 free usage/spending-limit/credits 耗尽短语的 `403/429` 标记为 `quota_exhausted`，写入 24 小时冷却；到期后自动恢复探测

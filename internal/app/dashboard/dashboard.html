@@ -826,15 +826,15 @@
     }
 
     .proxy-source-table {
-      min-width: 1680px;
+      min-width: 980px;
     }
 
     .proxy-lease-table th,
     .proxy-lease-table td,
     .proxy-source-table th,
     .proxy-source-table td {
-      padding-left: 7px;
-      padding-right: 7px;
+      padding-left: 5px;
+      padding-right: 5px;
     }
 
     .proxy-lease-table th:nth-child(1) {
@@ -866,15 +866,15 @@
     }
 
     .proxy-source-table th:nth-child(1) {
-      width: 40px;
+      width: 36px;
     }
 
     .proxy-source-table th:nth-child(2) {
-      width: 200px;
+      width: 190px;
     }
 
     .proxy-source-table th:nth-child(3) {
-      width: 76px;
+      width: 64px;
     }
 
     .proxy-source-table th:nth-child(4) {
@@ -882,27 +882,33 @@
     }
 
     .proxy-source-table th:nth-child(5) {
-      width: 96px;
+      width: 84px;
     }
 
     .proxy-source-table th:nth-child(6) {
-      width: 108px;
+      width: 92px;
     }
 
     .proxy-source-table th:nth-child(7) {
-      width: 150px;
+      width: 128px;
     }
 
     .proxy-source-table th:nth-child(8) {
-      width: 76px;
+      width: 60px;
     }
 
     .proxy-source-table th:nth-child(9) {
-      width: 112px;
+      width: 88px;
     }
 
     .proxy-source-table .actions-cell {
-      width: 260px;
+      width: 220px;
+    }
+
+    .proxy-source-table .actions {
+      justify-content: flex-start;
+      flex-wrap: wrap;
+      gap: 4px;
     }
 
     th,
@@ -4284,7 +4290,7 @@
       if (button) button.textContent = '任务详情' + (active ? ' · 进行中：' + active : '') + (failed ? ' · 失败：' + failed : '');
     }
     function proxyTaskLabel(kind) {
-      return { 'proxy.bind': '绑定代理', 'proxy.clear': '清除代理', 'proxy.rotate': '轮换代理', 'proxy.bind_unbound': '绑定未绑定账号', 'proxy.template.apply': '应用代理模板', 'proxy.source.update': '保存代理', 'proxy.source.delete': '删除代理', 'proxy.sources.test_selected': '批量检测代理', 'proxy.sources.delete_selected': '批量删除代理', 'proxy.source.sync': '同步代理绑定', 'resin.config.save': '保存代理服务配置', 'resin.config.validate': '验证代理服务配置', 'resin.cleanup.retry': '重试代理清理' }[kind] || '代理后台任务';
+      return { 'proxy.bind': '绑定代理', 'proxy.clear': '清除代理', 'proxy.rotate': '轮换代理', 'proxy.auto_rotate': '自动轮换代理', 'proxy.bind_unbound': '绑定未绑定账号', 'proxy.template.apply': '应用代理模板', 'proxy.source.update': '保存代理', 'proxy.source.delete': '删除代理', 'proxy.sources.test_selected': '批量检测代理', 'proxy.sources.delete_selected': '批量删除代理', 'proxy.source.sync': '同步代理绑定', 'resin.config.save': '保存代理服务配置', 'resin.config.validate': '验证代理服务配置', 'resin.cleanup.retry': '重试代理清理' }[kind] || '代理后台任务';
     }
     async function refreshProxyTasks() {
       if (state.proxyTasksRefreshing) return state.proxyEditing?.taskErrors || [];
