@@ -980,6 +980,29 @@
       width: 236px;
     }
 
+    .proxy-lease-table .actions {
+      justify-content: flex-start;
+    }
+
+    .proxy-lease-table .proxy-row-primary {
+      display: grid;
+      flex: 0 0 136px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: center;
+      gap: 5px;
+      width: 136px;
+    }
+
+    .proxy-lease-table .proxy-row-primary.is-single {
+      display: inline-flex;
+    }
+
+    .proxy-lease-table .proxy-row-primary>.btn {
+      width: 100%;
+      min-width: 0;
+      padding-inline: 4px;
+    }
+
     .proxy-source-table th:nth-child(1) {
       width: 36px;
     }
@@ -5829,18 +5852,21 @@
       };
       const stateTuple = statusMap[status] || statusMap.unbound;
       const statusBadge = badge(stateTuple[0], stateTuple[1]);
-      let actions = '';
+      let primaryActions = '';
+      let primaryClass = 'proxy-row-primary is-single';
       if (status === 'bound' || status === 'drifted') {
-        actions = '<button class="btn btn-xs" type="button" data-proxy-action="rotate" data-auth="' + authID + '">' + icon('rotate') + '轮换</button>' +
+        primaryClass = 'proxy-row-primary';
+        primaryActions = '<button class="btn btn-xs" type="button" data-proxy-action="rotate" data-auth="' + authID + '">' + icon('rotate') + '轮换</button>' +
           '<button class="btn btn-xs btn-danger" type="button" data-proxy-action="clear" data-auth="' + authID + '">' + icon('x') + '清除</button>';
       } else if (status === 'unbound') {
-        actions = canBind ? '<button class="btn btn-xs" type="button" data-proxy-action="bind" data-auth="' + authID + '">' + icon('link') + '绑定</button>' : '<span class="subtle">无可绑定代理</span>';
+        primaryActions = canBind ? '<button class="btn btn-xs" type="button" data-proxy-action="bind" data-auth="' + authID + '">' + icon('link') + '绑定</button>' : '<span class="subtle">无可绑定代理</span>';
       } else if (status === 'external') {
-        actions = '<button class="btn btn-xs btn-danger" type="button" data-proxy-action="clear-external" data-auth="' + authID + '">' + icon('x') + '清除外部代理</button>';
+        primaryActions = '<button class="btn btn-xs btn-danger" type="button" data-proxy-action="clear-external" data-auth="' + authID + '">' + icon('x') + '清除外部代理</button>';
       } else {
-        actions = '<button class="btn btn-xs btn-ghost" type="button" data-open-account="' + authID + '">' + icon('eye') + '详情</button>';
+        primaryActions = '<button class="btn btn-xs btn-ghost" type="button" data-open-account="' + authID + '">' + icon('eye') + '详情</button>';
       }
-      actions += '<button class="btn btn-xs btn-ghost" type="button" data-proxy-action="' + (account.auto_bind_excluded ? 'resume-auto' : 'pause-auto') + '" data-auth="' + authID + '">' + (account.auto_bind_excluded ? '恢复自动绑定' : '暂停自动绑定') + '</button>';
+      const actions = '<span class="' + primaryClass + '">' + primaryActions + '</span>' +
+        '<button class="btn btn-xs btn-ghost" type="button" data-proxy-action="' + (account.auto_bind_excluded ? 'resume-auto' : 'pause-auto') + '" data-auth="' + authID + '">' + (account.auto_bind_excluded ? '恢复自动绑定' : '暂停自动绑定') + '</button>';
       const proxy = endpointCell(account.proxy, state.leaseProxyDetails.get(account.auth_id), 'data-lease-endpoint', authID);
       const sourceDetail = sourceLabel !== '-' ? '<div class="subline">' + esc(sourceKind) + ' · ' + esc(sourceLabel) + '</div>' : '';
       return '<tr><td class="select-cell"><input type="checkbox" data-lease-select="' + authID + '" aria-label="选择账号" ' + (selected ? 'checked' : '') + '></td>' +

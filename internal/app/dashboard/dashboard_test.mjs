@@ -1312,6 +1312,26 @@ test('Resident queues render only the returned enabled queues and detail can clo
   assert.equal(historyCalls.at(-1), '#tasks');
   await Promise.resolve();
 });
+test('Lease actions reserve a stable slot for single and paired buttons', () => {
+  const { dashboard: ui } = harness();
+  ui.state.proxySources = [];
+  const bound = ui.leaseRow({
+    auth_id: 'auth-1', auth_id_display: 'auth-1', display: 'a***@example.com', display_full: '[EMAIL]',
+    proxy: 'socks5h://us***r:******@resin:2260', proxy_status: 'bound', proxy_source_id: 'resin-1'
+  });
+  const external = ui.leaseRow({
+    auth_id: 'auth-2', auth_id_display: 'auth-2', display: 'b***@example.com', display_full: '[EMAIL]',
+    proxy: 'socks5h://us***r:******@resin:2260', proxy_status: 'external'
+  });
+  assert.match(bound, /<span class="proxy-row-primary"><button[^>]+data-proxy-action="rotate"/);
+  assert.match(bound, /data-proxy-action="clear"/);
+  assert.match(external, /<span class="proxy-row-primary is-single"><button[^>]+data-proxy-action="clear-external"/);
+  assert.match(bound, /<\/span><button class="btn btn-xs btn-ghost"[^>]+data-proxy-action="pause-auto"/);
+  assert.match(external, /<\/span><button class="btn btn-xs btn-ghost"[^>]+data-proxy-action="pause-auto"/);
+  assert.match(html, /\.proxy-lease-table \.actions\s*\{\s*justify-content:\s*flex-start;/s);
+  assert.match(html, /\.proxy-lease-table \.proxy-row-primary\s*\{[^}]*flex:\s*0 0 136px;[^}]*width:\s*136px;/s);
+  assert.match(html, /\.proxy-lease-table \.proxy-row-primary\.is-single\s*\{\s*display:\s*inline-flex;/s);
+});
 for (const { name, run } of cases) {
   await run();
   console.log('PASS ' + name);
