@@ -99,6 +99,9 @@ func (s *Service) proxyBindingForAccount(account AccountState) (proxy.Binding, b
 func (s *Service) proxyAccountBindingView(account AccountState, value string) (string, string, proxy.SourceKind, bool) {
 	return s.env.Proxy().AccountBindingView(account, value)
 }
+func (s *Service) proxySourceInfo(sourceID string) (string, proxy.SourceKind) {
+	return s.env.Proxy().SourceInfo(sourceID)
+}
 
 func (s *Service) actionProxySummary(ctx context.Context) (any, int, error) {
 	return s.env.Proxy().ActionSummary(ctx)

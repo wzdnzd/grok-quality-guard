@@ -85,6 +85,7 @@ type accountSummaryView struct {
 	Proxy             string           `json:"proxy,omitempty"`
 	ProxySourceID     string           `json:"proxy_source_id,omitempty"`
 	ProxySourceKind   string           `json:"proxy_source_kind,omitempty"`
+	ProxySourceName   string           `json:"proxy_source_name,omitempty"`
 	ProxyManaged      bool             `json:"proxy_managed,omitempty"`
 	ProxyGeneration   uint64           `json:"proxy_generation,omitempty"`
 	ProxyLeaseAccount string           `json:"proxy_lease_account,omitempty"`

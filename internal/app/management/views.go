@@ -43,6 +43,9 @@ func (s *Service) accountSummary(account Account, stateAccount AccountState, pro
 	view.ProxyStatus = proxyStatus
 	view.ProxySourceID = sourceID
 	view.ProxySourceKind = string(sourceKind)
+	if sourceID != "" {
+		view.ProxySourceName, _ = s.proxySourceInfo(sourceID)
+	}
 	view.ProxyManaged = hasBinding
 	view.AutoBindExcluded = stateAccount.AutoBind.Excluded
 	if hasBinding {

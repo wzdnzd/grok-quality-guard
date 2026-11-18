@@ -1052,6 +1052,17 @@ func (s *Service) proxySourceDetailsForEdit(id string, edit bool) (any, error) {
 
 // Bulk readers copy only proxy metadata; quality metrics and generated values
 // do not belong in a binding table or scan.
+func (s *Service) proxySourceInfo(sourceID string) (string, proxy.SourceKind) {
+	if sourceID == "" {
+		return "", ""
+	}
+	entry := s.proxyCatalog().ByID[sourceID]
+	if entry == nil {
+		return "", ""
+	}
+	return entry.Name, entry.Kind
+}
+
 func (s *Service) proxyAccountBindingView(state AccountState, value string) (string, string, proxy.SourceKind, bool) {
 	binding, managed := bindingForAccount(state)
 	if value == "" {

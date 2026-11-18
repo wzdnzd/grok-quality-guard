@@ -84,3 +84,19 @@ func TestResinSourceEndpointsUseTemplateDisplayAndReveal(t *testing.T) {
 		t.Fatalf("revealed endpoint = %q, want %q", full, wantFull)
 	}
 }
+
+func TestProxySourceInfoReturnsNameAndKind(t *testing.T) {
+	store := appstate.NewStore("")
+	store.SetStateForTest(appstate.State{Proxy: coreproxy.ProxyState{
+		Nodes: []coreproxy.Node{{ID: "node-1", Name: "香港节点", Enabled: true}},
+	}})
+	service := NewService(proxyViewTestEnvironment{store: store})
+	name, kind := service.SourceInfo("node-1")
+	if name != "香港节点" || kind != coreproxy.SourceNode {
+		t.Fatalf("SourceInfo(node-1) = %q, %q", name, kind)
+	}
+	name, kind = service.SourceInfo("missing")
+	if name != "" || kind != "" {
+		t.Fatalf("SourceInfo(missing) = %q, %q", name, kind)
+	}
+}

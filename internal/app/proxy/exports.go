@@ -187,6 +187,12 @@ func (s *Service) AccountBindingView(state AccountState, value string) (string, 
 	return s.proxyAccountBindingView(state, value)
 }
 
+// SourceInfo resolves the stable display name and kind for an account's proxy
+// binding without exposing its raw URL or requiring a second list request.
+func (s *Service) SourceInfo(sourceID string) (string, proxy.SourceKind) {
+	return s.proxySourceInfo(sourceID)
+}
+
 type SourceCatalog = proxySourceCatalog
 
 func (s *Service) Catalog() *SourceCatalog          { return s.proxyCatalog() }

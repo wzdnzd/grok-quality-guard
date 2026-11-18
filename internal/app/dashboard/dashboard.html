@@ -809,11 +809,21 @@
 
     .accounts-table {
       table-layout: fixed;
-      min-width: 1120px;
+      min-width: 1260px;
     }
 
     .accounts-table .actions-cell {
       width: 160px;
+    }
+
+    .accounts-table td {
+      vertical-align: top;
+      overflow: hidden;
+    }
+
+    .accounts-table td.select-cell,
+    .accounts-table td.actions-cell {
+      vertical-align: middle;
     }
 
     .proxy-lease-table,
@@ -966,6 +976,46 @@
 
     .truncate-line[title] {
       cursor: help;
+    }
+
+    .cell-primary {
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .proxy-summary {
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .proxy-summary-head {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .proxy-summary .badge {
+      flex: 0 0 auto;
+      min-height: 18px;
+      padding: 0 6px;
+      font-size: 9px;
+    }
+
+    .proxy-generation {
+      flex: 0 0 auto;
+      color: var(--subtle);
+      font-size: 9px;
+      line-height: 1.4;
+    }
+
+    .proxy-source-line {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.4;
     }
 
     .endpoint-cell {
@@ -1691,6 +1741,20 @@
       padding: 16px 18px 28px;
     }
 
+    #accountDrawer .drawer {
+      width: min(560px, 100%);
+    }
+
+    #accountDrawer .drawer-body {
+      scrollbar-gutter: stable;
+    }
+
+    @media (max-width: 680px) {
+      #accountDrawer .drawer {
+        width: 100%;
+      }
+    }
+
     #proxySourceDrawer .drawer {
       width: min(720px, 100%);
     }
@@ -1876,6 +1940,43 @@
       font-variant-numeric: tabular-nums;
     }
 
+    .detail-cell-wide {
+      grid-column: 1 / -1;
+    }
+
+    .detail-value-wrap {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      line-height: 1.55;
+    }
+
+    .proxy-source-value {
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+
+    .proxy-kind-chip {
+      flex: 0 0 auto;
+      padding: 0 6px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 600;
+      line-height: 19px;
+      white-space: nowrap;
+    }
+
+    .proxy-source-name {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      line-height: 1.5;
+    }
+
     .drawer-section {
       margin-top: 14px;
     }
@@ -1890,6 +1991,58 @@
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
+    }
+
+    .drawer-badge-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      padding: 0 1px;
+    }
+
+    .action-tooltip-wrap {
+      position: relative;
+      display: inline-flex;
+    }
+
+    .action-tooltip {
+      position: absolute;
+      right: 0;
+      bottom: calc(100% + 8px);
+      z-index: 4;
+      width: max-content;
+      max-width: min(240px, calc(100vw - 48px));
+      padding: 7px 9px;
+      border-radius: 7px;
+      background: var(--text);
+      color: var(--bg);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .16);
+      font-size: 10px;
+      font-weight: 500;
+      line-height: 1.5;
+      white-space: normal;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(3px);
+      pointer-events: none;
+      transition: opacity .14s ease, transform .14s ease, visibility .14s;
+    }
+
+    .action-tooltip::after {
+      content: "";
+      position: absolute;
+      right: 15px;
+      top: 100%;
+      border: 5px solid transparent;
+      border-top-color: var(--text);
+    }
+
+    .action-tooltip-wrap:hover .action-tooltip,
+    .action-tooltip-wrap:focus-within .action-tooltip {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
     }
 
     .select-cell {
@@ -2601,12 +2754,12 @@
             <table class="accounts-table">
               <colgroup>
                 <col style="width:36px">
-                <col style="width:15%">
-                <col style="width:72px">
-                <col style="width:32%">
+                <col style="width:16%">
+                <col style="width:76px">
+                <col style="width:25%">
                 <col style="width:11%">
-                <col style="width:9%">
-                <col style="width:11%">
+                <col style="width:16%">
+                <col style="width:10%">
                 <col style="width:160px">
               </colgroup>
               <thead>
@@ -2616,8 +2769,8 @@
                   <th>状态</th>
                   <th>最近判定 / 禁用原因</th>
                   <th>质量指标</th>
-                  <th>代理</th>
-                  <th>时间</th>
+                  <th title="代理类型与名称">代理来源</th>
+                  <th title="冷却截止与探测退避">冷却 / 探测</th>
                   <th style="text-align:right">操作</th>
                 </tr>
               </thead>
@@ -3528,6 +3681,7 @@
         proxy_status: normalizeBindingStatus(value.proxy_status),
         proxy_source_id: value.proxy_source_id || '',
         proxy_source_kind: value.proxy_source_kind || '',
+        proxy_source_name: value.proxy_source_name || '',
         proxy_generation: value.proxy_generation || 0,
         proxy_source_revision: value.proxy_source_revision || 0,
         proxy_lease_account: value.proxy_lease_account || '',
@@ -3535,6 +3689,16 @@
         display: value.display || value.label || value.auth_id,
         proxy: value.proxy || ''
       });
+    }
+
+    function proxySourceIdentity(account) {
+      const source = (state.proxySources || []).find((item) => item.id === account.proxy_source_id);
+      const kind = source?.kind || account.proxy_source_kind || '';
+      return {
+        kind: kind,
+        kindLabel: kind ? proxySourceLabel(kind) : '',
+        name: source?.name || account.proxy_source_name || ''
+      };
     }
     async function loadList(kind) {
       const request = ++state.listRequests[kind];
@@ -3602,7 +3766,7 @@
       if ((state.activeTab === 'resin' ? state.leaseList : state.accountList) || state.refreshing) return;
       await refreshSection(null, '账号数据', async () => {
         await loadList(state.activeTab === 'resin' ? 'leases' : 'accounts');
-        if (state.activeTab === 'resin') { try { await loadProxyData(); } catch (_) {} }
+        try { await loadProxyData(); } catch (_) {}
         renderAccounts();
         renderResin();
         renderProxySources();
@@ -3912,18 +4076,26 @@
       else if (proxyStatus === 'reconcile_required') proxyBadge = badge('待核对', 'bad');
       else if (proxyStatus === 'external') proxyBadge = badge('外部配置', '');
       else if (proxyStatus === 'unknown') proxyBadge = badge('读取失败', 'bad');
-      const proxyDetailText = account.proxy_source_id ? (proxySourceLabel(account.proxy_source_kind) + ' · ' + account.proxy_source_id) : (account.proxy_lease_account || '');
-      const proxyDetail = proxyDetailText ? '<div class="subline">' + esc(proxyDetailText) + (account.proxy_generation ? ' · 第 ' + esc(account.proxy_generation) + ' 代' : '') + '</div>' : '';
-      const cooldown = account.cooldown_until ? '冷却至：' + esc(formatFullTime(account.cooldown_until)) : '无冷却';
-      const probe = account.probe_backoff_until ? '探测退避至：' + esc(formatFullTime(account.probe_backoff_until)) : '可立即探测';
+      const proxyIdentity = proxySourceIdentity(account);
+      const proxySourceText = [proxyIdentity.kindLabel, proxyIdentity.name].filter(Boolean).join(' · ');
+      const proxyGeneration = Number(account.proxy_generation || 0) > 0 ? '<span class="proxy-generation">第 ' + esc(account.proxy_generation) + ' 代</span>' : '';
+      const proxyDetail = proxySourceText ? '<div class="proxy-source-line truncate-line" title="' + esc(proxySourceText) + '">' + esc(proxySourceText) + '</div>' : '';
+      const proxyCell = '<div class="proxy-summary"><div class="proxy-summary-head">' + proxyBadge + proxyGeneration + '</div>' + proxyDetail + '</div>';
+      const cooldown = account.cooldown_until ? '冷却至：' + formatFullTime(account.cooldown_until) : '无冷却';
+      const probe = account.probe_backoff_until ? '探测退避至：' + formatFullTime(account.probe_backoff_until) : '可立即探测';
+      const metricDetail = '输出：' + num(account.output_tokens) + ' · 推理：' + num(account.reasoning_tokens) + ' · 密文：' + formatBytes(account.encrypted_bytes);
       const isolatedByGuard = ['cooling', 'quota_exhausted', 'credential_invalid', 'disabled_by_guard'].includes(account.state);
       const disableReason = account.disable_reason ? reasonLabel(account.disable_reason) : '';
       const reasonSummary = isolatedByGuard ? '账号禁用' : reasonLabel(account.last_reason);
       const attemptDetail = account.last_attempt ? '最近尝试：' + attemptLabel(account.last_attempt, { includeTime: false }) : '最近观测：' + formatTime(account.last_observed_at);
       const disableReasonDetail = disableReason ? '<div class="subline truncate-line" title="禁用原因：' + esc(disableReason) + '">禁用原因：' + esc(disableReason) + '</div>' : '';
+      const displayName = account.display_full || account.display || account.label || '未命名账号';
+      const displayID = account.auth_id_display || account.auth_id;
       return '<tr><td class="select-cell"><input type="checkbox" data-account-select="' + authID + '" aria-label="选择账号" ' + (selected ? 'checked' : '') + '></td>' +
-        '<td><div class="account-name" title="' + esc(account.display_full || account.display || account.label || '未命名账号') + '">' + esc(account.display || account.label || '未命名账号') + '</div><div class="subline" title="' + esc(account.auth_id) + '">' + esc(account.auth_id_display || account.auth_id) + '</div></td><td class="nowrap">' + badge(stateLabel(account.state), stateTone(account.state)) + '</td><td><div class="truncate-line" title="' + esc(reasonSummary) + '">' + esc(reasonSummary) + '</div><div class="subline truncate-line" title="' + esc(attemptDetail) + '">' + esc(attemptDetail) + '</div>' + disableReasonDetail + '</td><td><div class="metric-inline"><strong>' + esc(num(account.tps, 1)) + '</strong><span class="muted">TPS</span></div><div class="subline">输出：' + esc(num(account.output_tokens)) + ' · 推理：' + esc(num(account.reasoning_tokens)) + ' · 密文：' + esc(formatBytes(account.encrypted_bytes)) + '</div></td><td>' + proxyBadge + proxyDetail + '</td><td><div>' + esc(cooldown) + '</div><div class="subline">' + esc(probe) + '</div></td><td class="actions-cell"><div class="actions"><button class="btn btn-xs" type="button" data-account-action="accounts.probe" data-auth="' + authID + '">' + icon('play') + '检测</button><button class="btn btn-xs" type="button" data-open-account="' + authID + '">' + icon('eye') + '详情</button></div></td></tr>';
-    }    function leaseStatus(account) {
+        '<td><div class="account-name truncate-line" title="' + esc(displayName) + '">' + esc(account.display || account.label || '未命名账号') + '</div><div class="subline truncate-line" title="' + esc(account.auth_id) + '">' + esc(displayID) + '</div></td><td class="status-cell nowrap">' + badge(stateLabel(account.state), stateTone(account.state)) + '</td><td><div class="truncate-line" title="' + esc(reasonSummary) + '">' + esc(reasonSummary) + '</div><div class="subline truncate-line" title="' + esc(attemptDetail) + '">' + esc(attemptDetail) + '</div>' + disableReasonDetail + '</td><td><div class="metric-inline"><strong>' + esc(num(account.tps, 1)) + '</strong><span class="muted">TPS</span></div><div class="subline truncate-line" title="' + esc(metricDetail) + '">' + esc(metricDetail) + '</div></td><td class="proxy-cell">' + proxyCell + '</td><td class="time-cell"><div class="cell-primary truncate-line" title="' + esc(cooldown) + '">' + esc(cooldown) + '</div><div class="subline truncate-line" title="' + esc(probe) + '">' + esc(probe) + '</div></td><td class="actions-cell"><div class="actions"><button class="btn btn-xs" type="button" data-account-action="accounts.probe" data-auth="' + authID + '">' + icon('play') + '检测</button><button class="btn btn-xs" type="button" data-open-account="' + authID + '">' + icon('eye') + '详情</button></div></td></tr>';
+    }
+
+    function leaseStatus(account) {
       if (account.proxy_status === 'unknown') return 'unknown';
       if (account.proxy_status === 'external') return 'external';
       if (account.proxy_status === 'drifted') return 'drifted';
@@ -6191,11 +6363,13 @@
       document.getElementById('drawerSubtitle').textContent = account.auth_id_display || account.auth_id || '';
       const proxyStatus = account.proxy_status || 'unbound';
       const proxyStatusBadge = proxyStatus === 'bound' ? badge('代理已绑定', 'info') : (proxyStatus === 'drifted' ? badge('与记录不一致', 'warn') : (proxyStatus === 'reconcile_required' ? badge('待核对', 'bad') : (proxyStatus === 'external' ? badge('外部配置', '') : (proxyStatus === 'unknown' ? badge('读取失败', 'bad') : badge('未绑定代理', '')))));
+      const proxyIdentity = proxySourceIdentity(account);
+      const proxySourceCell = (proxyIdentity.kindLabel || proxyIdentity.name) ? '<div class="detail-cell detail-cell-wide"><div class="detail-label">代理来源</div><div class="detail-value proxy-source-value">' + (proxyIdentity.kindLabel ? '<span class="proxy-kind-chip">' + esc(proxyIdentity.kindLabel) + '</span>' : '') + (proxyIdentity.name ? '<span class="proxy-source-name" title="' + esc(proxyIdentity.name) + '">' + esc(proxyIdentity.name) + '</span>' : '') + '</div></div>' : '<div class="detail-cell detail-cell-wide"><div class="detail-label">代理来源</div><div class="detail-value">-</div></div>';
       const actionButtons = [
         '<button class="btn" type="button" data-account-action="accounts.probe" data-auth="' + esc(account.auth_id) + '">' + icon('play') + '主动探测</button>',
         '<button class="btn" type="button" data-account-action="accounts.cooldown" data-auth="' + esc(account.auth_id) + '">' + icon('clock') + '冷却 12 小时</button>',
         '<button class="btn" type="button" data-account-action="accounts.restore" data-auth="' + esc(account.auth_id) + '">' + icon('check') + '恢复</button>',
-        '<button class="btn btn-danger" type="button" data-account-action="accounts.disable" data-auth="' + esc(account.auth_id) + '">' + icon('power') + '永久禁用</button>'
+        '<span class="action-tooltip-wrap"><button class="btn btn-danger" type="button" data-account-action="accounts.disable" data-auth="' + esc(account.auth_id) + '" aria-describedby="permanentDisableTooltip">' + icon('power') + '永久禁用</button><span class="action-tooltip" role="tooltip" id="permanentDisableTooltip">修改 OAuth 文件 disabled 为 true；恢复仅解除插件禁用</span></span>'
       ];
       const evidence = account.evidence;
       const ignoredAttempt = account.last_attempt && account.last_attempt.class === 'ignored' ? badge('最近尝试未计入质量', 'warn') : '';
@@ -6212,7 +6386,7 @@
       }
       actionButtons.push('<button class="btn btn-ghost" type="button" data-proxy-action="' + (account.auto_bind_excluded ? 'resume-auto' : 'pause-auto') + '" data-auth="' + esc(account.auth_id) + '">' + (account.auto_bind_excluded ? '恢复自动绑定' : '暂停自动绑定') + '</button>');
       document.getElementById('drawerBody').innerHTML = [
-                '<div style="display:flex;gap:6px;flex-wrap:wrap">' + badge(stateLabel(account.state), stateTone(account.state)) + proxyStatusBadge + (account.strike_missing_thinking ? badge('缺思考标记', 'warn') : '') + ignoredAttempt + '</div>',
+        '<div class="drawer-badge-row">' + badge(stateLabel(account.state), stateTone(account.state)) + proxyStatusBadge + (account.strike_missing_thinking ? badge('缺思考标记', 'warn') : '') + ignoredAttempt + '</div>',
         '<div class="drawer-section"><div class="detail-grid">',
         '<div class="detail-cell"><div class="detail-label">最近尝试</div><div class="detail-value">' + esc(attemptLabel(account.last_attempt)) + '</div></div>',
         '<div class="detail-cell"><div class="detail-label">最近质量判定</div><div class="detail-value">' + esc(reasonLabel(account.last_reason)) + '</div></div>',
@@ -6234,12 +6408,12 @@
         '<div class="detail-cell"><div class="detail-label">探测退避</div><div class="detail-value">' + esc(formatFullTime(account.probe_backoff_until)) + '</div></div>',
         '</div></div>',
         '<div class="drawer-section"><h3>代理</h3><div class="detail-grid">',
-		'<div class="detail-cell"><div class="detail-label">代理</div><div class="detail-value">' + esc((account.proxy_source_kind ? proxySourceLabel(account.proxy_source_kind) + ' · ' : '') + (account.proxy_source_id || '-')) + '</div></div>',
-        '<div class="detail-cell"><div class="detail-label">租约账号</div><div class="detail-value mono">' + esc(account.proxy_lease_account || '-') + '</div></div>',
-        '<div class="detail-cell"><div class="detail-label">代理地址</div><div class="detail-value mono">' + esc(account.proxy || '-') + '</div></div>',
-		'<div class="detail-cell"><div class="detail-label">自动绑定</div><div class="detail-value">' + (account.auto_bind_excluded ? '已暂停' : '允许') + '</div></div>',
+        proxySourceCell,
+        '<div class="detail-cell detail-cell-wide"><div class="detail-label">代理地址</div><div class="detail-value mono detail-value-wrap" title="' + esc(account.proxy || '-') + '">' + esc(account.proxy || '-') + '</div></div>',
+        '<div class="detail-cell"><div class="detail-label">租约账号</div><div class="detail-value mono detail-value-wrap">' + esc(account.proxy_lease_account || '-') + '</div></div>',
+        '<div class="detail-cell"><div class="detail-label">自动绑定</div><div class="detail-value">' + badge(account.auto_bind_excluded ? '已暂停' : '允许', account.auto_bind_excluded ? 'warn' : 'good') + '</div></div>',
         '</div></div>',
-        '<div class="drawer-section"><h3>操作</h3><div class="drawer-actions">' + actionButtons.join('') + '</div><p class="hint" style="margin-top:9px">永久禁用会写入 OAuth 文件的 disabled=true；恢复仅解除插件管理的禁用状态</p></div>'
+        '<div class="drawer-section"><h3>操作</h3><div class="drawer-actions">' + actionButtons.join('') + '</div></div>'
       ].join('');
     }
     function closeDrawer() {
