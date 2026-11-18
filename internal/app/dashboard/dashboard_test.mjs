@@ -114,7 +114,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, renderEvents, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -398,6 +398,50 @@ test('Auto-bind scan runtime is shown in the status bar instead of settings', ()
   assert.match(get('proxyAutoBindText').title, /累计成功：2 · 失败：1 · 跳过：3 · 排除：4 个账号/);
   assert.match(get('proxyAutoBindText').title, /最近错误：catalog unavailable/);
   assert.doesNotMatch(html, /id="proxyAutoBindDetails"/);
+});
+
+test('Auto-bind scheduler waiting reasons are localized', () => {
+  const { dashboard: ui, get } = harness();
+  const cases = [
+    ['waiting_sources', '等待可用代理'],
+    ['waiting_health', '等待健康代理'],
+    ['manual_task', '等待手动任务完成'],
+    ['catalog_unknown', '等待账号目录同步']
+  ];
+  for (const [reason, expected] of cases) {
+    ui.state.proxy = { auto_bind: { enabled: true }, auto_bind_runtime: { waiting_reason: reason } };
+    ui.renderProxyAutoBind();
+    const text = get('proxyAutoBindText').textContent;
+    assert.ok(text.includes(expected), reason + ' should render Chinese copy');
+    assert.ok(!text.includes(reason), reason + ' should not be exposed in the status bar');
+  }
+  ui.state.proxy.auto_bind_runtime.waiting_reason = 'future_reason';
+  ui.renderProxyAutoBind();
+  assert.match(get('proxyAutoBindText').textContent, /等待自动绑定继续/);
+  assert.doesNotMatch(get('proxyAutoBindText').textContent, /future_reason/);
+});
+
+test('Saving auto-bind settings collapses the panel and returns focus', async () => {
+  const { dashboard: ui, get, mock } = harness();
+  const panel = get('proxyAutoBindSettings');
+  const toggle = get('proxyAutoBindToggleSettingsBtn');
+  panel.hidden = false;
+  toggle.textContent = '收起设置';
+  ui.state.proxy = { auto_bind: { enabled: false }, auto_bind_runtime: {} };
+  mock('api', async (action, params) => {
+    assert.equal(action, 'proxy.auto_bind.update');
+    assert.equal(params.auto_rotate_after_quality_failure, false);
+    return { config: { enabled: false }, runtime: {}, auto_rotate_after_quality_failure: false };
+  });
+  mock('renderProxyAutoBind', () => {});
+  mock('toast', () => {});
+
+  await ui.saveProxyAutoBind(get('proxyAutoBindSaveBtn'));
+
+  assert.equal(panel.hidden, true);
+  assert.equal(toggle.textContent, '设置');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(toggle.focused, true);
 });
 
 test('Binding source candidates use a bounded labeled picker', async () => {
