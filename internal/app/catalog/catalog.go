@@ -315,6 +315,17 @@ func readAuthProxyURL(path string) (string, bool) {
 	}
 	return strings.TrimSpace(proxyURL), true
 }
+func catalogStateNeedsRetention(account *AccountState) bool {
+	if account == nil {
+		return false
+	}
+	if account.DisableKind != "" || account.AuthDisabledIntent != nil || account.Proxy.SourceID != "" {
+		return true
+	}
+	autoBind := account.AutoBind
+	return autoBind.Excluded || autoBind.Attempts > 0 || !autoBind.NextAttemptAt.IsZero() || autoBind.LastError != "" || autoBind.LastSourceID != ""
+}
+
 func (s *Service) syncCatalogState(accounts []Account) error {
 	store := s.env.Store()
 	if store == nil {
@@ -346,8 +357,9 @@ func (s *Service) syncCatalogState(accounts []Account) error {
 				continue
 			}
 			// A host catalog can be temporarily partial while CPA reloads auth
-			// records. Keep guard-owned state long enough to preserve ownership.
-			if account.DisableKind != "" || account.AuthDisabledIntent != nil {
+			// records. Keep guard-owned state, including managed proxy bindings,
+			// long enough to preserve ownership before scheduling lease cleanup.
+			if catalogStateNeedsRetention(account) {
 				if account.CatalogMissingSince.IsZero() {
 					account.CatalogMissingSince = now
 					changed = true

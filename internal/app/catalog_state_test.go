@@ -4,6 +4,7 @@ import (
 	"context"
 	appstate "grok-quality-guard/internal/app/state"
 	appconfig "grok-quality-guard/internal/config"
+	coreproxy "grok-quality-guard/internal/proxy"
 	qualitypkg "grok-quality-guard/internal/quality"
 	"strings"
 	"testing"
@@ -155,5 +156,58 @@ func TestGuardOwnershipAndReasonSurvivePluginRestart(t *testing.T) {
 	response := actionManagementForTest(t, restarted, "accounts.list", map[string]any{"summary": true})
 	if response.StatusCode != 200 || !strings.Contains(string(response.Body), `"disable_reason":"missing_thinking"`) {
 		t.Fatalf("management response did not expose the persisted guard reason: status=%d body=%s", response.StatusCode, response.Body)
+	}
+}
+
+func TestCatalogRefreshKeepsManagedProxyBindingDuringTemporaryOmission(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	url := "socks5h://grok-alice:secret@resin:2260"
+	endpoint, errParse := coreproxy.ParseEndpoint(url)
+	if errParse != nil {
+		t.Fatal(errParse)
+	}
+	binding := coreproxy.Binding{
+		AuthID:       "auth-1",
+		SourceID:     "resin-1",
+		SourceKind:   coreproxy.SourceResin,
+		Generation:   1,
+		EndpointHash: endpoint.Fingerprint(),
+	}
+	if errUpdate := plugin.updateStateAccount("auth-1", func(account *appstate.AccountState) error {
+		account.Proxy = binding
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+
+	host.mu.Lock()
+	host.entries = nil
+	host.mu.Unlock()
+	if errRefresh := plugin.RefreshCatalog(context.Background()); errRefresh != nil {
+		t.Fatal(errRefresh)
+	}
+	account, ok := plugin.stateAccount("auth-1")
+	if !ok || account.Proxy.SourceID != binding.SourceID || account.Proxy.EndpointHash != binding.EndpointHash {
+		t.Fatalf("managed proxy binding was lost during a partial catalog: %#v", account.Proxy)
+	}
+	if account.CatalogMissingSince.IsZero() {
+		t.Fatal("missing catalog timestamp was not recorded for a managed proxy")
+	}
+
+	host.mu.Lock()
+	host.entries = entries
+	host.mu.Unlock()
+	if errRefresh := plugin.RefreshCatalog(context.Background()); errRefresh != nil {
+		t.Fatal(errRefresh)
+	}
+	account, ok = plugin.stateAccount("auth-1")
+	if !ok {
+		t.Fatal("account state was not restored after catalog recovery")
+	}
+	status, sourceID, _, managed := plugin.proxySvc.AccountBindingView(account, url)
+	if !managed || status != "bound" || sourceID != binding.SourceID {
+		t.Fatalf("managed proxy was reclassified after catalog recovery: status=%q source=%q managed=%v", status, sourceID, managed)
 	}
 }

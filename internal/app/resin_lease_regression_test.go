@@ -65,8 +65,26 @@ func TestCatalogRemovalQueuesResinLeaseDeleteFromSnapshot(t *testing.T) {
 		t.Fatal(errRefresh)
 	}
 	state := plugin.stateStore().Snapshot()
+	account, exists := state.Accounts["auth-1"]
+	if !exists || account.CatalogMissingSince.IsZero() {
+		t.Fatalf("temporary catalog omission did not retain the managed auth: %#v", account)
+	}
+	if len(state.ResinLeaseDeletes) != 0 {
+		t.Fatalf("temporary catalog omission queued lease deletes: %#v", state.ResinLeaseDeletes)
+	}
+
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		state.Accounts["auth-1"].CatalogMissingSince = time.Now().UTC().Add(-guardCatalogMissingRetention - time.Minute)
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if errRefresh := plugin.RefreshCatalog(context.Background()); errRefresh != nil {
+		t.Fatal(errRefresh)
+	}
+	state = plugin.stateStore().Snapshot()
 	if _, exists := state.Accounts["auth-1"]; exists {
-		t.Fatalf("removed auth remained in state: %#v", state.Accounts["auth-1"])
+		t.Fatalf("removed auth remained in state after retention: %#v", state.Accounts["auth-1"])
 	}
 	if len(state.ResinLeaseDeletes) != 1 {
 		t.Fatalf("queued lease deletes = %d, want 1: %#v", len(state.ResinLeaseDeletes), state.ResinLeaseDeletes)
