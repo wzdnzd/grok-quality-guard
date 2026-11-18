@@ -880,6 +880,18 @@ test('Proxy delete confirms stay concise and avoid trailing full stops', () => {
   assert.doesNotMatch(html, /成功项不会回滚。|成功项不会回滚'/);
 });
 
+test('Proxy management uses a compact workspace toolbar with underlined sub-navigation', () => {
+  assert.match(html, /<div class="proxy-workspace-bar">/);
+  assert.doesNotMatch(html, /代理工作区|统一管理账号绑定关系/);
+  assert.doesNotMatch(html, /proxyTasksBtn|查看任务中心|renderProxyTaskBadge/);
+  assert.match(html, /data-proxy-subtab="bindings">账号绑定/);
+  assert.match(html, /data-proxy-subtab="sources">代理资源/);
+  assert.match(html, /<div class="proxy-workspace-status" id="proxyAutoBindBar">/);
+  assert.match(html, /\.proxy-workspace-status\s*\{[\s\S]*?border-left: 1px solid var\(--line\)/);
+  assert.match(html, /\.proxy-subnav \.tab-button\.active::after\s*\{\s*background: var\(--text\);/);
+  assert.match(html, /document\.querySelectorAll\('\.tabs, \.settings-tabs, \.proxy-subnav'\)/);
+});
+
 test('Proxy UI uses unified naming and avoids Chinese full stops', () => {
   assert.doesNotMatch(html, /代理来源|个来源|来源名称|全部来源|添加来源|指定来源|来源范围/);
   assert.doesNotMatch(html, /。/);

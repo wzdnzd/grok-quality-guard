@@ -325,6 +325,91 @@
       margin-bottom: 14px;
     }
 
+    .proxy-workspace-bar {
+      display: flex;
+      align-items: stretch;
+      min-height: 46px;
+      margin-bottom: 12px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+
+    .proxy-subnav {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: stretch;
+      gap: 18px;
+    }
+
+    .proxy-subnav .tab-button,
+    .proxy-subnav .tab-button.active {
+      position: relative;
+      min-height: 44px;
+      padding: 0 2px;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .proxy-subnav .tab-button {
+      color: var(--muted);
+    }
+
+    .proxy-subnav .tab-button.active {
+      color: var(--text);
+    }
+
+    .proxy-subnav .tab-button::after {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      height: 2px;
+      border-radius: 2px 2px 0 0;
+      background: transparent;
+      content: "";
+    }
+
+    .proxy-subnav .tab-button.active::after {
+      background: var(--text);
+    }
+
+    .proxy-workspace-status {
+      display: flex;
+      flex: 1 1 auto;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      margin-left: 16px;
+      padding-left: 16px;
+      border-left: 1px solid var(--line);
+    }
+
+    .proxy-workspace-status > .icon {
+      color: var(--subtle);
+    }
+
+    #proxyAutoBindText {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .proxy-workspace-status .notice-actions {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 6px;
+      margin-left: 8px;
+    }
+
     .tabs::-webkit-scrollbar,
     .settings-tabs::-webkit-scrollbar {
       display: none;
@@ -2877,6 +2962,26 @@
         gap: 10px;
       }
 
+      .proxy-workspace-bar {
+        flex-direction: column;
+        gap: 0;
+      }
+
+      .proxy-subnav {
+        width: 100%;
+      }
+
+      .proxy-workspace-status {
+        margin-left: 0;
+        padding: 9px 0 10px;
+        border-top: 1px solid var(--line);
+        border-left: 0;
+      }
+
+      #proxyAutoBindText {
+        white-space: normal;
+      }
+
       .head-actions {
         width: 100%;
         justify-content: space-between;
@@ -3996,23 +4101,22 @@
         </section>
       </section>
       <section class="tab-panel" id="panel-resin" role="tabpanel" aria-labelledby="tab-resin">
-        <nav class="tabs settings-tabs" role="tablist" aria-label="代理管理任务">
-          <button class="tab-button active" id="proxy-tab-bindings" type="button" role="tab" aria-selected="true"
-            aria-controls="proxy-subpanel-bindings" data-proxy-subtab="bindings">账号绑定</button>
-          <button class="tab-button" id="proxy-tab-sources" type="button" role="tab" aria-selected="false"
-            aria-controls="proxy-subpanel-sources" data-proxy-subtab="sources">代理</button>
-        </nav>
-        <div class="notice" id="proxyAutoBindBar">
-          <svg class="icon">
-            <use href="#i-activity"></use>
-          </svg>
-          <span id="proxyAutoBindText" role="status" aria-live="polite">自动绑定：加载中</span>
-          <span class="notice-actions">
-            <button class="btn btn-xs" type="button" id="proxyAutoBindRunBtn">立即扫描</button>
-            <button class="btn btn-xs btn-ghost" type="button" id="proxyAutoBindToggleSettingsBtn" aria-expanded="false"
-              aria-controls="proxyAutoBindSettings">设置</button>
-            <button class="btn btn-xs btn-ghost" type="button" id="proxyTasksBtn">查看任务中心</button>
-          </span>
+        <div class="proxy-workspace-bar">
+          <nav class="proxy-subnav" role="tablist" aria-label="代理管理任务">
+            <button class="tab-button active" id="proxy-tab-bindings" type="button" role="tab" aria-selected="true"
+              aria-controls="proxy-subpanel-bindings" data-proxy-subtab="bindings">账号绑定</button>
+            <button class="tab-button" id="proxy-tab-sources" type="button" role="tab" aria-selected="false"
+              aria-controls="proxy-subpanel-sources" data-proxy-subtab="sources">代理资源</button>
+          </nav>
+          <div class="proxy-workspace-status" id="proxyAutoBindBar">
+            <svg class="icon"><use href="#i-activity"></use></svg>
+            <span id="proxyAutoBindText" role="status" aria-live="polite">自动绑定：加载中</span>
+            <span class="notice-actions">
+              <button class="btn btn-xs" type="button" id="proxyAutoBindRunBtn">立即扫描</button>
+              <button class="btn btn-xs btn-ghost" type="button" id="proxyAutoBindToggleSettingsBtn" aria-expanded="false"
+                aria-controls="proxyAutoBindSettings">设置</button>
+            </span>
+          </div>
         </div>
         <section class="card" id="proxyAutoBindSettings" aria-labelledby="proxyAutoBindSettingsTitle" hidden>
           <div class="card-header compact">
@@ -5139,20 +5243,24 @@
       }
       return payload.data;
     }
+    function rememberProxyTask(task, label) {
+      if (!task || !task.task_id) return;
+      state.proxyTasks.set(task.task_id, Object.assign({ label: label }, task));
+      while (state.proxyTasks.size > 50) state.proxyTasks.delete(state.proxyTasks.keys().next().value);
+    }
+
     async function waitForTask(value, label) {
       let task = value;
       if (!task || !task.task_id) return value;
-      state.proxyTasks.set(task.task_id, Object.assign({ label: label }, task));
-      renderProxyTaskBadge();
       toast((label || '任务') + '已提交，可在任务中心查看进度');
+      rememberProxyTask(task, label);
       if (state.activeTab === 'tasks') refreshTaskCenter(true);
       const deadline = Date.now() + 30 * 60 * 1000;
       while (task.status === 'queued' || task.status === 'running') {
         if (Date.now() > deadline) throw new Error((label || '任务') + '等待超时，请到任务中心查看当前状态');
         await new Promise((resolve) => window.setTimeout(resolve, 1000));
         task = await api('tasks.get', { task_id: task.task_id });
-        state.proxyTasks.set(task.task_id, Object.assign({ label: label }, task));
-        renderProxyTaskBadge();
+        rememberProxyTask(task, label);
         if (state.activeTab === 'tasks') renderTaskCenter();
       }
       if (task.status === 'failed' || task.status === 'cancelled' || task.status === 'canceled' || task.status === 'interrupted') {
@@ -5162,7 +5270,9 @@
       }
       if (state.activeTab === 'tasks') refreshTaskCenter(true);
       return task.result;
-    } function setTab(name, updateHash) {
+    }
+
+    function setTab(name, updateHash) {
       const allowed = ['overview', 'accounts', 'resin', 'tasks', 'events', 'settings'];
       if (!allowed.includes(name)) name = 'overview';
       state.activeTab = name;
@@ -6119,13 +6229,6 @@
       const summary = proxyResultMessage(result, label);
       toast(summary.message, summary.failed ? 'error' : 'success');
       return summary;
-    }
-    function renderProxyTaskBadge() {
-      while (state.proxyTasks.size > 50) state.proxyTasks.delete(state.proxyTasks.keys().next().value);
-      const active = Array.from(state.proxyTasks.values()).filter((task) => ['queued', 'running'].includes(task.status)).length;
-      const failed = Array.from(state.proxyTasks.values()).filter((task) => task.status === 'failed' || proxySyncFailures(task.result).length).length;
-      const button = document.getElementById('proxyTasksBtn');
-      if (button) button.textContent = '任务中心' + (active ? ' · 进行中：' + active : '') + (failed ? ' · 失败：' + failed : '');
     }
     async function openProxyChangeDetails(changeID) {
       const id = String(changeID || '').trim();
@@ -8539,7 +8642,7 @@
     document.querySelectorAll('[data-proxy-subtab]').forEach((button) => button.addEventListener('click', () => setProxySubtab(button.dataset.proxySubtab)));
     document.querySelectorAll('[data-goto-tab]').forEach((button) => button.addEventListener('click', () => setTab(button.dataset.gotoTab)));
     document.querySelectorAll('[data-open-settings]').forEach((button) => button.addEventListener('click', () => openSettings(button.dataset.openSettings)));
-    document.querySelectorAll('.tabs, .settings-tabs').forEach((tablist) => tablist.addEventListener('keydown', (event) => {
+    document.querySelectorAll('.tabs, .settings-tabs, .proxy-subnav').forEach((tablist) => tablist.addEventListener('keydown', (event) => {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
       const buttons = Array.from(tablist.querySelectorAll('[role="tab"]'));
       const current = buttons.indexOf(document.activeElement);
@@ -9102,7 +9205,6 @@
       setProxyAutoBindSettingsOpen(document.getElementById('proxyAutoBindSettings').hidden);
     });
     document.getElementById('proxyAutoBindCloseBtn').addEventListener('click', () => setProxyAutoBindSettingsOpen(false));
-    document.getElementById('proxyTasksBtn').addEventListener('click', () => openTaskCenter());
     document.getElementById('proxyAutoBindForm').addEventListener('submit', (event) => {
       event.preventDefault();
       saveProxyAutoBind(event.submitter || document.querySelector('#proxyAutoBindForm button[type="submit"]'));
