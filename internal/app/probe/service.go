@@ -38,6 +38,7 @@ type QueueSnapshot struct {
 	LastScanAt    time.Time `json:"last_scan_at,omitempty"`
 	LastSuccessAt time.Time `json:"last_success_at,omitempty"`
 	LastError     string    `json:"last_error,omitempty"`
+	LastErrorCode string    `json:"last_error_code,omitempty"`
 }
 
 // QueueEntry identifies one account currently owned by the automatic probe

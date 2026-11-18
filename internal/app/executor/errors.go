@@ -3,7 +3,6 @@ package executor
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -20,11 +19,11 @@ func classifyProbeStatus(status int) string {
 func classifyUpstreamStatus(status int, body []byte) (string, string) {
 	switch status {
 	case http.StatusUnauthorized:
-		return ClassCredentialInvalid, "upstream status 401 (credential rejected)"
+		return ClassCredentialInvalid, "reason.detail.upstream_status_401_credential_rejected"
 	case http.StatusProxyAuthRequired:
-		return ClassProxyError, "upstream status 407 (proxy authentication required)"
+		return ClassProxyError, "reason.detail.upstream_status_407_proxy_authentication_required"
 	case http.StatusPaymentRequired:
-		return ClassQuotaExhausted, "upstream status 402 (quota exhausted)"
+		return ClassQuotaExhausted, "reason.detail.upstream_status_402_quota_exhausted"
 	}
 	if len(body) > maxUpstreamErrorClassifyBytes {
 		body = body[:maxUpstreamErrorClassifyBytes]
@@ -33,21 +32,21 @@ func classifyUpstreamStatus(status int, body []byte) (string, string) {
 	switch status {
 	case http.StatusForbidden:
 		if isQuotaExhaustionText(text) {
-			return ClassQuotaExhausted, "upstream status 403 (quota exhausted)"
+			return ClassQuotaExhausted, "reason.detail.upstream_status_403_quota_exhausted"
 		}
 		// A WAF/CDN HTML page often contains the word authentication. Only a
 		// structured JSON error with a strong credential phrase is actionable.
 		if json.Valid(body) && isCredentialRejectionText(text) {
-			return ClassCredentialInvalid, "upstream status 403 (credential rejected)"
+			return ClassCredentialInvalid, "reason.detail.upstream_status_403_credential_rejected"
 		}
-		return ClassIgnored, "upstream status 403"
+		return ClassIgnored, "reason.detail.upstream_status_403"
 	case http.StatusTooManyRequests:
 		if isQuotaExhaustionText(text) {
-			return ClassQuotaExhausted, "upstream status 429 (quota exhausted)"
+			return ClassQuotaExhausted, "reason.detail.upstream_status_429_quota_exhausted"
 		}
-		return ClassRateLimited, "upstream status 429 (rate limited)"
+		return ClassRateLimited, "reason.detail.upstream_status_429_rate_limited"
 	}
-	return ClassIgnored, fmt.Sprintf("upstream status %d", status)
+	return ClassIgnored, "reason.detail.upstream_status_other"
 }
 
 func isQuotaExhaustionText(text string) bool {
@@ -125,24 +124,24 @@ func (s *Service) readModelStreamErrorBody(ctx context.Context, streamID string)
 
 func classifyTransportFailure(errValue error) (string, string) {
 	if errValue == nil {
-		return ClassProbeError, "probe transport error"
+		return ClassProbeError, "reason.detail.probe_transport_error"
 	}
 	text := strings.ToLower(errValue.Error())
 	if isHostModelCooldownText(text) {
-		return ClassIgnored, "host_call_failed: model cooldown"
+		return ClassIgnored, "reason.detail.model_cooldown"
 	}
 	if strings.Contains(text, "proxy") || strings.Contains(text, "resin") || strings.Contains(text, "socks") {
-		return ClassProxyError, "probe transport error"
+		return ClassProxyError, "reason.detail.probe_transport_error"
 	}
 	if isQuotaExhaustionText(text) {
-		return ClassQuotaExhausted, "host_call_failed: quota exhausted"
+		return ClassQuotaExhausted, "reason.detail.quota_exhausted"
 	}
 	for _, marker := range []string{"invalid token", "expired", "no auth", "quota", "rate limit", "ratelimit", "too many requests", "permission denied", "forbidden", "unauthorized"} {
 		if strings.Contains(text, marker) {
-			return ClassIgnored, "probe transport error"
+			return ClassIgnored, "reason.detail.probe_transport_error"
 		}
 	}
-	return ClassProbeError, "probe transport error"
+	return ClassProbeError, "reason.detail.probe_transport_error"
 }
 
 func isHostModelCooldownText(text string) bool {

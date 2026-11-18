@@ -3,6 +3,8 @@ package app
 import (
 	"strings"
 	"testing"
+
+	"grok-quality-guard/internal/app/i18n"
 )
 
 func TestRegistrationCopyHasNoTerminalPunctuation(t *testing.T) {
@@ -30,4 +32,43 @@ func registrationCopyEndsWithPunctuation(value string) bool {
 		last = char
 	}
 	return strings.ContainsRune("。！？…；：，、,.!?;:", last)
+}
+
+func TestRegistrationDescriptionsUseRequestedLocale(t *testing.T) {
+	for _, locale := range i18n.SupportedLocales {
+		registration := pluginRegistrationForLocale(locale)
+		for _, field := range registration.Metadata.ConfigFields {
+			key := "registration.config." + strings.NewReplacer(".", "_", "-", "_").Replace(strings.TrimSpace(field.Name))
+			if !i18n.Has(locale, key) {
+				t.Fatalf("%s config field %s has no locale key %s", locale, field.Name, key)
+			}
+			if field.Description == key {
+				t.Fatalf("%s config field %s description fell back to key %s", locale, field.Name, key)
+			}
+			if locale == "en" && containsHan(field.Description) {
+				t.Fatalf("English config field %s contains Chinese text: %q", field.Name, field.Description)
+			}
+		}
+		var plugin Plugin
+		for _, resource := range plugin.ManagementRegistrationForLocale(locale).Resources {
+			if !i18n.Has(locale, "registration.description") {
+				t.Fatalf("%s management registration description key is missing", locale)
+			}
+			if resource.Description == "registration.description" {
+				t.Fatalf("%s management registration description fell back to its key", locale)
+			}
+			if locale == "en" && containsHan(resource.Description) {
+				t.Fatalf("English management registration description contains Chinese text: %q", resource.Description)
+			}
+		}
+	}
+}
+
+func containsHan(value string) bool {
+	for _, char := range value {
+		if char >= '\u4e00' && char <= '\u9fff' {
+			return true
+		}
+	}
+	return false
 }

@@ -154,7 +154,7 @@ func TestGuardOwnershipAndReasonSurvivePluginRestart(t *testing.T) {
 		t.Fatalf("guard reason was lost after restart: %q", account.DisableReason)
 	}
 	response := actionManagementForTest(t, restarted, "accounts.list", map[string]any{"summary": true})
-	if response.StatusCode != 200 || !strings.Contains(string(response.Body), `"disable_reason":"missing_thinking"`) {
+	if response.StatusCode != 200 || !strings.Contains(string(response.Body), `"disable_reason":"缺少真实思考"`) {
 		t.Fatalf("management response did not expose the persisted guard reason: status=%d body=%s", response.StatusCode, response.Body)
 	}
 }

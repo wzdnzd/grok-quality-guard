@@ -2,12 +2,12 @@ package management
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"grok-quality-guard/internal/app/action"
+	"grok-quality-guard/internal/app/i18n"
 	"grok-quality-guard/internal/app/tasks"
 	proxy "grok-quality-guard/internal/proxy"
 )
@@ -36,7 +36,8 @@ type taskCenterQueueDetail struct {
 	Waiting taskCenterQueuePage   `json:"waiting"`
 }
 
-func (s *Service) actionTaskCenterList(params map[string]any) (any, int, error) {
+func (s *Service) actionTaskCenterList(params map[string]any, locales ...string) (any, int, error) {
+	locale := localeOrDefault(locales)
 	filter := tasks.TaskCenterFilter{
 		Page:     action.Int(params, "page", 1),
 		PageSize: action.Int(params, "page_size", 20),
@@ -48,6 +49,9 @@ func (s *Service) actionTaskCenterList(params map[string]any) (any, int, error) 
 	if errCenter != nil {
 		return nil, http.StatusInternalServerError, errCenter
 	}
+	for index := range result.Items {
+		result.Items[index] = localizeTask(locale, result.Items[index])
+	}
 	return map[string]any{
 		"items":           result.Items,
 		"total":           result.Total,
@@ -55,10 +59,9 @@ func (s *Service) actionTaskCenterList(params map[string]any) (any, int, error) 
 		"page_size":       result.PageSize,
 		"counts":          result.Counts,
 		"history":         result.History,
-		"resident_queues": s.taskCenterResidentQueues(),
+		"resident_queues": s.taskCenterResidentQueues(locale),
 	}, http.StatusOK, nil
 }
-
 func (s *Service) actionTaskCenterQueue(params map[string]any) (any, int, error) {
 	queueID := strings.TrimSpace(asString(params["queue_id"]))
 	page := max(1, action.Int(params, "page", 1))
@@ -89,7 +92,7 @@ func (s *Service) actionTaskCenterQueue(params map[string]any) (any, int, error)
 	case "auto_bind", "proxy_health":
 		detail, ok := s.env.ProxyQueueDetail(queueID)
 		if !ok {
-			return nil, http.StatusBadRequest, errors.New("unknown queue_id")
+			return nil, http.StatusBadRequest, newAPIActionError("queue_not_found", "api.error.queue_not_found", http.StatusBadRequest, nil)
 		}
 		active := make([]taskCenterQueueItem, 0, len(detail.Active))
 		for _, entry := range detail.Active {
@@ -128,7 +131,7 @@ func (s *Service) actionTaskCenterQueue(params map[string]any) (any, int, error)
 		}
 		return taskCenterQueueDetail{QueueID: queueID, Active: active, Waiting: paginateTaskCenterQueue(waiting, page, pageSize)}, http.StatusOK, nil
 	default:
-		return nil, http.StatusBadRequest, errors.New("unknown queue_id")
+		return nil, http.StatusBadRequest, newAPIActionError("queue_not_found", "api.error.queue_not_found", http.StatusBadRequest, nil)
 	}
 }
 
@@ -152,10 +155,11 @@ func paginateTaskCenterQueue(items []taskCenterQueueItem, page, pageSize int) ta
 		PageSize: pageSize,
 	}
 }
-func (s *Service) actionTaskCenterDetail(params map[string]any) (any, int, error) {
+func (s *Service) actionTaskCenterDetail(params map[string]any, locales ...string) (any, int, error) {
+	locale := localeOrDefault(locales)
 	taskID := strings.TrimSpace(asString(params["task_id"]))
 	if taskID == "" {
-		return nil, http.StatusBadRequest, errors.New("task_id is required")
+		return nil, http.StatusBadRequest, newAPIActionError("task_id_required", "api.error.task_id_required", http.StatusBadRequest, nil)
 	}
 	page := action.Int(params, "page", 1)
 	pageSize := action.Int(params, "page_size", 20)
@@ -165,26 +169,26 @@ func (s *Service) actionTaskCenterDetail(params map[string]any) (any, int, error
 	status := taskCenterStatusFilter(asString(params["item_status"]), asString(params["status_filter"]))
 	detail, errDetail := s.taskDetail(taskID, page, pageSize, status)
 	if errors.Is(errDetail, tasks.ErrTaskNotFound) {
-		return nil, http.StatusNotFound, errors.New("任务不存在")
+		return nil, http.StatusNotFound, newAPIActionError("task_not_found", "api.error.task_not_found", http.StatusNotFound, nil)
 	}
 	if errDetail != nil {
 		return nil, http.StatusInternalServerError, errDetail
 	}
-	detail.Task = tasks.HistorySummary(detail.Task)
+	detail.Task = localizeTask(locale, tasks.HistorySummary(detail.Task))
 	return detail, http.StatusOK, nil
 }
 
 func (s *Service) actionTaskCenterDelete(params map[string]any) (any, int, error) {
 	taskID := strings.TrimSpace(asString(params["task_id"]))
 	if taskID == "" {
-		return nil, http.StatusBadRequest, errors.New("task_id is required")
+		return nil, http.StatusBadRequest, newAPIActionError("task_id_required", "api.error.task_id_required", http.StatusBadRequest, nil)
 	}
 	if errDelete := s.deleteTask(taskID); errDelete != nil {
 		switch {
 		case errors.Is(errDelete, tasks.ErrTaskNotFound):
-			return nil, http.StatusNotFound, errors.New("任务不存在")
+			return nil, http.StatusNotFound, newAPIActionError("task_not_found", "api.error.task_not_found", http.StatusNotFound, nil)
 		case errors.Is(errDelete, tasks.ErrTaskActive):
-			return nil, http.StatusConflict, errors.New("任务仍在执行中，请先取消任务并等待结束")
+			return nil, http.StatusConflict, newAPIActionError("task_active", "api.error.task_active", http.StatusConflict, nil)
 		default:
 			return nil, http.StatusInternalServerError, errDelete
 		}
@@ -192,7 +196,8 @@ func (s *Service) actionTaskCenterDelete(params map[string]any) (any, int, error
 	return map[string]any{"deleted": true, "task_id": taskID}, http.StatusOK, nil
 }
 
-func (s *Service) taskCenterResidentQueues() []map[string]any {
+func (s *Service) taskCenterResidentQueues(locales ...string) []map[string]any {
+	locale := localeOrDefault(locales)
 	queues := make([]map[string]any, 0, 5)
 	policy := s.env.Policy()
 	probeQueue := s.env.ProbeQueueSnapshot()
@@ -213,11 +218,11 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 		}
 		queues = append(queues, map[string]any{
 			"id":              "quality_probe",
-			"label":           "质量检测队列",
+			"label":           i18n.T(locale, "queue.quality_probe.label", nil),
 			"category":        "quality",
 			"status":          status,
 			"started":         probeQueue.Started,
-			"description":     "扫描到期账号并逐项执行主动质量探测",
+			"description":     i18n.T(locale, "queue.quality_probe.description", nil),
 			"total":           total,
 			"completed":       completed,
 			"running":         probeQueue.Active,
@@ -228,8 +233,9 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 			"last_scan_at":    probeQueue.LastScanAt,
 			"last_success_at": probeQueue.LastSuccessAt,
 			"last_error":      probeQueue.LastError,
+			"last_error_code": probeQueue.LastErrorCode,
 			"updated_at":      latestTime(probeQueue.LastScanAt, probeQueue.LastSuccessAt),
-			"detail":          fmt.Sprintf("扫描间隔 %s，自动探测并发 %d，队列容量 %d；只处理到期的非健康账号，等待和执行中的账号按 OAuth 身份去重。实时进度在此汇总，单账号结果写入事件日志", scanInterval, policy.Probe.Concurrency, policy.Probe.QueueSize),
+			"detail":          i18n.T(locale, "queue.quality_probe.detail", map[string]any{"interval": scanInterval.String(), "concurrency": policy.Probe.Concurrency, "capacity": policy.Probe.QueueSize}),
 		})
 	}
 
@@ -257,10 +263,10 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 		}
 		queues = append(queues, map[string]any{
 			"id":              "auto_bind",
-			"label":           "自动绑定队列",
+			"label":           i18n.T(locale, "queue.auto_bind.label", nil),
 			"category":        "proxy",
 			"status":          status,
-			"description":     autoBindQueueDescription(autoConfig.Enabled, runtime.WaitingReason),
+			"description":     autoBindQueueDescription(locale, autoConfig.Enabled, runtime.WaitingReason),
 			"total":           completed + autoWaiting + autoRunning,
 			"completed":       completed,
 			"running":         autoRunning,
@@ -271,8 +277,9 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 			"last_scan_at":    runtime.LastScanAt,
 			"last_success_at": runtime.LastSuccessAt,
 			"last_error":      runtime.LastError,
+			"last_error_code": runtime.LastErrorCode,
 			"updated_at":      latestTime(runtime.LastScanAt, runtime.LastSuccessAt),
-			"detail":          "按账号逐项展示自动绑定结果；仅在自动绑定开启或队列仍有工作时显示",
+			"detail":          i18n.T(locale, "queue.auto_bind.detail", nil),
 		})
 	}
 
@@ -285,10 +292,10 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 		}
 		queues = append(queues, map[string]any{
 			"id":          "proxy_health",
-			"label":       "代理健康检查",
+			"label":       i18n.T(locale, "queue.proxy_health.label", nil),
 			"category":    "proxy",
 			"status":      healthStatus,
-			"description": "自动绑定要求代理保持新鲜健康状态",
+			"description": i18n.T(locale, "queue.proxy_health.description", nil),
 			"total":       healthRunning + healthWaiting,
 			"completed":   0,
 			"running":     healthRunning,
@@ -296,7 +303,7 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 			"succeeded":   0,
 			"failed":      0,
 			"skipped":     0,
-			"detail":      "健康检查最长有效时间：" + autoConfig.HealthMaxAge + "；仅自动绑定需要健康检查时显示",
+			"detail":      i18n.T(locale, "queue.proxy_health.detail", map[string]any{"max_age": autoConfig.HealthMaxAge}),
 		})
 	}
 
@@ -305,6 +312,7 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 		succeeded, failed, pending := 0, 0, 0
 		updatedAt := time.Time{}
 		lastError := ""
+		lastErrorCode := ""
 		for _, change := range changes {
 			succeeded += change.Counts.Succeeded
 			failed += change.Counts.Failed
@@ -314,6 +322,7 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 			}
 			if lastError == "" && change.Error != "" {
 				lastError = change.Error
+				lastErrorCode = change.ErrorCode
 			}
 		}
 		status := "succeeded"
@@ -323,21 +332,22 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 			status = "failed"
 		}
 		queues = append(queues, map[string]any{
-			"id":          "proxy_changes",
-			"label":       "代理同步队列",
-			"category":    "proxy",
-			"status":      status,
-			"description": "代理配置变更按账号逐项同步",
-			"total":       succeeded + failed + pending,
-			"completed":   succeeded + failed,
-			"running":     0,
-			"waiting":     pending,
-			"succeeded":   succeeded,
-			"failed":      failed,
-			"skipped":     0,
-			"updated_at":  updatedAt,
-			"last_error":  lastError,
-			"detail":      "包含自动绑定、模板应用和手动同步产生的逐个账号执行记录",
+			"id":              "proxy_changes",
+			"label":           i18n.T(locale, "queue.proxy_changes.label", nil),
+			"category":        "proxy",
+			"status":          status,
+			"description":     i18n.T(locale, "queue.proxy_changes.description", nil),
+			"total":           succeeded + failed + pending,
+			"completed":       succeeded + failed,
+			"running":         0,
+			"waiting":         pending,
+			"succeeded":       succeeded,
+			"failed":          failed,
+			"skipped":         0,
+			"updated_at":      updatedAt,
+			"last_error":      lastError,
+			"last_error_code": lastErrorCode,
+			"detail":          i18n.T(locale, "queue.proxy_changes.detail", nil),
 		})
 	}
 
@@ -355,6 +365,7 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 		pending, failed, paused := 0, 0, 0
 		updatedAt := time.Time{}
 		lastError := ""
+		lastErrorCode := ""
 		for _, job := range cleanup {
 			if job.Paused {
 				paused++
@@ -365,6 +376,7 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 			}
 			if job.LastError != "" && lastError == "" {
 				lastError = job.LastError
+				lastErrorCode = job.LastErrorCode
 			}
 			if job.CreatedAt.After(updatedAt) {
 				updatedAt = job.CreatedAt
@@ -381,22 +393,23 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 			status = "paused"
 		}
 		queues = append(queues, map[string]any{
-			"id":          "resin_cleanup",
-			"label":       "Resin 租约清理",
-			"category":    "proxy",
-			"status":      status,
-			"description": "清理轮换后不再引用的 Resin 租约",
-			"total":       len(cleanup),
-			"completed":   0,
-			"running":     0,
-			"waiting":     pending,
-			"succeeded":   0,
-			"failed":      failed,
-			"skipped":     paused,
-			"resin_bound": resinBound,
-			"updated_at":  updatedAt,
-			"last_error":  lastError,
-			"detail":      "只有存在待清理租约，或 Resin 代理仍被账号使用时显示",
+			"id":              "resin_cleanup",
+			"label":           i18n.T(locale, "queue.resin_cleanup.label", nil),
+			"category":        "proxy",
+			"status":          status,
+			"description":     i18n.T(locale, "queue.resin_cleanup.description", nil),
+			"total":           len(cleanup),
+			"completed":       0,
+			"running":         0,
+			"waiting":         pending,
+			"succeeded":       0,
+			"failed":          failed,
+			"skipped":         paused,
+			"resin_bound":     resinBound,
+			"updated_at":      updatedAt,
+			"last_error":      lastError,
+			"last_error_code": lastErrorCode,
+			"detail":          i18n.T(locale, "queue.resin_cleanup.detail", nil),
 		})
 	}
 	return queues
@@ -431,17 +444,17 @@ func shouldShowResinCleanupQueue(cleanupCount, resinBound int) bool {
 	return cleanupCount > 0 || resinBound > 0
 }
 
-func autoBindQueueDescription(enabled bool, waitingReason string) string {
+func autoBindQueueDescription(locale string, enabled bool, waitingReason string) string {
 	if !enabled {
-		return "自动绑定已关闭，仅保留尚未结束的队列状态"
+		return i18n.T(locale, "queue.auto_bind.description.disabled", nil)
 	}
 	switch waitingReason {
 	case "waiting_health":
-		return "等待代理健康检查通过后继续"
+		return i18n.T(locale, "queue.auto_bind.description.waiting_health", nil)
 	case "disabled":
-		return "自动绑定已暂停"
+		return i18n.T(locale, "queue.auto_bind.description.paused", nil)
 	default:
-		return "扫描未绑定账号并逐项执行代理绑定"
+		return i18n.T(locale, "queue.auto_bind.description.enabled", nil)
 	}
 }
 

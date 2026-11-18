@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+
+	"grok-quality-guard/internal/app/i18n"
 )
 
 var errTransparentAttemptAborted = fmt.Errorf("transparent attempt aborted")
@@ -57,13 +59,13 @@ func (s *Service) routeHasAvailableXAIAuth(providers []string) bool {
 func (s *Service) Execute(request []byte) ([]byte, error) {
 	var req Request
 	if len(request) == 0 || json.Unmarshal(request, &req) != nil {
-		return errorEnvelope("invalid_request", "decode executor request", http.StatusBadRequest), nil
+		return localizedErrorEnvelope(i18n.DefaultLocale, "invalid_request", "api.error.invalid_request", http.StatusBadRequest), nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	result, errExecute := s.transparentExecute(ctx, req)
 	if errExecute != nil {
-		return errorEnvelope("quality_degraded", "no healthy Grok account produced a valid response", http.StatusServiceUnavailable), nil
+		return localizedErrorEnvelope(executorRequestLocale(req.Headers), "quality_degraded", "api.error.quality_degraded", http.StatusServiceUnavailable), nil
 	}
 	return okEnvelope(pluginapi.ExecutorResponse{Payload: result.Payload, Headers: result.Headers})
 }
@@ -71,7 +73,7 @@ func (s *Service) Execute(request []byte) ([]byte, error) {
 func (s *Service) ExecuteStream(request []byte) ([]byte, error) {
 	var req Request
 	if len(request) == 0 || json.Unmarshal(request, &req) != nil {
-		return errorEnvelope("invalid_request", "decode executor request", http.StatusBadRequest), nil
+		return localizedErrorEnvelope(i18n.DefaultLocale, "invalid_request", "api.error.invalid_request", http.StatusBadRequest), nil
 	}
 	streamID := strings.TrimSpace(req.StreamID)
 	if streamID == "" {
@@ -79,7 +81,7 @@ func (s *Service) ExecuteStream(request []byte) ([]byte, error) {
 		defer cancel()
 		result, errExecute := s.transparentExecuteBufferedStream(ctx, req)
 		if errExecute != nil {
-			return errorEnvelope("quality_degraded", "no healthy Grok account produced a valid response", http.StatusServiceUnavailable), nil
+			return localizedErrorEnvelope(executorRequestLocale(req.Headers), "quality_degraded", "api.error.quality_degraded", http.StatusServiceUnavailable), nil
 		}
 		return okEnvelope(StreamResponse{Headers: result.Headers, Chunks: result.Chunks})
 	}

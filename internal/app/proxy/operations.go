@@ -120,6 +120,7 @@ func (s *Service) commitProxyOperationLocked(ctx context.Context, response plugi
 			result.CommitUnknown = true
 			result.NeedsReconcile = true
 			result.Error = redact.SanitizeError(saveErr)
+			result.Code = proxyErrorCode(saveErr)
 			return result, saveErr
 		}
 		actualURL, valueErr := proxyURLFromRaw(actual)
@@ -139,6 +140,7 @@ func (s *Service) commitProxyOperationLocked(ctx context.Context, response plugi
 		result.CommitUnknown = true
 		result.NeedsReconcile = true
 		result.Error = redact.SanitizeError(readErr)
+		result.Code = proxyErrorCode(readErr)
 		return result, readErr
 	}
 	verifiedURL, valueErr := proxyURLFromRaw(verified)
@@ -158,10 +160,11 @@ func (s *Service) failProxyOperation(operation proxy.Operation, err error, recon
 		operation.NextAttemptAt = time.Now().UTC().Add(time.Minute)
 	}
 	operation.Error = redact.SanitizeError(err)
+	operation.ErrorCode = proxyErrorCode(err)
 	operation.UpdatedAt = time.Now().UTC()
 	commit := proxyCommit{Operation: &operation}
 	if operation.ChangeID != "" {
-		item := proxy.ChangeItem{AuthID: operation.AuthID, Generation: operation.ExpectedGeneration, EndpointHash: operation.ExpectedHash, OperationID: operation.ID, Status: operation.Status, Error: operation.Error}
+		item := proxy.ChangeItem{AuthID: operation.AuthID, Generation: operation.ExpectedGeneration, EndpointHash: operation.ExpectedHash, OperationID: operation.ID, Status: operation.Status, Error: operation.Error, ErrorCode: operation.ErrorCode}
 		commit.ChangeID = operation.ChangeID
 		commit.ChangeItem = &item
 	}
@@ -181,11 +184,13 @@ func (s *Service) finalizeProxyOperation(operation proxy.Operation) (proxyBindin
 	auto.Excluded = operation.ExcludeAutoBind
 	auto.Attempts = 0
 	auto.LastError = ""
+	auto.LastErrorCode = ""
 	auto.NextAttemptAt = time.Time{}
 	now := time.Now().UTC()
 	operation.Status = "finalized"
 	operation.NextAttemptAt = time.Time{}
 	operation.Error = ""
+	operation.ErrorCode = ""
 	operation.UpdatedAt = now
 	commit := proxyCommit{Operation: &operation, Account: &proxyAccountCommit{AuthID: operation.AuthID, Binding: operation.Binding, AutoBind: auto}, DeleteOperations: store.PrunableProxyOperations()}
 	status := "succeeded"
@@ -212,7 +217,7 @@ func (s *Service) finalizeProxyOperation(operation proxy.Operation) (proxyBindin
 		detail += " remote_lease=delete_queued"
 	} else if operation.Binding.SourceKind == proxy.SourceResin || operation.OldLease != nil {
 		if operation.Binding.Lease != nil && operation.Binding.Lease.Provider == "resin-local" || operation.OldLease != nil && operation.OldLease.Provider == "resin-local" {
-			detail += " remote_lease=skipped_local_only 未调用 Resin API"
+			detail += " remote_lease=skipped_local_only"
 		} else {
 			detail += " remote_lease=not_queued"
 		}
@@ -234,6 +239,7 @@ func (s *Service) finalizeProxyOperation(operation proxy.Operation) (proxyBindin
 		result.Status = "needs_reconcile"
 		result.NeedsReconcile = true
 		result.Error = redact.SanitizeError(err)
+		result.Code = proxyErrorCode(err)
 		s.updateCatalogProxy(operation.AuthID, operation.DesiredURL)
 		return result, err
 	}
@@ -855,8 +861,13 @@ func (s *Service) runProxyChange(ctx context.Context, id string) (map[string]any
 				result, err = s.replaceProxyEndpoint(jobCtx, item.AuthID, kind, change.SourceID, change.TargetRevision, endpoint, values, "proxy_source_apply", opts)
 			}
 		}
-		if err != nil && result.Error == "" {
-			result.Error = redact.SanitizeError(err)
+		if err != nil {
+			if result.Error == "" {
+				result.Error = redact.SanitizeError(err)
+			}
+			if result.Code == "" {
+				result.Code = proxyErrorCode(err)
+			}
 		}
 		if result.Status == "" {
 			result.Status = "failed"
@@ -867,6 +878,7 @@ func (s *Service) runProxyChange(ctx context.Context, id string) (map[string]any
 		}
 		item.Status = result.Status
 		item.Error = result.Error
+		item.ErrorCode = result.Code
 		switch result.Status {
 		case "succeeded", "bound", "rotated", "cleared", "unchanged":
 			item.Status = "succeeded"
@@ -915,6 +927,7 @@ func (s *Service) runProxyChange(ctx context.Context, id string) (map[string]any
 					if len(proxyBindingAuthIDsFromState(*state, change.SourceID, proxy.SourceKind(s.proxyKindFromState(*state, change.SourceID)))) > 0 {
 						current.Status = "partial"
 						current.Error = "bindings changed during deletion; clear or reconcile the remaining bindings"
+						current.ErrorCode = "proxy_source_cleanup_failed"
 					} else {
 						for j, n := range state.Proxy.Nodes {
 							if n.ID == change.SourceID {
@@ -989,6 +1002,9 @@ func (s *Service) proxyApplyNodeToAccounts(ctx context.Context, node proxy.Node,
 		if err != nil && result.Error == "" {
 			result.Error = redact.SanitizeError(err)
 		}
+		if err != nil && result.Code == "" {
+			result.Code = proxyErrorCode(err)
+		}
 		results[i] = result
 		tasks.ReportItem(jobCtx, result)
 	})
@@ -997,7 +1013,7 @@ func (s *Service) proxyApplyNodeToAccounts(ctx context.Context, node proxy.Node,
 func (s *Service) proxyApplyTemplateToAccounts(ctx context.Context, template proxy.Template, ids []string) []proxyBindingResult {
 	compiled, err := proxy.CompileTemplate(template)
 	if err != nil {
-		return []proxyBindingResult{{Status: "failed", Error: redact.SanitizeError(err)}}
+		return []proxyBindingResult{{Status: "failed", Error: redact.SanitizeError(err), Code: proxyErrorCode(err)}}
 	}
 	results := make([]proxyBindingResult, len(ids))
 	_ = tasks.RunBoundedQueue(ctx, proxyIndices(len(ids)), min(len(ids), 256), s.proxyWorkerCount(), func(jobCtx context.Context, i int) {
@@ -1010,6 +1026,9 @@ func (s *Service) proxyApplyTemplateToAccounts(ctx context.Context, template pro
 		result, err := s.proxyReplaceManagedEndpoint(jobCtx, ids[i], proxy.SourceTemplate, template.ID, template.Revision, rendered.Endpoint, rendered.Values, "proxy_template_apply")
 		if err != nil && result.Error == "" {
 			result.Error = redact.SanitizeError(err)
+		}
+		if err != nil && result.Code == "" {
+			result.Code = proxyErrorCode(err)
 		}
 		results[i] = result
 		tasks.ReportItem(jobCtx, result)

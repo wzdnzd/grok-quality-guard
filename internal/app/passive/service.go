@@ -177,7 +177,7 @@ func (s *Service) HandleUsage(request []byte) {
 		return
 	}
 	if record.Failed {
-		_ = s.env.ApplyVerdict(context.Background(), record.AuthID, quality.QualityVerdict{Class: quality.ClassIgnored, Reason: "unsuccessful"}, "passive", "")
+		_ = s.env.ApplyVerdict(context.Background(), record.AuthID, quality.QualityVerdict{Class: quality.ClassIgnored, Reason: "reason.detail.unsuccessful"}, "passive", "")
 		return
 	}
 

@@ -9,6 +9,7 @@ import (
 
 	"grok-quality-guard/internal/abi"
 	"grok-quality-guard/internal/app/auth"
+	"grok-quality-guard/internal/app/i18n"
 	"grok-quality-guard/internal/app/model"
 	"grok-quality-guard/internal/app/redact"
 	appstate "grok-quality-guard/internal/app/state"
@@ -56,6 +57,21 @@ const (
 
 func okEnvelope(value any) ([]byte, error)                  { return abi.OK(value) }
 func errorEnvelope(code, message string, status int) []byte { return abi.Error(code, message, status) }
+func executorRequestLocale(headers http.Header) string {
+	if headers == nil {
+		return i18n.DefaultLocale
+	}
+	values := make([]string, 0, 1)
+	for name, list := range headers {
+		if strings.EqualFold(name, "Accept-Language") {
+			values = append(values, list...)
+		}
+	}
+	return i18n.Negotiate(strings.Join(values, ","))
+}
+func localizedErrorEnvelope(locale, code, messageKey string, status int) []byte {
+	return errorEnvelope(code, i18n.T(locale, messageKey, nil), status)
+}
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {

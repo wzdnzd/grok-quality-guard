@@ -9,19 +9,19 @@ import (
 func TestPassiveAuditIgnoresIneligibleSamples(t *testing.T) {
 	config := config.DefaultQualityConfig()
 	nonStream := classifyPassiveAudit(Signals{OutputTokens: 100, FirstTokenKnown: true}, config)
-	if nonStream.Class != ClassIgnored || nonStream.Reason != "not_build_stream" {
+	if nonStream.Class != ClassIgnored || nonStream.Reason != "reason.detail.not_build_stream" {
 		t.Fatalf("non-stream passive verdict = %#v", nonStream)
 	}
 	missingTTFT := classifyPassiveAudit(Signals{Streaming: true, Terminal: true, DurationMS: 1000, OutputTokens: 100}, config)
-	if missingTTFT.Class != ClassIgnored || missingTTFT.Reason != "missing_first_token" {
+	if missingTTFT.Class != ClassIgnored || missingTTFT.Reason != "reason.detail.missing_first_token" {
 		t.Fatalf("missing-TTFT passive verdict = %#v", missingTTFT)
 	}
 	short := classifyPassiveAudit(Signals{Streaming: true, Terminal: true, FirstTokenKnown: true, FirstTokenMS: 100, DurationMS: 1000, OutputTokens: 31}, config)
-	if short.Class != ClassIgnored || short.Reason != "insufficient_output_tokens" {
+	if short.Class != ClassIgnored || short.Reason != "reason.detail.insufficient_output_tokens" {
 		t.Fatalf("short passive verdict = %#v", short)
 	}
 	healthy := classifyPassiveAudit(Signals{Streaming: true, Terminal: true, FirstTokenKnown: true, FirstTokenMS: 100, DurationMS: 1000, OutputTokens: 100}, config)
-	if healthy.Class != ClassNone || healthy.Reason != "within_threshold" {
+	if healthy.Class != ClassNone || healthy.Reason != "reason.detail.within_threshold" {
 		t.Fatalf("healthy passive verdict = %#v", healthy)
 	}
 }

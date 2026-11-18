@@ -114,19 +114,19 @@ func proxyNodeEditorConfigEqual(left, right proxy.Node) bool {
 }
 
 func proxySourceUnchangedError() error {
-	return proxyError("proxy_source_unchanged", 400, "代理内容未发生变化，不能保存")
+	return proxyError("proxy_source_unchanged", 400, "api.error.proxy_source_unchanged")
 }
 
 func proxyDuplicateNodeError() error {
-	return proxyError("proxy_duplicate", 409, "相同标准 URL 的代理节点已存在")
+	return proxyError("proxy_duplicate", 409, "api.error.proxy_duplicate")
 }
 
 func proxyDuplicateTemplateError() error {
-	return proxyError("proxy_duplicate", 409, "相同标准端点、占位符值空间和关联关系的代理模板已存在")
+	return proxyError("proxy_duplicate", 409, "api.error.proxy_duplicate")
 }
 
 func proxyDuplicateNameError() error {
-	return proxyError("proxy_name_duplicate", 409, "代理名称已存在")
+	return proxyError("proxy_name_duplicate", 409, "api.error.proxy_name_duplicate")
 }
 
 func proxySourceNameTaken(state *State, name, exceptID string) bool {
@@ -229,31 +229,38 @@ func (s *Service) importProxyNodes(inputs []proxyNodeInput, text string) (map[st
 	for _, item := range items {
 		endpoint, err := proxyInputEndpoint(item.Input)
 		if err != nil {
-			code := "invalid"
+			code := proxyErrorCode(err)
 			if errors.Is(err, proxy.ErrMissingScheme) {
 				skipped++
-				code = "missing_scheme"
+				code = "proxy_import_missing_scheme"
 			} else {
 				invalid++
+				if code == "operation_failed" {
+					code = "proxy_import_invalid"
+				}
 			}
-			details = append(details, map[string]any{"line": item.Line, "code": code, "error": redact.SanitizeError(err)})
+			details = append(details, map[string]any{"line": item.Line, "code": code, "error": redact.SanitizeError(err), "error_code": code})
 			continue
 		}
 		if _, ok := seen[endpoint.Fingerprint()]; ok {
 			duplicate++
-			details = append(details, map[string]any{"line": item.Line, "code": "duplicate"})
+			details = append(details, map[string]any{"line": item.Line, "code": "proxy_duplicate", "error": "api.error.proxy_duplicate", "error_code": "proxy_duplicate"})
 			continue
 		}
 		name := proxyNodeName(item.Input, endpoint)
 		if err := validateSourceMetadata(name, item.Input.Priority, item.Input.MaxBindings); err != nil {
 			invalid++
-			details = append(details, map[string]any{"line": item.Line, "code": "invalid", "error": err.Error()})
+			code := proxyErrorCode(err)
+			if code == "operation_failed" {
+				code = "proxy_import_invalid"
+			}
+			details = append(details, map[string]any{"line": item.Line, "code": code, "error": redact.SanitizeError(err), "error_code": code})
 			continue
 		}
 		nameKey := strings.ToLower(strings.TrimSpace(name))
 		if _, exists := names[nameKey]; exists {
 			invalid++
-			details = append(details, map[string]any{"line": item.Line, "code": "duplicate_name", "error": "代理名称已存在"})
+			details = append(details, map[string]any{"line": item.Line, "code": "proxy_name_duplicate", "error": "api.error.proxy_name_duplicate", "error_code": "proxy_name_duplicate"})
 			continue
 		}
 		now := time.Now().UTC()

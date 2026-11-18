@@ -84,6 +84,7 @@ type ResinLeaseDelete struct {
 	Attempts      int       `json:"attempts,omitempty"`
 	NextAttemptAt time.Time `json:"next_attempt_at,omitempty"`
 	LastError     string    `json:"last_error,omitempty"`
+	LastErrorCode string    `json:"last_error_code,omitempty"`
 }
 
 type AccountState struct {
@@ -128,12 +129,14 @@ type AccountStateSummary struct {
 }
 
 type Event struct {
-	Time   time.Time `json:"time"`
-	AuthID string    `json:"auth_id,omitempty"`
-	Class  string    `json:"class,omitempty"`
-	Action string    `json:"action,omitempty"`
-	Result string    `json:"result,omitempty"`
-	Detail string    `json:"detail,omitempty"`
+	Time       time.Time      `json:"time"`
+	AuthID     string         `json:"auth_id,omitempty"`
+	Class      string         `json:"class,omitempty"`
+	Action     string         `json:"action,omitempty"`
+	Result     string         `json:"result,omitempty"`
+	Detail     string         `json:"detail,omitempty"`
+	DetailKey  string         `json:"detail_key,omitempty"`
+	DetailArgs map[string]any `json:"detail_args,omitempty"`
 }
 
 type State struct {

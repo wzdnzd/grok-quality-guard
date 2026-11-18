@@ -20,7 +20,7 @@ func TestIgnoredAndProbeErrorPreserveQualityEvidence(t *testing.T) {
 	plugin := newTestPlugin(t, host, func(config *appconfig.Config) { config.AutoAction = "observe" })
 	initial := qualitypkg.QualityVerdict{
 		Class:  qualitypkg.ClassMissingThinking,
-		Reason: "no real reasoning evidence",
+		Reason: "reason.detail.no_real_reasoning_evidence",
 		Signals: qualitypkg.Signals{
 			OutputTokens: 100, VisibleTokens: 100, FirstTokenMS: 100, DurationMS: 1000,
 			GenerationMS: 900, TPS: 111.1, Terminal: true, Streaming: true,
@@ -33,7 +33,7 @@ func TestIgnoredAndProbeErrorPreserveQualityEvidence(t *testing.T) {
 	if !ok || before.LastEvidence == nil {
 		t.Fatalf("initial quality evidence missing: %#v", before)
 	}
-	if err := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassIgnored, Reason: "unsuccessful"}, "passive", ""); err != nil {
+	if err := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassIgnored, Reason: "reason.detail.unsuccessful"}, "passive", ""); err != nil {
 		t.Fatal(err)
 	}
 	afterIgnored, _ := plugin.stateAccount("auth-1")
@@ -43,7 +43,7 @@ func TestIgnoredAndProbeErrorPreserveQualityEvidence(t *testing.T) {
 	if !reflect.DeepEqual(afterIgnored.LastEvidence, before.LastEvidence) || !reflect.DeepEqual(afterIgnored.Metrics, before.Metrics) {
 		t.Fatalf("ignored attempt overwrote quality evidence: before=%#v after=%#v", before, afterIgnored)
 	}
-	if err := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassProbeError, Reason: "probe transport error"}, "probe", ""); err != nil {
+	if err := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassProbeError, Reason: "reason.detail.probe_transport_error"}, "probe", ""); err != nil {
 		t.Fatal(err)
 	}
 	afterError, _ := plugin.stateAccount("auth-1")
@@ -83,7 +83,7 @@ func TestPassiveUsageFailureFiltering(t *testing.T) {
 	}
 	plugin.HandleUsage(grokFailure)
 	account, _ = plugin.stateAccount("auth-1")
-	if account.LastAttempt == nil || account.LastAttempt.Class != qualitypkg.ClassIgnored || account.LastAttempt.Reason != "unsuccessful" {
+	if account.LastAttempt == nil || account.LastAttempt.Class != qualitypkg.ClassIgnored || account.LastAttempt.Reason != "reason.detail.unsuccessful" {
 		t.Fatalf("Grok failure was not recorded as ignored: %#v", account.LastAttempt)
 	}
 	if account.ErrorStrikes != 0 || account.LastEvidence != nil {
@@ -97,7 +97,7 @@ func TestAccountViewExposesQualityEvidence(t *testing.T) {
 	plugin := newTestPlugin(t, host, func(config *appconfig.Config) { config.AutoAction = "observe" })
 	verdict := qualitypkg.QualityVerdict{
 		Class:  qualitypkg.ClassMissingThinking,
-		Reason: "no real reasoning evidence",
+		Reason: "reason.detail.no_real_reasoning_evidence",
 		Signals: qualitypkg.Signals{
 			OutputTokens: 100, VisibleTokens: 100, ReasoningTokens: 20, EncryptedBytes: 200,
 			EncryptedFloor: 256, FirstTokenMS: 100, DurationMS: 1000, GenerationMS: 900,

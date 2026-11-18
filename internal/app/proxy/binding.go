@@ -85,6 +85,7 @@ type proxySourceView struct {
 	LocalOnly        bool                       `json:"local_only,omitempty"`
 	Configured       bool                       `json:"configured,omitempty"`
 	LastError        string                     `json:"last_error,omitempty"`
+	LastErrorCode    string                     `json:"last_error_code,omitempty"`
 }
 
 type proxyBindingResult struct {
@@ -195,7 +196,9 @@ type proxyManagementError struct {
 	Message string
 }
 
-func (e *proxyManagementError) Error() string { return e.Message }
+func (e *proxyManagementError) Error() string     { return e.Message }
+func (e *proxyManagementError) ErrorCode() string { return strings.TrimSpace(e.Code) }
+func (e *proxyManagementError) HTTPStatus() int   { return e.Status }
 func proxyError(code string, status int, message string) error {
 	return &proxyManagementError{code, status, message}
 }
@@ -207,18 +210,7 @@ func proxyErrorStatus(err error) int {
 	return 500
 }
 func proxyErrorCode(err error) string {
-	if err == nil {
-		return ""
-	}
-	var local *proxyManagementError
-	if errors.As(err, &local) {
-		return local.Code
-	}
-	var domain *proxy.ManagementError
-	if errors.As(err, &domain) {
-		return domain.Code
-	}
-	return ""
+	return proxy.CodeOf(err)
 }
 
 func failedProxyResult(authID, status string, err error) proxyBindingResult {
@@ -596,13 +588,13 @@ func (s *Service) generateProxySource(ctx context.Context, candidate proxySource
 	request := proxy.GenerateRequest{AuthID: authID, SourceID: candidate.ID, SourceKind: candidate.Kind, Revision: candidate.Revision, AvoidEndpointHash: avoidHash}
 	if candidate.Kind != proxy.SourceResin {
 		if candidate.Provider == nil {
-			return proxy.RenderedProxy{}, nil, nil, errors.New("proxy generator is unavailable")
+			return proxy.RenderedProxy{}, nil, nil, proxyError("proxy_generator_unavailable", 500, "proxy generator is unavailable")
 		}
 		rendered, err := candidate.Provider.Generate(ctx, request)
 		return rendered, nil, nil, err
 	}
 	if candidate.Template == nil || candidate.ResinConfig == nil || candidate.Provider == nil {
-		return proxy.RenderedProxy{}, nil, nil, errors.New("Resin generator is unavailable")
+		return proxy.RenderedProxy{}, nil, nil, proxyError("resin_generator_unavailable", 500, "Resin generator is unavailable")
 	}
 	config := *candidate.ResinConfig
 	base := resinAccountBase(raw)
@@ -665,7 +657,7 @@ func (s *Service) generateProxySource(ctx context.Context, candidate proxySource
 		lease := &proxy.LeaseRef{Provider: "resin", PlatformID: config.PlatformID, Account: identity, SnapshotID: snapshotID}
 		return rendered, lease, release, nil
 	}
-	return proxy.RenderedProxy{}, nil, nil, errors.New("unable to generate a different proxy identity")
+	return proxy.RenderedProxy{}, nil, nil, proxyError("proxy_identity_unavailable", 409, "unable to generate a different proxy identity")
 }
 
 func resinCleanupConfigured(snapshot proxy.ResinSnapshot) bool {

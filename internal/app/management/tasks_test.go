@@ -34,9 +34,9 @@ func TestTaskCenterDeleteActionMapsTaskState(t *testing.T) {
 		wantError  string
 	}{
 		{name: "success", taskID: "task-1", wantStatus: http.StatusOK},
-		{name: "missing task id", wantStatus: http.StatusBadRequest, wantError: "task_id is required"},
-		{name: "not found", taskID: "missing", err: taskapp.ErrTaskNotFound, wantStatus: http.StatusNotFound, wantError: "任务不存在"},
-		{name: "active", taskID: "running", err: taskapp.ErrTaskActive, wantStatus: http.StatusConflict, wantError: "任务仍在执行中，请先取消任务并等待结束"},
+		{name: "missing task id", wantStatus: http.StatusBadRequest, wantError: "api.error.task_id_required"},
+		{name: "not found", taskID: "missing", err: taskapp.ErrTaskNotFound, wantStatus: http.StatusNotFound, wantError: "api.error.task_not_found"},
+		{name: "active", taskID: "running", err: taskapp.ErrTaskActive, wantStatus: http.StatusConflict, wantError: "api.error.task_active"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -163,6 +163,24 @@ func TestTaskCenterShowsQualityProbeQueueWithoutProxy(t *testing.T) {
 	}
 	if queue["completed"] != 402 || queue["total"] != 2897 {
 		t.Fatalf("quality queue totals = %#v", queue)
+	}
+}
+
+func TestTaskCenterResidentQueueMetadataIsLocalized(t *testing.T) {
+	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
+	policy.TransparentGuard = true
+	service := NewService(taskCenterQueueTestEnvironment{
+		store:   appstate.NewStore(""),
+		policy:  policy,
+		enabled: true,
+	})
+	english := service.taskCenterResidentQueues("en")
+	if len(english) != 1 || english[0]["label"] != "Quality probe queue" {
+		t.Fatalf("english queue = %#v", english)
+	}
+	traditional := service.taskCenterResidentQueues("zh-TW")
+	if len(traditional) != 1 || traditional[0]["label"] != "品質偵測佇列" {
+		t.Fatalf("traditional queue = %#v", traditional)
 	}
 }
 
@@ -378,5 +396,44 @@ func TestTaskCenterQueueDetailIncludesAutoBindAndProxyHealthWork(t *testing.T) {
 		if !test.sourceID && detail.Active[0].AuthID != test.activeID {
 			t.Fatalf("%s active auth_id = %#v", test.queueID, detail.Active[0])
 		}
+	}
+}
+
+type taskCancelTestEnvironment struct {
+	Environment
+	task taskapp.Task
+	err  error
+}
+
+func (e *taskCancelTestEnvironment) CancelTask(string) (taskapp.Task, error) {
+	return e.task, e.err
+}
+
+func TestTaskCancelActionMapsSentinelErrors(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		wantStatus  int
+		wantCode    string
+		wantMessage string
+	}{
+		{name: "not found", err: taskapp.ErrTaskNotFound, wantStatus: http.StatusNotFound, wantCode: "task_not_found", wantMessage: "Task not found"},
+		{name: "already finished", err: taskapp.ErrTaskFinished, wantStatus: http.StatusConflict, wantCode: "task_finished", wantMessage: "The task has already finished and cannot be cancelled"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := NewService(&taskCancelTestEnvironment{err: test.err})
+			_, status, errAction := service.actionTaskCancel(map[string]any{"task_id": "task-1"}, "en")
+			if status != test.wantStatus {
+				t.Fatalf("status = %d, want %d", status, test.wantStatus)
+			}
+			coded, ok := errAction.(interface{ ErrorCode() string })
+			if !ok || coded.ErrorCode() != test.wantCode {
+				t.Fatalf("error code = %#v, want %q", errAction, test.wantCode)
+			}
+			if message := localizedErrorMessage("en", test.wantCode, test.wantStatus, "", nil); message != test.wantMessage {
+				t.Fatalf("localized message = %q, want %q", message, test.wantMessage)
+			}
+		})
 	}
 }

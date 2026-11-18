@@ -794,8 +794,10 @@ func (s *Store) RecordProxyHealth(id string, revision uint64, health proxy.Healt
 	runtime.HealthChecked = checked
 	if cause != nil {
 		runtime.LastError = redact.SanitizeError(cause)
+		runtime.LastErrorCode = proxy.CodeOf(cause)
 	} else {
 		runtime.LastError = ""
+		runtime.LastErrorCode = ""
 		runtime.RetryAt = time.Time{}
 	}
 	commit := ProxyCommit{Sequence: s.state.Proxy.JournalSequence + 1, Runtimes: map[string]proxy.SourceRuntime{id: runtime}}

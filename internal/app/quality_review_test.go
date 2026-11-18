@@ -218,7 +218,7 @@ func TestReviewRateLimitedDoesNotDisableAccount(t *testing.T) {
 	before := time.Now().UTC()
 	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{
 		Class:  qualitypkg.ClassRateLimited,
-		Reason: "upstream status 429 (rate limited)",
+		Reason: "reason.detail.upstream_status_429_rate_limited",
 	}, "transparent", ""); errApply != nil {
 		t.Fatal(errApply)
 	}

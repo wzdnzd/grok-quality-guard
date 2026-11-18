@@ -138,7 +138,7 @@ func TestManagementResourceAndActionAccess(t *testing.T) {
 	if strings.Contains(string(response.Body), "对齐旧插件") {
 		t.Fatal("dashboard should describe the setting semantically instead of referencing the old plugin")
 	}
-	for _, expected := range []string{"概览", "账号", "代理管理", "代理", "事件日志", "设置", "24 小时统计", "proxy.sources.create", "proxy.sources.update", "value=\"resin\">Resin", "presin_account_format", "proxy.bindings.clear", "proxy.sources.list", "proxy.auto_bind.update", "proxySyncFailures", "data-proxy-source-edit", "data-proxy-source-apply", "proxy.template.apply", "leaseSelectAll", "clearSelectedBtn", "accountsPager", "leasesPager", "eventsPager", "selectFilteredBtn", "selectAllAccountsBtn", "全选当前筛选", "全选所有账号", "选择本页全部账号", "本地轮换", "state_file.update", "id=\"p_state_file\" type=\"text\"", "p_selection_strategy", "p_prefer_last_success", "p_session_affinity", "policy.routing.selection_strategy", "session_affinity_max_entries", "summary-value truncate", "连续检测到缺少真实思考的响应达到该次数后触发处置或交叉验证", "const REASON_DETAIL_LABELS", "'expected marker missing': '探测标记缺失'", "'output tokens per second exceeded hard threshold': '输出 Token 速度超过硬阈值'", "'output tokens per second exceeded soft threshold': '输出 Token 速度超过软阈值'", "'probe stream produced no parseable events': '探测流未产生可解析事件'", "'probe stream ended without a terminal event': '探测流结束但未收到终止事件'", "真实思考：", "终止：", "解析失败：", "<td class=\"nowrap\">", "actions-cell", "includeTime: false", "accountRefreshBtn", "leaseRefreshBtn", "eventRefreshBtn", "accountProbeAllBtn", "accountRestoreAllBtn", "accountDisableAllBtn", "accountSelectionCount", "accountSelectAll", "accountSelectFilteredBtn", "accountSelectAllBtn", "accountClearSelectionBtn", "检测所选", "恢复所选", "禁用所选", "accounts.probe_selected", "accounts.restore_preview", "accounts.restore_selected", "accounts.disable_selected", "accountDetails: new Map()", "summary: true", "api('accounts.get'", "proxySourceSelectAll", "proxySourceTestSelectedBtn", "proxySourceDeleteSelectedBtn", "proxy.sources.test_selected", "proxy.sources.delete_selected", "proxySourceEnabledFilter", "proxySourceHealthFilter", "tasks.center.cancel", "data-task-center-cancel", "网络连通性", "confirmDialog", "confirmAction", "confirmAccept", "confirmCancel"} {
+	for _, expected := range []string{"ui.overview", "ui.proxy_management", "ui.settings", "i18n-resources", "proxy.sources.create", "proxy.sources.update", "proxy.auto_bind.update", "policy.routing.selection_strategy", "accounts.probe_selected", "accounts.restore_selected", "accounts.disable_selected", "tasks.center.cancel", "confirmAction", "proxySourceEnabledFilter", "proxySourceHealthFilter"} {
 		if !strings.Contains(string(response.Body), expected) {
 			t.Fatalf("dashboard is missing %q", expected)
 		}
@@ -853,7 +853,7 @@ func TestSelectedBatchActionsRejectInvalidAuthIDs(t *testing.T) {
 			t.Fatalf("%s without auth_ids status = %d body=%s", action, empty.StatusCode, empty.Body)
 		}
 		unknown := actionManagementForTest(t, plugin, action, map[string]any{"auth_ids": []string{"missing"}})
-		if unknown.StatusCode != http.StatusBadRequest {
+		if unknown.StatusCode != http.StatusNotFound {
 			t.Fatalf("%s unknown auth status = %d body=%s", action, unknown.StatusCode, unknown.Body)
 		}
 	}

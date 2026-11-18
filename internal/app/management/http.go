@@ -28,6 +28,20 @@ func jsonHeaders() http.Header {
 	}
 }
 
+func jsonHeadersFor(locale string) http.Header {
+	headers := jsonHeaders()
+	headers.Set("Content-Language", locale)
+	headers.Add("Vary", "Accept-Language")
+	return headers
+}
+
+func htmlHeadersFor(locale string) http.Header {
+	headers := htmlHeaders()
+	headers.Set("Content-Language", locale)
+	headers.Add("Vary", "Accept-Language")
+	return headers
+}
+
 func htmlHeaders() http.Header {
 	return http.Header{
 		"Content-Type":  []string{"text/html; charset=utf-8"},

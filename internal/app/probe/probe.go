@@ -13,11 +13,15 @@ import (
 	"unicode"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+
+	"grok-quality-guard/internal/app/i18n"
 	"grok-quality-guard/internal/app/redact"
 	"grok-quality-guard/internal/config"
+	proxy "grok-quality-guard/internal/proxy"
 )
 
-const probePrompt = "先用三点总结为什么天空呈蓝色，最后一行只输出 QUALITY_OK。"
+var probePrompt = i18n.T(i18n.DefaultLocale, "probe.prompt", nil)
+
 const probeMarker = "QUALITY_OK"
 const (
 	probeReconcileInterval = 5 * time.Minute
@@ -95,6 +99,7 @@ type probeScheduler struct {
 	lastScanAt    time.Time
 	lastSuccessAt time.Time
 	lastError     string
+	lastErrorCode string
 	wg            sync.WaitGroup
 }
 
@@ -250,10 +255,13 @@ func (s *probeScheduler) finish(result probeCompletion) {
 	if result.err != nil {
 		s.failed++
 		s.lastError = redact.SanitizeError(result.err)
+		s.lastErrorCode = proxy.CodeOf(result.err)
 		return
 	}
 	s.succeeded++
 	s.lastSuccessAt = time.Now().UTC()
+	s.lastError = ""
+	s.lastErrorCode = ""
 }
 
 func (s *probeScheduler) wait() {
@@ -338,6 +346,7 @@ func (s *probeScheduler) snapshot() QueueSnapshot {
 		LastScanAt:    s.lastScanAt,
 		LastSuccessAt: s.lastSuccessAt,
 		LastError:     s.lastError,
+		LastErrorCode: s.lastErrorCode,
 	}
 }
 
@@ -562,7 +571,7 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 	for {
 		select {
 		case <-probeCtx.Done():
-			return handleFailure(QualityVerdict{Class: ClassProbeError, Reason: "probe context ended"}, probeCtx.Err())
+			return handleFailure(QualityVerdict{Class: ClassProbeError, Reason: "reason.detail.probe_context_ended"}, probeCtx.Err())
 		default:
 		}
 		read, errRead := reader.Next()
@@ -573,7 +582,7 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 		if len(read.Payload) > 0 {
 			bufferBytes += int64(len(read.Payload))
 			if bufferBytes > qualityCfg.HoldMaxBufferBytes {
-				return handleFailure(QualityVerdict{Class: ClassProbeError, Reason: "probe response exceeded buffer limit"}, fmt.Errorf("probe response exceeded buffer limit"))
+				return handleFailure(QualityVerdict{Class: ClassProbeError, Reason: "reason.detail.probe_response_exceeded_buffer_limit"}, fmt.Errorf("probe response exceeded buffer limit"))
 			}
 			analyzer.ObserveChunk(read.Payload)
 		}
@@ -608,14 +617,14 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 func (s *Service) markProbeSuccess(authID string, sig Signals) error {
 	now := time.Now().UTC()
 	qualityCfg := s.env.Policy().Quality
-	verdict := QualityVerdict{Class: ClassNone, Reason: "probe passed", Signals: sig}
+	verdict := QualityVerdict{Class: ClassNone, Reason: "reason.detail.probe_passed", Signals: sig}
 	var decayEvent *Event
 	errUpdate := s.stateStore().UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 		account.State = StateHealthy
 		account.LastProbeAt = now
 		account.LastObservedAt = now
 		account.LastReason = ""
-		account.LastAttempt = &AttemptEvidence{At: now, Source: "probe", Class: ClassNone, Reason: "probe passed"}
+		account.LastAttempt = &AttemptEvidence{At: now, Source: "probe", Class: ClassNone, Reason: "reason.detail.probe_passed"}
 		account.LastEvidence = qualityEvidenceFromVerdict(verdict, "probe", now)
 		account.CooldownUntil = time.Time{}
 		account.ProbeBackoffUntil = time.Time{}
@@ -639,11 +648,12 @@ func (s *Service) markProbeSuccess(authID string, sig Signals) error {
 			TPS:             sig.TPS,
 		}
 		return &Event{
-			Time:   time.Now().UTC(),
-			AuthID: authID,
-			Action: "probe",
-			Result: "healthy",
-			Detail: "probe passed",
+			Time:      time.Now().UTC(),
+			AuthID:    authID,
+			Action:    "probe",
+			Result:    "healthy",
+			Detail:    "probe passed",
+			DetailKey: "event.detail.probe_passed",
 		}, nil
 	})
 	if errUpdate == nil {

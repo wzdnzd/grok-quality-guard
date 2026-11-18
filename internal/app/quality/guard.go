@@ -29,7 +29,7 @@ func (s *Service) scheduleVerdictCrossVerify(authID, class, source string) {
 	if s.env.HasActiveTask("quality.cross_verify", authID) {
 		return
 	}
-	s.env.StartTask("quality.cross_verify", []string{authID}, "正在交叉验证质量异常", func(ctx context.Context) (any, error) {
+	s.env.StartTask("quality.cross_verify", []string{authID}, "task.progress.cross_verify", func(ctx context.Context) (any, error) {
 		if errProbe := s.env.ProbeAccount(ctx, authID, true, ""); errProbe != nil {
 			return nil, errProbe
 		}
@@ -274,7 +274,7 @@ func (s *Service) setStateExternal(authID, class string) error {
 		account.CooldownUntil = time.Time{}
 		account.PreviousDisabled = false
 		account.AuthDisabledIntent = nil
-		return newEvent(authID, class, "external_disable", "observed", "认证文件已被外部系统禁用，原因未知"), nil
+		return &Event{Time: time.Now().UTC(), AuthID: authID, Class: class, Action: "external_disable", Result: "observed", DetailKey: "event.detail.external_disabled"}, nil
 	})
 }
 

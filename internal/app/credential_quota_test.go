@@ -53,7 +53,7 @@ func TestCredentialInvalidDisablesAccountEvenInObserveMode(t *testing.T) {
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) { cfg.AutoAction = "observe" })
 
 	errApply := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{
-		Class: qualitypkg.ClassCredentialInvalid, Reason: "upstream status 401 (credential rejected)",
+		Class: qualitypkg.ClassCredentialInvalid, Reason: "reason.detail.upstream_status_401_credential_rejected",
 	}, "probe", "")
 	if errApply != nil {
 		t.Fatal(errApply)
@@ -82,7 +82,7 @@ func TestQuotaExhaustedCoolsFor24HoursEvenInObserveMode(t *testing.T) {
 
 	before := time.Now().UTC()
 	errApply := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{
-		Class: qualitypkg.ClassQuotaExhausted, Reason: "upstream status 429 (quota exhausted)",
+		Class: qualitypkg.ClassQuotaExhausted, Reason: "reason.detail.upstream_status_429_quota_exhausted",
 	}, "probe", "")
 	if errApply != nil {
 		t.Fatal(errApply)
@@ -206,7 +206,7 @@ func TestProbeModelCooldownDoesNotDisableAuth(t *testing.T) {
 	if !okAccount || account.State != appstate.StateUnknown || account.DisableKind != "" {
 		t.Fatalf("host model cooldown changed auth ownership: %#v", account)
 	}
-	if account.LastAttempt == nil || account.LastAttempt.Class != qualitypkg.ClassIgnored || account.LastAttempt.Reason != "host_call_failed: model cooldown" {
+	if account.LastAttempt == nil || account.LastAttempt.Class != qualitypkg.ClassIgnored || account.LastAttempt.Reason != "reason.detail.model_cooldown" {
 		t.Fatalf("host model cooldown attempt = %#v", account.LastAttempt)
 	}
 	if len(host.saves) != 0 {

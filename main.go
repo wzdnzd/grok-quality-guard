@@ -58,10 +58,12 @@ import "C"
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"unsafe"
 
 	"grok-quality-guard/internal/abi"
 	"grok-quality-guard/internal/app"
+	"grok-quality-guard/internal/app/i18n"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
@@ -96,17 +98,18 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 		response.ptr = nil
 		response.len = 0
 	}
-	if method == nil {
-		writeResponse(response, abi.Error("invalid_method", "method is required", 400))
-		return 1
-	}
 	var requestBytes []byte
 	if request != nil && requestLen > 0 {
 		requestBytes = C.GoBytes(unsafe.Pointer(request), C.int(requestLen))
 	}
+	locale := requestLocaleFromPayload(requestBytes)
+	if method == nil {
+		writeResponse(response, abiLocalizedError(locale, "invalid_method", 400, nil))
+		return 1
+	}
 	raw, errHandle := handleMethod(C.GoString(method), requestBytes)
 	if errHandle != nil {
-		writeResponse(response, abi.Error("plugin_error", errHandle.Error(), 500))
+		writeResponse(response, abiLocalizedError(locale, "plugin_error", 500, nil))
 		return 1
 	}
 	writeResponse(response, raw)
@@ -128,18 +131,19 @@ func cliproxyPluginShutdown() {
 }
 
 func handleMethod(method string, request []byte) ([]byte, error) {
+	locale := requestLocaleFromPayload(request)
 	switch method {
 	case pluginabi.MethodPluginRegister, pluginabi.MethodPluginReconfigure:
 		var req lifecycleRequest
 		if len(request) > 0 {
 			if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
-				return abi.Error("invalid_config", app.SanitizeError(errUnmarshal), 400), nil
+				return abiLocalizedError(locale, "invalid_config", 400, nil), nil
 			}
 		}
 		if errConfigure := globalApp.Configure(req.ConfigYAML); errConfigure != nil {
-			return abi.Error("invalid_config", app.SanitizeError(errConfigure), 400), nil
+			return abiLocalizedError(locale, "invalid_config", 400, nil), nil
 		}
-		return abi.OK(app.PluginRegistration())
+		return abi.OK(app.PluginRegistrationForLocale(locale))
 	case pluginabi.MethodPluginQuiesce:
 		globalApp.Quiesce()
 		return abi.OK(map[string]any{})
@@ -147,7 +151,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		globalApp.Shutdown()
 		return abi.OK(map[string]any{})
 	case pluginabi.MethodManagementRegister:
-		return abi.OK(globalApp.ManagementRegistration())
+		return abi.OK(globalApp.ManagementRegistrationForLocale(locale))
 	case pluginabi.MethodManagementHandle:
 		return globalApp.HandleManagement(request)
 	case pluginabi.MethodModelRoute:
@@ -161,7 +165,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case pluginabi.MethodExecutorCountTokens:
 		return abi.OK(pluginapi.ExecutorResponse{Payload: []byte(`{"total_tokens":0}`)})
 	case pluginabi.MethodExecutorHTTPRequest:
-		return abi.Error("not_implemented", "executor.http_request is not supported", 501), nil
+		return abiLocalizedError(locale, "not_implemented", 501, nil), nil
 	case pluginabi.MethodResponseInterceptAfter:
 		return globalApp.InterceptResponse(request), nil
 	case pluginabi.MethodResponseInterceptStreamChunk:
@@ -170,8 +174,40 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		globalApp.HandleUsage(request)
 		return abi.OK(map[string]any{})
 	default:
-		return abi.Error("unknown_method", "unknown method: "+method, 404), nil
+		return abiLocalizedError(locale, "unknown_method", 404, map[string]any{"method": method}), nil
 	}
+}
+
+func requestLocaleFromPayload(payload []byte) string {
+	if len(payload) == 0 {
+		return i18n.DefaultLocale
+	}
+	var request struct {
+		Headers map[string][]string `json:"headers"`
+	}
+	if errUnmarshal := json.Unmarshal(payload, &request); errUnmarshal != nil {
+		return i18n.DefaultLocale
+	}
+	for name, values := range request.Headers {
+		if !strings.EqualFold(name, "Accept-Language") || len(values) == 0 {
+			continue
+		}
+		return i18n.Negotiate(strings.Join(values, ","))
+	}
+	return i18n.DefaultLocale
+}
+
+func abiLocalizedError(locale, code string, status int, args map[string]any) []byte {
+	locale = i18n.NormalizeLocale(locale)
+	if locale == "" {
+		locale = i18n.DefaultLocale
+	}
+	key := "api.error." + code
+	message := i18n.T(locale, key, args)
+	if !i18n.Has(locale, key) {
+		message = i18n.T(locale, "api.error.internal", nil)
+	}
+	return abi.Error(code, message, status)
 }
 
 func init() {

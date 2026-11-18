@@ -12,9 +12,10 @@ import (
 // startTransparentStreamBridge ties the request-lifetime goroutine to the
 // plugin lifecycle so Quiesce/Shutdown can cancel and wait for it.
 func (s *Service) startTransparentStreamBridge(req Request, streamID string) {
+	locale := executorRequestLocale(req.Headers)
 	ctx, quiescing := s.env.RequestContext()
 	if quiescing {
-		s.closePluginStream(streamID, "plugin_shutting_down", "plugin is shutting down", http.StatusServiceUnavailable)
+		s.closePluginErrorStream(streamID, locale, "plugin_shutting_down", http.StatusServiceUnavailable)
 		return
 	}
 	if ctx == nil {
@@ -204,8 +205,8 @@ func (s *Service) executeTransparentOnce(ctx context.Context, execution pluginap
 		if ctx.Err() != nil {
 			return Result{}, QualityVerdict{}, errTransparentAttemptAborted
 		}
-		class := classifyTransportError(errExecute)
-		return Result{}, QualityVerdict{Class: class, Reason: sanitizeError(errExecute)}, errExecute
+		class, reason := classifyTransportFailure(errExecute)
+		return Result{}, QualityVerdict{Class: class, Reason: reason}, errExecute
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		class, reason := classifyUpstreamStatus(response.StatusCode, response.Body)
@@ -236,8 +237,8 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 		if ctx.Err() != nil {
 			return Result{}, QualityVerdict{}, errTransparentAttemptAborted
 		}
-		class := classifyTransportError(errExecute)
-		return Result{}, QualityVerdict{Class: class, Reason: sanitizeError(errExecute)}, errExecute
+		class, reason := classifyTransportFailure(errExecute)
+		return Result{}, QualityVerdict{Class: class, Reason: reason}, errExecute
 	}
 	var reader *modelStreamReader
 	defer func() {
@@ -269,8 +270,8 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 			if ctx.Err() != nil {
 				return Result{}, QualityVerdict{}, errTransparentAttemptAborted
 			}
-			class := classifyTransportError(errRead)
-			return Result{}, QualityVerdict{Class: class, Reason: sanitizeError(errRead)}, errRead
+			class, reason := classifyTransportFailure(errRead)
+			return Result{}, QualityVerdict{Class: class, Reason: reason}, errRead
 		}
 		if len(read.Payload) > 0 {
 			bufferBytes += int64(len(read.Payload))
@@ -288,8 +289,8 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 				return Result{}, QualityVerdict{}, errTransparentAttemptAborted
 			}
 			errRead := fmt.Errorf("%s", read.Error)
-			class := classifyTransportError(errRead)
-			return Result{}, QualityVerdict{Class: class, Reason: sanitizeError(errRead)}, errRead
+			class, reason := classifyTransportFailure(errRead)
+			return Result{}, QualityVerdict{Class: class, Reason: reason}, errRead
 		}
 		if read.Done {
 			break
@@ -314,22 +315,23 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 }
 
 func (s *Service) runTransparentStreamBridge(ctx context.Context, req Request, streamID string) {
+	locale := executorRequestLocale(req.Headers)
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	ctx = runCtx
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			s.closePluginStream(streamID, "plugin_stream_panic", "quality guard stream failed", http.StatusInternalServerError)
+			s.closePluginErrorStream(streamID, locale, "plugin_stream_panic", http.StatusInternalServerError)
 		}
 	}()
 	policy := s.env.Policy()
 	if !policy.TransparentGuard {
-		s.closePluginStream(streamID, "transparent_guard_disabled", "transparent guard is disabled", http.StatusServiceUnavailable)
+		s.closePluginErrorStream(streamID, locale, "transparent_guard_disabled", http.StatusServiceUnavailable)
 		return
 	}
 	facts, errFacts := s.env.PrepareRequest(req)
 	if errFacts != nil {
-		s.closePluginStream(streamID, "invalid_request", "request body is empty", http.StatusBadRequest)
+		s.closePluginErrorStream(streamID, locale, "invalid_request", http.StatusBadRequest)
 		return
 	}
 	body := facts.Body
@@ -339,7 +341,7 @@ func (s *Service) runTransparentStreamBridge(ctx context.Context, req Request, s
 	replayable := facts.Replayable
 	selection, errSelection := s.env.NewSelection(req, facts)
 	if errSelection != nil {
-		s.closePluginStream(streamID, "quality_degraded", "no healthy Grok account produced a valid response", http.StatusServiceUnavailable)
+		s.closePluginErrorStream(streamID, locale, "quality_degraded", http.StatusServiceUnavailable)
 		return
 	}
 	maxAttempts := transparentMaxAttempts(policy, replayable)
@@ -383,7 +385,7 @@ candidateLoop:
 				if outcome.Err != nil {
 					selection.MarkFailure(account.ID, source, outcome.Class)
 					attempt.Release()
-					s.closePluginStream(streamID, "upstream_stream_error", "upstream stream failed after delivery started", http.StatusBadGateway)
+					s.closePluginErrorStream(streamID, locale, "upstream_stream_error", http.StatusBadGateway)
 					return
 				}
 				selection.MarkSuccess(account.ID, source)
@@ -432,7 +434,7 @@ candidateLoop:
 		s.closePluginStream(streamID, "", "", 0)
 		return
 	}
-	s.closePluginStream(streamID, "quality_degraded", "no healthy Grok account produced a valid response", http.StatusServiceUnavailable)
+	s.closePluginErrorStream(streamID, locale, "quality_degraded", http.StatusServiceUnavailable)
 }
 
 func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig, streamID string, reasoningNeeded bool) StreamAttempt {
@@ -444,8 +446,8 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 		if ctx.Err() != nil {
 			return StreamAttempt{Err: ctx.Err(), Aborted: true}
 		}
-		class := classifyTransportError(errExecute)
-		return StreamAttempt{Class: class, Verdict: QualityVerdict{Class: class, Reason: sanitizeError(errExecute)}, Err: errExecute}
+		class, reason := classifyTransportFailure(errExecute)
+		return StreamAttempt{Class: class, Verdict: QualityVerdict{Class: class, Reason: reason}, Err: errExecute}
 	}
 	attemptCtx, cancelAttempt := context.WithCancel(ctx)
 	if stream.StatusCode < 200 || stream.StatusCode >= 300 {
@@ -589,8 +591,8 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 				return finish()
 			}
 			if event.Err != nil {
-				class := classifyTransportError(event.Err)
-				verdict := QualityVerdict{Class: class, Reason: sanitizeError(event.Err)}
+				class, reason := classifyTransportFailure(event.Err)
+				verdict := QualityVerdict{Class: class, Reason: reason}
 				if emitted {
 					return StreamAttempt{Class: class, Verdict: verdict, Err: event.Err, Emitted: true}
 				}
@@ -620,8 +622,8 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 			}
 			if event.Response.Error != "" {
 				errRead := fmt.Errorf("%s", event.Response.Error)
-				class := classifyTransportError(errRead)
-				verdict := QualityVerdict{Class: class, Reason: sanitizeError(errRead)}
+				class, reason := classifyTransportFailure(errRead)
+				verdict := QualityVerdict{Class: class, Reason: reason}
 				if emitted {
 					return StreamAttempt{Class: class, Verdict: verdict, Err: errRead, Emitted: true}
 				}

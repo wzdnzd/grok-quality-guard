@@ -79,6 +79,7 @@ type AutoBindAccountState struct {
 	Attempts      int       `json:"attempts,omitempty"`
 	NextAttemptAt time.Time `json:"next_attempt_at,omitempty"`
 	LastError     string    `json:"last_error,omitempty"`
+	LastErrorCode string    `json:"last_error_code,omitempty"`
 	LastSourceID  string    `json:"last_source_id,omitempty"`
 }
 
@@ -160,6 +161,7 @@ type AutoBindRuntime struct {
 	LastScanAt    time.Time `json:"last_scan_at,omitempty"`
 	LastSuccessAt time.Time `json:"last_success_at,omitempty"`
 	LastError     string    `json:"last_error,omitempty"`
+	LastErrorCode string    `json:"last_error_code,omitempty"`
 	BoundTotal    int64     `json:"bound_total"`
 	FailedTotal   int64     `json:"failed_total"`
 	SkippedTotal  int64     `json:"skipped_total"`
@@ -174,6 +176,7 @@ type SourceChange struct {
 	AuthIDs        []string     `json:"auth_ids,omitempty"`
 	CreatedAt      time.Time    `json:"created_at,omitempty"`
 	Error          string       `json:"error,omitempty"`
+	ErrorCode      string       `json:"error_code,omitempty"`
 	Items          []ChangeItem `json:"items,omitempty"`
 	Counts         ChangeCounts `json:"counts"`
 	CompletedAt    time.Time    `json:"completed_at,omitempty"`
@@ -194,6 +197,7 @@ type ChangeItem struct {
 	OperationID  string `json:"operation_id,omitempty"`
 	Status       string `json:"status"`
 	Error        string `json:"error,omitempty"`
+	ErrorCode    string `json:"error_code,omitempty"`
 }
 
 // Operation is durable before touching an auth. Secret recovery material never
@@ -217,6 +221,7 @@ type Operation struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 	NextAttemptAt      time.Time `json:"next_attempt_at,omitempty"`
 	Error              string    `json:"error,omitempty"`
+	ErrorCode          string    `json:"error_code,omitempty"`
 }
 
 type SourceRuntime struct {
@@ -227,6 +232,7 @@ type SourceRuntime struct {
 	HealthChecked  time.Time    `json:"health_checked,omitempty"`
 	RetryAt        time.Time    `json:"retry_at,omitempty"`
 	LastError      string       `json:"last_error,omitempty"`
+	LastErrorCode  string       `json:"last_error_code,omitempty"`
 }
 
 type ProxyState struct {

@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -66,7 +65,7 @@ func (s *Service) actionProxySourcesList(params map[string]any) (any, int, error
 func (s *Service) actionProxySourceGet(params map[string]any) (any, int, error) {
 	id := strings.TrimSpace(actionpkg.String(params["source_id"]))
 	if id == "" {
-		return nil, 400, errors.New("source_id is required")
+		return nil, 400, proxyError("source_id_required", 400, "source_id is required")
 	}
 	view, err := s.proxySourceDetailsForEdit(id, actionpkg.Bool(params, "edit_fields"))
 	if err != nil {
@@ -77,7 +76,7 @@ func (s *Service) actionProxySourceGet(params map[string]any) (any, int, error) 
 func (s *Service) actionProxySourceEndpoint(params map[string]any) (any, int, error) {
 	id := strings.TrimSpace(actionpkg.String(params["source_id"]))
 	if id == "" {
-		return nil, 400, errors.New("source_id is required")
+		return nil, 400, proxyError("source_id_required", 400, "source_id is required")
 	}
 	full, err := s.proxySourceEndpoint(id)
 	if err != nil {
@@ -114,7 +113,7 @@ func proxyValidationFailure(err error) map[string]any {
 		issue.Code = typed.Code
 		issue.Path = typed.Path
 	}
-	return map[string]any{"valid": false, "error": issue.Message, "errors": []proxy.ValidationIssue{issue}, "validation": proxy.ValidationReport{Valid: false, Errors: []proxy.ValidationIssue{issue}}}
+	return map[string]any{"valid": false, "error": issue.Message, "error_code": issue.Code, "errors": []proxy.ValidationIssue{issue}, "validation": proxy.ValidationReport{Valid: false, Errors: []proxy.ValidationIssue{issue}}}
 }
 func (s *Service) actionProxySourceValidate(params map[string]any) (any, int, error) {
 	switch strings.ToLower(actionpkg.String(params["kind"])) {
@@ -171,7 +170,7 @@ func (s *Service) actionProxySourceValidate(params map[string]any) (any, int, er
 		report := proxy.ValidateTemplate(template)
 		return map[string]any{"valid": report.Valid, "validation": report, "source": s.resinSourceView(template, config, 0)}, 200, nil
 	default:
-		return nil, 400, errors.New("kind must be node, template, or resin")
+		return nil, 400, proxyError("kind_invalid", 400, "kind must be node, template, or resin")
 	}
 }
 func (s *Service) actionProxySourcePreview(params map[string]any) (any, int, error) {
@@ -241,7 +240,7 @@ func (s *Service) actionProxySourcePreview(params map[string]any) (any, int, err
 			return nil, 400, err
 		}
 		if err = json.Unmarshal(encoded, &assignments); err != nil {
-			return nil, 400, errors.New("assignments must map placeholder names to strings")
+			return nil, 400, proxyError("assignment_invalid", 400, "assignments must map placeholder names to strings")
 		}
 	}
 	count := actionpkg.Int(params, "count", 3)
@@ -309,12 +308,12 @@ func (s *Service) actionProxySourceCreate(params map[string]any) (any, int, erro
 		if err != nil {
 			return nil, 400, err
 		}
-		task := s.env.ProxyStartTask("proxy.source.create", nil, "正在验证并添加 Resin 来源", func(ctx context.Context) (any, error) {
+		task := s.env.ProxyStartTask("proxy.source.create", nil, "task.progress.proxy_source_create_resin", func(ctx context.Context) (any, error) {
 			return s.createResinSource(ctx, input)
 		})
 		return task, 202, nil
 	default:
-		return nil, 400, errors.New("kind must be node, template, or resin")
+		return nil, 400, proxyError("kind_invalid", 400, "kind must be node, template, or resin")
 	}
 }
 func proxyInputErrorStatus(err error) int {
@@ -352,7 +351,7 @@ func (s *Service) actionProxyImportNodes(params map[string]any) (any, int, error
 		}
 	}
 	if len(inputs) == 0 && len(lines) == 0 {
-		return nil, 400, errors.New("nodes or urls is required")
+		return nil, 400, proxyError("nodes_or_urls_required", 400, "nodes or urls is required")
 	}
 	result, err := s.importProxyNodes(inputs, strings.Join(lines, "\n"))
 	if err != nil {
@@ -383,14 +382,14 @@ func (s *Service) actionProxySourceUpdate(params map[string]any) (any, int, erro
 		input.UsernameSet = proxySourceParamPresent(params, "username")
 		current, ok := s.proxyExistingNode(input.ID)
 		if !ok {
-			return nil, 404, errors.New("proxy node not found")
+			return nil, 404, proxyError("proxy_source_not_found", 404, "proxy node not found")
 		}
 		if _, _, changed, _, err := buildProxyNodeUpdate(input, current); err != nil {
 			return nil, proxyInputErrorStatus(err), err
 		} else if !changed {
 			return nil, 400, proxySourceUnchangedError()
 		}
-		task := s.env.ProxyStartTask("proxy.source.update", nil, "正在保存并同步代理节点", func(ctx context.Context) (any, error) {
+		task := s.env.ProxyStartTask("proxy.source.update", nil, "task.progress.proxy_source_update_node", func(ctx context.Context) (any, error) {
 			_, result, err := s.updateProxyNodeContext(ctx, input)
 			return result, err
 		})
@@ -410,10 +409,10 @@ func (s *Service) actionProxySourceUpdate(params map[string]any) (any, int, erro
 		input.MaxBindingsSet = proxySourceParamPresent(params, "max_bindings")
 		current, ok := s.proxyExistingTemplate(input.ID)
 		if !ok {
-			return nil, 404, errors.New("proxy template not found")
+			return nil, 404, proxyError("proxy_source_not_found", 404, "proxy template not found")
 		}
 		if current.Kind == proxy.TemplateResin {
-			return nil, 409, errors.New("Resin sources must be updated with kind=resin")
+			return nil, 409, proxyError("proxy_source_kind_mismatch", 409, "Resin sources must be updated with kind=resin")
 		}
 		next, err := buildProxyTemplate(input, current)
 		if err != nil {
@@ -422,7 +421,7 @@ func (s *Service) actionProxySourceUpdate(params map[string]any) (any, int, erro
 		if templateEditorConfigEqual(next, *current) {
 			return nil, 400, proxySourceUnchangedError()
 		}
-		task := s.env.ProxyStartTask("proxy.source.update", nil, "正在保存代理模板", func(ctx context.Context) (any, error) {
+		task := s.env.ProxyStartTask("proxy.source.update", nil, "task.progress.proxy_source_update_template", func(ctx context.Context) (any, error) {
 			_, result, err := s.updateProxyTemplateContext(ctx, input)
 			return result, err
 		})
@@ -438,25 +437,25 @@ func (s *Service) actionProxySourceUpdate(params map[string]any) (any, int, erro
 		if input.ExpectedVersion < 1 {
 			return nil, 400, proxyError("proxy_version_required", 400, "expected_version is required for updates")
 		}
-		task := s.env.ProxyStartTask("proxy.source.update", nil, "正在验证并保存 Resin 来源", func(ctx context.Context) (any, error) {
+		task := s.env.ProxyStartTask("proxy.source.update", nil, "task.progress.proxy_source_update_resin", func(ctx context.Context) (any, error) {
 			_, result, err := s.updateResinSource(ctx, input)
 			return result, err
 		})
 		return task, 202, nil
 	default:
-		return nil, 404, errors.New("proxy source not found")
+		return nil, 404, proxyError("proxy_source_not_found", 404, "proxy source not found")
 	}
 }
 func (s *Service) actionProxySourceDelete(params map[string]any) (any, int, error) {
 	id := strings.TrimSpace(actionpkg.String(params["source_id"]))
 	kind := s.proxySourceKind(id)
 	if kind == "" {
-		return nil, 404, errors.New("proxy source not found")
+		return nil, 404, proxyError("proxy_source_not_found", 404, "proxy source not found")
 	}
 	if s.env.ProxyStore().ProxyBindingCount(id) > 0 && !actionpkg.Bool(params, "force") {
 		return nil, 409, proxyError("proxy_source_in_use", 409, "source has active bindings; use force=true to clear them and delete")
 	}
-	task := s.env.ProxyStartTask("proxy.source.delete", nil, "正在清理绑定并删除代理", func(ctx context.Context) (any, error) {
+	task := s.env.ProxyStartTask("proxy.source.delete", nil, "task.progress.proxy_source_delete", func(ctx context.Context) (any, error) {
 		return s.deleteProxySource(ctx, id, actionpkg.Bool(params, "force"))
 	})
 	return task, 202, nil
@@ -518,6 +517,7 @@ func (s *Service) testProxySource(ctx context.Context, id, target string) (map[s
 	result := map[string]any{"source_id": id, "reachable": probe.Reachable, "latency_ms": probe.LatencyMS, "protocol": probe.Protocol, "level": probe.Level, "target": probe.Target, "endpoint": rendered.Endpoint.MaskedURL(), "tested_at": checked, "health": health, "health_checked": checked}
 	if err != nil {
 		result["error"] = redact.SanitizeError(err)
+		result["error_code"] = proxyErrorCode(err)
 	}
 	return result, nil
 }
@@ -531,6 +531,7 @@ type proxySourceBatchItem struct {
 	Health    proxy.HealthStatus `json:"health,omitempty"`
 	Endpoint  string             `json:"endpoint,omitempty"`
 	Error     string             `json:"error,omitempty"`
+	Code      string             `json:"code,omitempty"`
 }
 
 func proxySourceIDs(params map[string]any) []string {
@@ -556,12 +557,12 @@ func proxySourceBatchResult(items []proxySourceBatchItem) map[string]any {
 func (s *Service) actionProxySourcesTestSelected(_ context.Context, params map[string]any) (any, int, error) {
 	ids := proxySourceIDs(params)
 	if len(ids) == 0 || len(ids) > 10000 {
-		return nil, 400, errors.New("provide 1 to 10000 source IDs")
+		return nil, 400, proxyError("source_ids_required", 400, "provide 1 to 10000 source IDs")
 	}
 	if s.env.ProxyHasActivePrefix("proxy.sources.test_selected") {
-		return nil, 409, proxyError("proxy_source_test_busy", 409, "代理批量检测任务已在执行")
+		return nil, 409, proxyError("proxy_source_test_busy", 409, "api.error.proxy_source_test_busy")
 	}
-	task := s.env.ProxyStartTask("proxy.sources.test_selected", ids, "正在检测已选代理", func(taskCtx context.Context) (any, error) {
+	task := s.env.ProxyStartTask("proxy.sources.test_selected", ids, "task.progress.proxy_sources_test_selected", func(taskCtx context.Context) (any, error) {
 		items := make([]proxySourceBatchItem, len(ids))
 		for index, id := range ids {
 			items[index] = proxySourceBatchItem{SourceID: id, Kind: s.proxySourceKind(id), Status: "pending"}
@@ -572,6 +573,7 @@ func (s *Service) actionProxySourcesTestSelected(_ context.Context, params map[s
 			result, errTest := s.testProxySource(jobCtx, id, "")
 			if errTest != nil {
 				item.Error = redact.SanitizeError(errTest)
+				item.Code = proxyErrorCode(errTest)
 			} else {
 				item.Reachable, _ = result["reachable"].(bool)
 				item.LatencyMS, _ = result["latency_ms"].(int64)
@@ -582,6 +584,7 @@ func (s *Service) actionProxySourcesTestSelected(_ context.Context, params map[s
 				} else {
 					item.Status = "unreachable"
 					item.Error, _ = result["error"].(string)
+					item.Code, _ = result["error_code"].(string)
 				}
 			}
 			items[index] = item
@@ -595,13 +598,13 @@ func (s *Service) actionProxySourcesTestSelected(_ context.Context, params map[s
 func (s *Service) actionProxySourcesDeleteSelected(_ context.Context, params map[string]any) (any, int, error) {
 	ids := proxySourceIDs(params)
 	if len(ids) == 0 || len(ids) > 10000 {
-		return nil, 400, errors.New("provide 1 to 10000 source IDs")
+		return nil, 400, proxyError("source_ids_required", 400, "provide 1 to 10000 source IDs")
 	}
 	if s.env.ProxyHasActivePrefix("proxy.sources.delete_selected") {
-		return nil, 409, proxyError("proxy_source_delete_busy", 409, "代理批量删除任务已在执行")
+		return nil, 409, proxyError("proxy_source_delete_busy", 409, "api.error.proxy_source_delete_busy")
 	}
 	force := actionpkg.Bool(params, "force")
-	task := s.env.ProxyStartTask("proxy.sources.delete_selected", ids, "正在清理并删除已选代理", func(taskCtx context.Context) (any, error) {
+	task := s.env.ProxyStartTask("proxy.sources.delete_selected", ids, "task.progress.proxy_sources_delete_selected", func(taskCtx context.Context) (any, error) {
 		items := make([]proxySourceBatchItem, len(ids))
 		for index, id := range ids {
 			items[index] = proxySourceBatchItem{SourceID: id, Kind: s.proxySourceKind(id), Status: "pending"}
@@ -612,6 +615,7 @@ func (s *Service) actionProxySourcesDeleteSelected(_ context.Context, params map
 			result, errDelete := s.deleteProxySource(jobCtx, id, force)
 			if errDelete != nil {
 				item.Error = redact.SanitizeError(errDelete)
+				item.Code = proxyErrorCode(errDelete)
 			} else {
 				item.Status = "deleted"
 				item.Endpoint, _ = result["proxy"].(string)
@@ -635,14 +639,14 @@ func (s *Service) actionProxySourceTest(ctx context.Context, params map[string]a
 func (s *Service) actionProxyBatch(action string, params map[string]any) (any, int, error) {
 	ids := actionpkg.AuthIDs(params)
 	if len(ids) == 0 || len(ids) > 10000 {
-		return nil, 400, errors.New("provide 1 to 10000 auth IDs")
+		return nil, 400, proxyError("auth_ids_limit", 400, "provide 1 to 10000 auth IDs")
 	}
 	opts, err := proxyBindOptionsFromParams(params)
 	if err != nil {
 		return nil, 400, err
 	}
 	opts.ManualClearPolicy = s.env.ProxyStore().ProxyAutoBindConfig().ManualClearPolicy
-	task := s.env.ProxyStartTask("proxy."+action, ids, "正在更新代理绑定", func(ctx context.Context) (any, error) {
+	task := s.env.ProxyStartTask("proxy."+action, ids, "task.progress.proxy_bindings_update", func(ctx context.Context) (any, error) {
 		results := make([]proxyBindingResult, len(ids))
 		for i, id := range ids {
 			results[i] = proxyBindingResult{AuthID: id, Status: "pending"}
@@ -666,6 +670,9 @@ func (s *Service) actionProxyBatch(action string, params map[string]any) (any, i
 			}
 			if err != nil && result.Error == "" {
 				result.Error = redact.SanitizeError(err)
+			}
+			if err != nil && result.Code == "" {
+				result.Code = proxyErrorCode(err)
 			}
 			results[i] = result
 			tasks.ReportItem(jobCtx, result)
@@ -706,7 +713,7 @@ func (s *Service) actionProxyBindUnbound(_ context.Context, params map[string]an
 	if err != nil {
 		return nil, 400, err
 	}
-	task := s.env.ProxyStartTask("proxy.bind_unbound", nil, "正在绑定未绑定账号", func(ctx context.Context) (any, error) {
+	task := s.env.ProxyStartTask("proxy.bind_unbound", nil, "task.progress.proxy_bind_unbound", func(ctx context.Context) (any, error) {
 		results, err := s.proxyBindUnbound(ctx, opts)
 		return proxyBatchResult(results), err
 	})
@@ -722,7 +729,7 @@ func proxyBindOptionsFromParams(params map[string]any) (proxyBindOptions, error)
 		opts.SourceScope = ""
 	}
 	if len(opts.OperationID) > 100 {
-		return opts, errors.New("operation_id must be at most 100 bytes")
+		return opts, proxyError("operation_id_invalid", 400, "operation_id must be at most 100 bytes")
 	}
 	if len(opts.SourceIDs) == 0 {
 		if id := strings.TrimSpace(actionpkg.String(params["source_id"])); id != "" {
@@ -732,7 +739,7 @@ func proxyBindOptionsFromParams(params map[string]any) (proxyBindOptions, error)
 	if raw, ok := params["exclude_auto_bind"]; ok && raw != nil {
 		v, ok := raw.(bool)
 		if !ok {
-			return opts, errors.New("exclude_auto_bind must be true, false, or null")
+			return opts, proxyError("exclude_auto_bind_invalid", 400, "exclude_auto_bind must be true, false, or null")
 		}
 		opts.ExcludeAutoBind = &v
 	}
@@ -740,7 +747,7 @@ func proxyBindOptionsFromParams(params map[string]any) (proxyBindOptions, error)
 		value := firstNonEmptyString(actionpkg.String(params["health_max_age"]), "10m")
 		age, err := time.ParseDuration(value)
 		if err != nil || age < time.Second || age > 24*time.Hour {
-			return opts, errors.New("health_max_age must be between 1s and 24h")
+			return opts, proxyError("health_max_age_invalid", 400, "health_max_age must be between 1s and 24h")
 		}
 		opts.HealthMaxAge = age
 	}
@@ -837,7 +844,7 @@ func (s *Service) actionProxyBindingsList(ctx context.Context, params map[string
 func (s *Service) actionProxyBindingEndpoint(ctx context.Context, params map[string]any) (any, int, error) {
 	authID := strings.TrimSpace(actionpkg.String(params["auth_id"]))
 	if authID == "" {
-		return nil, 400, errors.New("auth_id is required")
+		return nil, 400, proxyError("auth_id_required", 400, "auth_id is required")
 	}
 	_, _, raw, err := s.env.ProxyResolveAuth(ctx, authID)
 	if err != nil {
@@ -848,7 +855,7 @@ func (s *Service) actionProxyBindingEndpoint(ctx context.Context, params map[str
 		return nil, proxyInputErrorStatus(err), err
 	}
 	if proxyURL == "" {
-		return nil, 404, errors.New("proxy endpoint is empty")
+		return nil, 404, proxyError("endpoint_empty", 404, "proxy endpoint is empty")
 	}
 	return map[string]any{"auth_id": authID, "proxy": maskProxyURL(proxyURL), "proxy_full": proxyURL}, 200, nil
 }
@@ -856,7 +863,7 @@ func (s *Service) actionProxyBindingEndpoint(ctx context.Context, params map[str
 func (s *Service) actionProxyBindingsAutoBind(params map[string]any) (any, int, error) {
 	ids := actionpkg.AuthIDs(params)
 	if len(ids) == 0 || len(ids) > 10000 {
-		return nil, 400, errors.New("provide 1 to 10000 auth IDs")
+		return nil, 400, proxyError("auth_ids_limit", 400, "provide 1 to 10000 auth IDs")
 	}
 	result, err := s.setProxyAutoBindForAuths(ids, actionpkg.Bool(params, "excluded"))
 	if err != nil {
@@ -867,7 +874,7 @@ func (s *Service) actionProxyBindingsAutoBind(params map[string]any) (any, int, 
 func (s *Service) actionProxyTemplateApply(_ context.Context, params map[string]any) (any, int, error) {
 	id := strings.TrimSpace(actionpkg.String(params["source_id"]))
 	if entry := s.proxyCatalog().ByID[id]; entry == nil || entry.Template == nil || entry.Template.Kind == proxy.TemplateResin {
-		return nil, 404, errors.New("proxy template not found")
+		return nil, 404, proxyError("proxy_source_not_found", 404, "proxy template not found")
 	}
 	count := s.env.ProxyStore().ProxyBindingCount(id)
 	if actionpkg.Bool(params, "dry_run") {
@@ -877,7 +884,7 @@ func (s *Service) actionProxyTemplateApply(_ context.Context, params map[string]
 	if err != nil {
 		return nil, proxyErrorStatus(err), err
 	}
-	task := s.env.ProxyStartTask("proxy.template.apply", nil, "正在应用模板到已绑定账号", func(ctx context.Context) (any, error) { return s.runProxyChange(ctx, changeID) })
+	task := s.env.ProxyStartTask("proxy.template.apply", nil, "task.progress.proxy_template_apply", func(ctx context.Context) (any, error) { return s.runProxyChange(ctx, changeID) })
 	return task, 202, nil
 }
 func (s *Service) actionProxyChangesList(params map[string]any) (any, int, error) {
@@ -889,13 +896,13 @@ func (s *Service) actionProxyChangesList(params map[string]any) (any, int, error
 func (s *Service) actionProxyChange(params map[string]any, action string) (any, int, error) {
 	id := strings.TrimSpace(actionpkg.String(params["change_id"]))
 	if id == "" {
-		return nil, 400, errors.New("change_id is required")
+		return nil, 400, proxyError("change_id_required", 400, "change_id is required")
 	}
 	switch action {
 	case "get":
 		change, ok := s.env.ProxyStore().ProxyChange(id)
 		if !ok {
-			return nil, 404, errors.New("proxy change not found")
+			return nil, 404, proxyError("proxy_change_not_found", 404, "proxy change not found")
 		}
 		page, size, start, end := proxyPage(params, len(change.Items))
 		return map[string]any{"change_id": change.ID, "source_id": change.SourceID, "status": change.Status, "target_revision": change.TargetRevision, "counts": change.Counts, "items": change.Items[start:end], "total": len(change.Items), "page": page, "page_size": size}, 200, nil
@@ -906,10 +913,10 @@ func (s *Service) actionProxyChange(params map[string]any, action string) (any, 
 		}
 		return map[string]any{"change_id": id, "status": "canceled"}, 200, nil
 	case "retry":
-		task := s.env.ProxyStartTask("proxy.change.retry", nil, "正在重试未完成代理变更", func(ctx context.Context) (any, error) { return s.runProxyChange(ctx, id) })
+		task := s.env.ProxyStartTask("proxy.change.retry", nil, "task.progress.proxy_change_retry", func(ctx context.Context) (any, error) { return s.runProxyChange(ctx, id) })
 		return task, 202, nil
 	}
-	return nil, http.StatusBadRequest, fmt.Errorf("unknown change action")
+	return nil, http.StatusBadRequest, proxyError("unknown_change_action", 400, "unknown change action")
 }
 func proxySourceParamPresent(params map[string]any, key string) bool {
 	raw := params
@@ -954,6 +961,10 @@ func (s *Service) proxySourcesView() []proxySourceView {
 		view.Valid = entry.Error == nil
 		if entry.Error != nil {
 			view.LastError = redact.SanitizeError(entry.Error)
+			view.LastErrorCode = proxyErrorCode(entry.Error)
+		} else if entry.Runtime.LastError != "" {
+			view.LastError = entry.Runtime.LastError
+			view.LastErrorCode = entry.Runtime.LastErrorCode
 		}
 		view.Lifecycle = firstNonEmptyString(entry.Runtime.Lifecycle, "active")
 		view.ChangeID = entry.Runtime.ChangeID
@@ -1197,7 +1208,7 @@ func proxyLeaseAccount(binding proxy.Binding) string {
 func proxyRowView(row proxyCatalogRow) map[string]any {
 	a, b := row.Account, row.Binding
 	displayFull := strings.TrimSpace(firstNonEmptyString(a.Email, a.Label, a.ID))
-	return map[string]any{"auth_id": a.ID, "auth_id_display": maskAuthID(a.ID), "display": maskAccountIdentity(displayFull), "display_full": displayFull, "proxy": maskProxyURL(row.Observation.URL), "proxy_status": row.Status, "proxy_source_id": b.SourceID, "proxy_source_kind": b.SourceKind, "proxy_generation": b.Generation, "proxy_source_revision": b.SourceRevision, "proxy_lease_account": proxyLeaseAccount(b), "auto_bind_excluded": row.AutoBind.Excluded, "next_attempt_at": row.AutoBind.NextAttemptAt, "last_error": row.AutoBind.LastError}
+	return map[string]any{"auth_id": a.ID, "auth_id_display": maskAuthID(a.ID), "display": maskAccountIdentity(displayFull), "display_full": displayFull, "proxy": maskProxyURL(row.Observation.URL), "proxy_status": row.Status, "proxy_source_id": b.SourceID, "proxy_source_kind": b.SourceKind, "proxy_generation": b.Generation, "proxy_source_revision": b.SourceRevision, "proxy_lease_account": proxyLeaseAccount(b), "auto_bind_excluded": row.AutoBind.Excluded, "next_attempt_at": row.AutoBind.NextAttemptAt, "last_error": row.AutoBind.LastError, "last_error_code": row.AutoBind.LastErrorCode}
 }
 
 func proxyStatusMatches(filter, status string) bool {
@@ -1294,14 +1305,14 @@ func (s *Service) actionResinCleanup(params map[string]any, action string) (any,
 				continue
 			}
 			if total >= start && total-start < size {
-				items = append(items, map[string]any{"id": resinCleanupID(job), "auth_id": job.AuthID, "account": job.Account, "admin_url": job.AdminURL, "platform_id": job.PlatformID, "status": jobStatus, "paused": job.Paused, "attempts": job.Attempts, "next_attempt_at": job.NextAttemptAt, "last_error": job.LastError, "created_at": job.CreatedAt})
+				items = append(items, map[string]any{"id": resinCleanupID(job), "auth_id": job.AuthID, "account": job.Account, "admin_url": job.AdminURL, "platform_id": job.PlatformID, "status": jobStatus, "paused": job.Paused, "attempts": job.Attempts, "next_attempt_at": job.NextAttemptAt, "last_error": job.LastError, "last_error_code": job.LastErrorCode, "created_at": job.CreatedAt})
 			}
 			total++
 		}
 		return map[string]any{"items": items, "total": total, "page": page, "page_size": size}, 200, nil
 	}
 	if action != "retry" && action != "pause" {
-		return nil, 400, errors.New("unknown cleanup action")
+		return nil, 400, proxyError("unknown_cleanup_action", 400, "unknown cleanup action")
 	}
 	count := 0
 	paused := actionpkg.Bool(params, "paused")

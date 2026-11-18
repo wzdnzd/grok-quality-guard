@@ -2,7 +2,6 @@ package management
 
 import (
 	"context"
-	"fmt"
 	"grok-quality-guard/internal/app/action"
 	"grok-quality-guard/internal/app/tasks"
 	"net/http"
@@ -13,16 +12,16 @@ import (
 func (s *Service) actionProbe(ctx context.Context, params map[string]any) (any, int, error) {
 	authID := strings.TrimSpace(asString(params["auth_id"]))
 	if authID == "" {
-		return nil, http.StatusBadRequest, fmt.Errorf("auth_id is required")
+		return nil, http.StatusBadRequest, newAPIActionError("auth_id_required", "api.error.auth_id_required", http.StatusBadRequest, nil)
 	}
 	if _, okAccount := s.findAccount(authID); !okAccount {
 		_ = s.RefreshCatalog(ctx)
 		if _, okAccount = s.findAccount(authID); !okAccount {
-			return nil, http.StatusNotFound, fmt.Errorf("auth not found")
+			return nil, http.StatusNotFound, newAPIActionError("auth_not_found", "api.error.auth_not_found", http.StatusNotFound, nil)
 		}
 	}
 	force := action.Bool(params, "force")
-	task := s.startTask("accounts.probe", []string{authID}, "正在执行主动探测", func(taskCtx context.Context) (any, error) {
+	task := s.startTask("accounts.probe", []string{authID}, "task.progress.probe_account", func(taskCtx context.Context) (any, error) {
 		// Detached tasks must not reuse the short-lived management callback
 		if force {
 			stateAccount, _ := s.stateAccount(authID)
@@ -35,7 +34,7 @@ func (s *Service) actionProbe(ctx context.Context, params map[string]any) (any, 
 		}
 		account, okAccount := s.findAccount(authID)
 		if !okAccount {
-			return nil, fmt.Errorf("auth not found")
+			return nil, newAPIActionError("auth_not_found", "api.error.auth_not_found", http.StatusNotFound, nil)
 		}
 		return s.accountViewForAccount(taskCtx, account)
 	})
@@ -61,16 +60,16 @@ func requiresRestoreBeforeProbe(stateBefore string) bool {
 func (s *Service) actionProbeSelected(ctx context.Context, params map[string]any) (any, int, error) {
 	authIDs := action.AuthIDs(params)
 	if len(authIDs) == 0 {
-		return nil, http.StatusBadRequest, fmt.Errorf("auth_ids is required")
+		return nil, http.StatusBadRequest, newAPIActionError("auth_ids_required", "api.error.auth_ids_required", http.StatusBadRequest, nil)
 	}
 	candidates, errCandidates := s.selectedAccountCandidates(ctx, authIDs)
 	if errCandidates != nil {
 		return nil, http.StatusBadRequest, errCandidates
 	}
 	if s.hasActiveTask("accounts.probe_selected", "") {
-		return nil, http.StatusConflict, fmt.Errorf("probe task is already running")
+		return nil, http.StatusConflict, newAPIActionError("task_active", "api.error.task_active", http.StatusConflict, nil)
 	}
-	task := s.startTask("accounts.probe_selected", authIDs, fmt.Sprintf("正在检测 %d 个已选账号", len(candidates)), func(taskCtx context.Context) (any, error) {
+	task := s.startTask("accounts.probe_selected", authIDs, "task.progress.probe_selected", func(taskCtx context.Context) (any, error) {
 		result := probeBatchResult{
 			Items: make([]probeBatchItem, len(candidates)),
 			Count: len(candidates),
@@ -93,6 +92,7 @@ func (s *Service) actionProbeSelected(ctx context.Context, params map[string]any
 				if errRestore := s.restoreBeforeManualProbe(jobCtx, candidate.authID, stateBefore); errRestore != nil {
 					entry.Status = "failed"
 					entry.Error = sanitizeError(errRestore)
+					entry.ErrorCode = tasks.ErrorCode(errRestore)
 					result.Items[index] = entry
 					tasks.ReportItem(jobCtx, entry)
 					return
@@ -102,6 +102,7 @@ func (s *Service) actionProbeSelected(ctx context.Context, params map[string]any
 			if errProbe := s.ProbeAccount(jobCtx, candidate.authID, true, ""); errProbe != nil {
 				entry.Status = "failed"
 				entry.Error = sanitizeError(errProbe)
+				entry.ErrorCode = tasks.ErrorCode(errProbe)
 				result.Items[index] = entry
 				tasks.ReportItem(jobCtx, entry)
 				return
@@ -136,13 +137,13 @@ func (s *Service) actionProbeSelected(ctx context.Context, params map[string]any
 func (s *Service) actionCooldown(ctx context.Context, params map[string]any) (any, int, error) {
 	authID := strings.TrimSpace(asString(params["auth_id"]))
 	if authID == "" {
-		return nil, http.StatusBadRequest, fmt.Errorf("auth_id is required")
+		return nil, http.StatusBadRequest, newAPIActionError("auth_id_required", "api.error.auth_id_required", http.StatusBadRequest, nil)
 	}
 	duration := time.Duration(0)
 	if raw := strings.TrimSpace(asString(params["duration"])); raw != "" {
 		parsed, errParse := time.ParseDuration(raw)
 		if errParse != nil || parsed <= 0 {
-			return nil, http.StatusBadRequest, fmt.Errorf("duration must be a positive duration")
+			return nil, http.StatusBadRequest, newAPIActionError("invalid_duration", "api.error.invalid_duration", http.StatusBadRequest, nil)
 		}
 		duration = parsed
 	}
@@ -155,7 +156,7 @@ func (s *Service) actionCooldown(ctx context.Context, params map[string]any) (an
 func (s *Service) actionDisable(ctx context.Context, params map[string]any) (any, int, error) {
 	authID := strings.TrimSpace(asString(params["auth_id"]))
 	if authID == "" {
-		return nil, http.StatusBadRequest, fmt.Errorf("auth_id is required")
+		return nil, http.StatusBadRequest, newAPIActionError("auth_id_required", "api.error.auth_id_required", http.StatusBadRequest, nil)
 	}
 	if errDisable := s.ManualDisable(ctx, authID, asString(params["reason"])); errDisable != nil {
 		return nil, http.StatusConflict, errDisable
@@ -166,7 +167,7 @@ func (s *Service) actionDisable(ctx context.Context, params map[string]any) (any
 func (s *Service) actionRestore(ctx context.Context, params map[string]any) (any, int, error) {
 	authID := strings.TrimSpace(asString(params["auth_id"]))
 	if authID == "" {
-		return nil, http.StatusBadRequest, fmt.Errorf("auth_id is required")
+		return nil, http.StatusBadRequest, newAPIActionError("auth_id_required", "api.error.auth_id_required", http.StatusBadRequest, nil)
 	}
 	if errRestore := s.ManualRestore(ctx, authID); errRestore != nil {
 		return nil, http.StatusConflict, errRestore
@@ -177,7 +178,7 @@ func (s *Service) actionRestore(ctx context.Context, params map[string]any) (any
 func (s *Service) actionRestorePreview(ctx context.Context, params map[string]any) (any, int, error) {
 	authIDs := action.AuthIDs(params)
 	if len(authIDs) == 0 {
-		return nil, http.StatusBadRequest, fmt.Errorf("auth_ids is required")
+		return nil, http.StatusBadRequest, newAPIActionError("auth_ids_required", "api.error.auth_ids_required", http.StatusBadRequest, nil)
 	}
 	candidates, errCandidates := s.selectedAccountCandidates(ctx, authIDs)
 	if errCandidates != nil {
@@ -201,7 +202,7 @@ func (s *Service) actionRestorePreview(ctx context.Context, params map[string]an
 func (s *Service) actionRestoreSelected(ctx context.Context, params map[string]any) (any, int, error) {
 	authIDs := action.AuthIDs(params)
 	if len(authIDs) == 0 {
-		return nil, http.StatusBadRequest, fmt.Errorf("auth_ids is required")
+		return nil, http.StatusBadRequest, newAPIActionError("auth_ids_required", "api.error.auth_ids_required", http.StatusBadRequest, nil)
 	}
 	includeExternal := action.Bool(params, "include_external")
 	candidates, errCandidates := s.selectedAccountCandidates(ctx, authIDs)
@@ -209,9 +210,9 @@ func (s *Service) actionRestoreSelected(ctx context.Context, params map[string]a
 		return nil, http.StatusBadRequest, errCandidates
 	}
 	if s.hasActiveTask("accounts.restore_selected", "") {
-		return nil, http.StatusConflict, fmt.Errorf("restore task is already running")
+		return nil, http.StatusConflict, newAPIActionError("task_active", "api.error.task_active", http.StatusConflict, nil)
 	}
-	task := s.startTask("accounts.restore_selected", authIDs, fmt.Sprintf("正在恢复 %d 个已选账号", len(candidates)), func(taskCtx context.Context) (any, error) {
+	task := s.startTask("accounts.restore_selected", authIDs, "task.progress.restore_selected", func(taskCtx context.Context) (any, error) {
 		result := restoreBatchResult{
 			Items: make([]restoreBatchItem, len(candidates)),
 			Count: len(candidates),
@@ -233,6 +234,7 @@ func (s *Service) actionRestoreSelected(ctx context.Context, params map[string]a
 			if errRestore := s.ManualRestoreExternal(jobCtx, candidate.authID, includeExternal); errRestore != nil {
 				entry.Status = "failed"
 				entry.Error = sanitizeError(errRestore)
+				entry.ErrorCode = tasks.ErrorCode(errRestore)
 				result.Items[index] = entry
 				tasks.ReportItem(jobCtx, entry)
 				return
@@ -274,7 +276,7 @@ func (s *Service) actionRestoreSelected(ctx context.Context, params map[string]a
 func (s *Service) actionDisableSelected(ctx context.Context, params map[string]any) (any, int, error) {
 	authIDs := action.AuthIDs(params)
 	if len(authIDs) == 0 {
-		return nil, http.StatusBadRequest, fmt.Errorf("auth_ids is required")
+		return nil, http.StatusBadRequest, newAPIActionError("auth_ids_required", "api.error.auth_ids_required", http.StatusBadRequest, nil)
 	}
 	modifyAuth := action.Bool(params, "modify_auth")
 	candidates, errCandidates := s.selectedAccountCandidates(ctx, authIDs)
@@ -282,9 +284,9 @@ func (s *Service) actionDisableSelected(ctx context.Context, params map[string]a
 		return nil, http.StatusBadRequest, errCandidates
 	}
 	if s.hasActiveTask("accounts.disable_selected", "") {
-		return nil, http.StatusConflict, fmt.Errorf("disable task is already running")
+		return nil, http.StatusConflict, newAPIActionError("task_active", "api.error.task_active", http.StatusConflict, nil)
 	}
-	task := s.startTask("accounts.disable_selected", authIDs, fmt.Sprintf("正在禁用 %d 个已选账号", len(candidates)), func(taskCtx context.Context) (any, error) {
+	task := s.startTask("accounts.disable_selected", authIDs, "task.progress.disable_selected", func(taskCtx context.Context) (any, error) {
 		result := disableBatchResult{
 			Items:        make([]disableBatchItem, len(candidates)),
 			Count:        len(candidates),
@@ -313,6 +315,7 @@ func (s *Service) actionDisableSelected(ctx context.Context, params map[string]a
 			if errDisable != nil {
 				entry.Status = "failed"
 				entry.Error = sanitizeError(errDisable)
+				entry.ErrorCode = tasks.ErrorCode(errDisable)
 				result.Items[index] = entry
 				tasks.ReportItem(jobCtx, entry)
 				return

@@ -120,11 +120,12 @@ func (p *Plugin) RecordInternalError(authID string, errValue error) error {
 		return errValue
 	}
 	_ = store.AppendEvent(appstate.Event{
-		Time:   time.Now().UTC(),
-		AuthID: authID,
-		Action: "internal_error",
-		Result: "error",
-		Detail: appredact.SanitizeError(errValue),
+		Time:      time.Now().UTC(),
+		AuthID:    authID,
+		Action:    "internal_error",
+		Result:    "error",
+		Detail:    appredact.SanitizeError(errValue),
+		DetailKey: "event.detail.internal_error",
 	})
 	return nil
 }
@@ -415,7 +416,7 @@ func validateAuthPayload(raw map[string]json.RawMessage) error {
 
 func (p *Plugin) startTask(kind string, authIDs []string, progress string, fn func(context.Context) (any, error)) tasks.Task {
 	if p == nil || p.taskMgr == nil {
-		return tasks.Task{Kind: kind, Status: taskStatusFailed, Error: "task manager is not initialized"}
+		return tasks.Task{Kind: kind, Status: taskStatusFailed, Error: "task manager is not initialized", ErrorCode: "operation_failed"}
 	}
 	return p.taskMgr.Start(kind, authIDs, progress, fn)
 }

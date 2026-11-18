@@ -57,6 +57,9 @@ func TestSchedulerSnapshotTracksWaitingAndCompletions(t *testing.T) {
 	if snapshot.LastError != "probe timeout" {
 		t.Fatalf("last error = %q, want probe timeout", snapshot.LastError)
 	}
+	if snapshot.LastErrorCode != "operation_failed" {
+		t.Fatalf("last error code = %q, want operation_failed", snapshot.LastErrorCode)
+	}
 }
 
 type blockingReconcileProbeEnvironment struct {

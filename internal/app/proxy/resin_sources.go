@@ -398,6 +398,7 @@ func (s *Service) resinSourceView(template proxy.Template, config proxy.ResinSou
 		if _, err := resinProviderForSource(template, config); err != nil {
 			view.Valid = false
 			view.LastError = err.Error()
+			view.LastErrorCode = proxyErrorCode(err)
 		}
 	}
 	return view

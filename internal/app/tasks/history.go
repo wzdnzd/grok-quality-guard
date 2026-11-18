@@ -1216,9 +1216,9 @@ func (m *Manager) recoverActiveTasks() {
 		}
 		id := strings.TrimSuffix(file.Name(), ".json")
 		task.Status = taskStatusInterrupted
-		task.CurrentStage = "任务已中断"
+		task.CurrentStage = "task.stage.interrupted"
 		task.Progress = ""
-		task.Error = "插件重启，任务执行已中断"
+		task.Error = "task.error.interrupted"
 		task.Waiting = 0
 		task.Running = 0
 		task.UpdatedAt = now

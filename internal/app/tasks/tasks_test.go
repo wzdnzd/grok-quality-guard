@@ -24,7 +24,7 @@ func TestManagerCancelsRunningTaskAndKeepsPartialResult(t *testing.T) {
 	if errCancel != nil {
 		t.Fatal(errCancel)
 	}
-	if cancelled.Status != taskStatusRunning || cancelled.Progress != "正在取消任务" {
+	if cancelled.Status != taskStatusRunning || cancelled.Progress != "task.stage.cancelling" {
 		t.Fatalf("unexpected cancel response: %#v", cancelled)
 	}
 	deadline := time.Now().Add(3 * time.Second)
@@ -125,18 +125,38 @@ func TestTaskKindsAreGroupedAndLabeledForTheTaskCenter(t *testing.T) {
 		category string
 		label    string
 	}{
-		{kind: "accounts.probe_selected", category: "account", label: "批量检测账号"},
-		{kind: "proxy.sources.test_selected", category: "proxy", label: "批量检测代理"},
-		{kind: "resin.cleanup.retry", category: "proxy", label: "任务"},
-		{kind: "quality.cross_verify", category: "quality", label: "质量交叉验证"},
-		{kind: "system.cleanup", category: "system", label: "任务"},
+		{kind: "accounts.probe_selected", category: "account", label: "task.label.accounts_probe_selected"},
+		{kind: "proxy.sources.test_selected", category: "proxy", label: "task.label.proxy_sources_test_selected"},
+		{kind: "resin.cleanup.retry", category: "proxy", label: "task.label.default"},
+		{kind: "quality.cross_verify", category: "quality", label: "task.label.quality_cross_verify"},
+		{kind: "system.cleanup", category: "system", label: "task.label.default"},
 	}
 	for _, test := range tests {
 		if got := TaskCategory(test.kind); got != test.category {
 			t.Fatalf("TaskCategory(%q) = %q, want %q", test.kind, got, test.category)
 		}
-		if got := TaskLabel(test.kind); got != test.label {
-			t.Fatalf("TaskLabel(%q) = %q, want %q", test.kind, got, test.label)
+		if got := TaskLabelKey(test.kind); got != test.label {
+			t.Fatalf("TaskLabelKey(%q) = %q, want %q", test.kind, got, test.label)
+		}
+	}
+}
+
+func TestTaskSentinelErrorsExposeLocalizationCodes(t *testing.T) {
+	tests := map[error]string{
+		ErrTaskNotFound: "task_not_found",
+		ErrTaskFinished: "task_finished",
+		ErrTaskActive:   "task_active",
+	}
+	for errValue, want := range tests {
+		var coded interface{ ErrorCode() string }
+		if !errors.As(errValue, &coded) {
+			t.Fatalf("%v does not expose an ErrorCode", errValue)
+		}
+		if got := coded.ErrorCode(); got != want {
+			t.Fatalf("%v ErrorCode() = %q, want %q", errValue, got, want)
+		}
+		if got := ErrorCode(errValue); got != want {
+			t.Fatalf("ErrorCode(%v) = %q, want %q", errValue, got, want)
 		}
 	}
 }

@@ -54,6 +54,13 @@ func (e *resinConfigError) Error() string {
 	return e.Message
 }
 
+func (e *resinConfigError) ErrorCode() string {
+	if e == nil {
+		return ""
+	}
+	return "resin_config_invalid"
+}
+
 func resinConfigErrorf(status int, format string, args ...any) error {
 	return &resinConfigError{Status: status, Message: fmt.Sprintf(format, args...)}
 }
@@ -563,6 +570,7 @@ func (s *Service) rescheduleResinLeaseDelete(job ResinLeaseDelete, errDelete err
 	}
 	nextAttemptAt := now.Add(delay)
 	reason := redact.SanitizeError(errDelete)
+	errorCode := proxy.CodeOf(errDelete)
 	_ = s.env.ProxyStore().UpdateIfChanged(func(state *State) (bool, error) {
 		found := false
 		for index := range state.ResinLeaseDeletes {
@@ -574,9 +582,10 @@ func (s *Service) rescheduleResinLeaseDelete(job ResinLeaseDelete, errDelete err
 			candidate.Attempts = attempts
 			candidate.NextAttemptAt = nextAttemptAt
 			candidate.LastError = reason
+			candidate.LastErrorCode = errorCode
 			candidate.Status = status
 			s.env.ProxyRecordEvent(state, candidate.AuthID, "", "resin_lease_delete", "retry_scheduled",
-				fmt.Sprintf("account=%s attempt=%d retry_in=%s error=%s", candidate.Account, attempts, delay.Round(time.Second), reason))
+				fmt.Sprintf("account=%s attempt=%d retry_in=%s error=%s", candidate.Account, attempts, delay.Round(time.Second), errorCode))
 			found = true
 			break
 		}

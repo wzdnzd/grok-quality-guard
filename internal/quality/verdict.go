@@ -178,28 +178,28 @@ func ClassifyQualityHold(sig Signals, minOutput int64) QualityVerdict {
 	}
 	switch {
 	case qualityIsBurstDump(sig, minOutput):
-		return QualityVerdict{Action: QualityActionWithhold, Class: ClassBufferedBurst, Reason: "short generation window dumped output", Signals: sig}
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassBufferedBurst, Reason: "reason.detail.short_generation_window_dumped_output", Signals: sig}
 	case qualityIsCipherDrool(sig, minOutput):
-		return QualityVerdict{Action: QualityActionWithhold, Class: ClassCipherDrool, Reason: "cipher-only stream is dumping visible text", Signals: sig}
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassCipherDrool, Reason: "reason.detail.cipher_only_stream_is_dumping_visible_text", Signals: sig}
 	case qualityIsFakeEncryptedDump(sig, minOutput):
-		return QualityVerdict{Action: QualityActionWithhold, Class: ClassFakeEncryptedDump, Reason: "encrypted or billed reasoning preceded a fast visible dump", Signals: sig}
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassFakeEncryptedDump, Reason: "reason.detail.encrypted_or_billed_reasoning_preceded_a_fast_visible_dump", Signals: sig}
 	case qualityIsFastReasoningRatioDump(sig):
-		return QualityVerdict{Action: QualityActionWithhold, Class: ClassFastReasoningRatio, Reason: "reasoning tokens dominate a fast visible dump", Signals: sig}
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassFastReasoningRatio, Reason: "reason.detail.reasoning_tokens_dominate_a_fast_visible_dump", Signals: sig}
 	}
 	if isSemanticOnly(sig) {
-		return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "semantic output without visible text", Signals: sig}
+		return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.semantic_output_without_visible_text", Signals: sig}
 	}
 	if sig.HasThinking {
 		if sig.HasReasoningDelta {
-			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "real reasoning delta observed", Signals: sig}
+			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.real_reasoning_delta_observed", Signals: sig}
 		}
 		if sig.Terminal {
-			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "encrypted reasoning met the floor", Signals: sig}
+			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.encrypted_reasoning_met_the_floor", Signals: sig}
 		}
 		if sig.VisibleTokens >= minOutput && qualityVisibleStreaming(sig) && sig.VisibleSpanMS >= 500 {
-			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "encrypted reasoning with sustained visible output", Signals: sig}
+			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.encrypted_reasoning_with_sustained_visible_output", Signals: sig}
 		}
-		return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "waiting for encrypted reasoning evidence", Signals: sig}
+		return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.waiting_for_encrypted_reasoning_evidence", Signals: sig}
 	}
 	output := sig.VisibleTokens
 	if output <= 0 {
@@ -207,30 +207,30 @@ func ClassifyQualityHold(sig Signals, minOutput int64) QualityVerdict {
 	}
 	enough := output >= minOutput
 	if sig.ReasoningStarted && !sig.Terminal && !sig.HoldExpired {
-		return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "waiting for reasoning evidence", Signals: sig}
+		return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.waiting_for_reasoning_evidence", Signals: sig}
 	}
 	if sig.Terminal {
 		if output <= 0 {
-			return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "empty terminal stream", Signals: sig}
+			return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.empty_terminal_stream", Signals: sig}
 		}
 		if enough {
-			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "no real reasoning evidence", Signals: sig}
+			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
 		}
-		return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "short response below thinking threshold", Signals: sig}
+		return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.short_response_below_thinking_threshold", Signals: sig}
 	}
 	if enough {
-		return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "no real reasoning evidence", Signals: sig}
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
 	}
 	if sig.HoldExpired {
 		if output <= 0 {
-			return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "hold expired without output", Signals: sig}
+			return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.hold_expired_without_output", Signals: sig}
 		}
 		if enough {
-			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "no real reasoning evidence", Signals: sig}
+			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
 		}
-		return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "short response below thinking threshold", Signals: sig}
+		return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.short_response_below_thinking_threshold", Signals: sig}
 	}
-	return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "waiting for enough output", Signals: sig}
+	return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.waiting_for_enough_output", Signals: sig}
 }
 func isDumpClass(class string) bool {
 	switch class {
@@ -290,7 +290,7 @@ func classifyFinal(sig Signals, cfg config.QualityConfig, reasoningRequired bool
 	sig.TPS = tps(sig.OutputTokens, sig.GenerationMS)
 	sig.Streaming = streaming
 	if isEmptyStream(sig) {
-		return QualityVerdict{Action: QualityActionWithhold, Class: ClassEmptyStream, Reason: "upstream stream completed without content", Signals: sig}
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassEmptyStream, Reason: "reason.detail.upstream_stream_completed_without_content", Signals: sig}
 	}
 	thinkingRequired := cfg.ThinkingGuard && reasoningRequired
 	if streaming {
@@ -300,14 +300,14 @@ func classifyFinal(sig Signals, cfg config.QualityConfig, reasoningRequired bool
 			case !reasoningRequired && isDumpClass(hold.Class):
 				hold.Action = QualityActionDeliver
 				hold.Class = ClassNone
-				hold.Reason = "non-reasoning request skipped dump detection"
+				hold.Reason = "reason.detail.non_reasoning_request_skipped_dump_detection"
 			case hold.Class == ClassMissingThinking && !thinkingRequired:
 				hold.Action = QualityActionDeliver
 				hold.Class = ClassNone
 				if cfg.ThinkingGuard {
-					hold.Reason = "reasoning was disabled for this request"
+					hold.Reason = "reason.detail.reasoning_was_disabled_for_this_request"
 				} else {
-					hold.Reason = "thinking guard is disabled"
+					hold.Reason = "reason.detail.thinking_guard_is_disabled"
 				}
 			default:
 				return hold
@@ -319,7 +319,7 @@ func classifyFinal(sig Signals, cfg config.QualityConfig, reasoningRequired bool
 				hold.Action = QualityActionDeliver
 				hold.Class = ClassNone
 			} else {
-				return QualityVerdict{Action: QualityActionWithhold, Class: ClassEmptyStream, Reason: "upstream stream completed without content", Signals: sig}
+				return QualityVerdict{Action: QualityActionWithhold, Class: ClassEmptyStream, Reason: "reason.detail.upstream_stream_completed_without_content", Signals: sig}
 			}
 		}
 	}
@@ -329,7 +329,7 @@ func classifyFinal(sig Signals, cfg config.QualityConfig, reasoningRequired bool
 			output = sig.OutputTokens
 		}
 		if output >= minOutput {
-			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "no real reasoning evidence", Signals: sig}
+			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
 		}
 	}
 	class, speed, gen := classifyOutputSpeed(sig, cfg, cfg.FailClosed)
@@ -338,7 +338,7 @@ func classifyFinal(sig Signals, cfg config.QualityConfig, reasoningRequired bool
 	if class != ClassNone {
 		return QualityVerdict{Action: QualityActionWithhold, Class: class, Reason: outputSpeedReason(class), Signals: sig}
 	}
-	return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "within_threshold", Signals: sig}
+	return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.within_threshold", Signals: sig}
 }
 
 func probeStreamUnparsed(sig Signals) bool {
@@ -354,20 +354,20 @@ func classifyProbeResult(sig Signals, cfg config.QualityConfig, expectedMatched,
 	sig.ReasoningRequired = reasoningRequired
 	thinkingRequired := cfg.ThinkingGuard && reasoningRequired
 	if probeStreamUnparsed(sig) {
-		return QualityVerdict{Action: QualityActionWithhold, Class: ClassProbeError, Reason: "probe stream produced no parseable events", Signals: sig}
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassProbeError, Reason: "reason.detail.probe_stream_produced_no_parseable_events", Signals: sig}
 	}
 	if !sig.Terminal {
-		return QualityVerdict{Action: QualityActionWithhold, Class: ClassProbeError, Reason: "probe stream ended without a terminal event", Signals: sig}
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassProbeError, Reason: "reason.detail.probe_stream_ended_without_a_terminal_event", Signals: sig}
 	}
 	if !expectedMatched {
-		return QualityVerdict{Action: QualityActionWithhold, Class: ClassExpectedMarkerMissing, Reason: "expected marker missing", Signals: sig}
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassExpectedMarkerMissing, Reason: "reason.detail.expected_marker_missing", Signals: sig}
 	}
 	output := sig.OutputTokens
 	if output <= 0 {
 		output = sig.VisibleTokens
 	}
 	if output < cfg.MinPassiveOutputTokens {
-		return QualityVerdict{Action: QualityActionWithhold, Class: ClassInsufficientOutput, Reason: "insufficient output tokens", Signals: sig}
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassInsufficientOutput, Reason: "reason.detail.insufficient_output_tokens", Signals: sig}
 	}
 	sig.EncryptedFloor = encryptedFloor(sig.ReasoningTokens, cfg)
 	if sig.EncryptedBytes > 0 && sig.EncryptedBytes >= sig.EncryptedFloor {
@@ -380,7 +380,7 @@ func classifyProbeResult(sig Signals, cfg config.QualityConfig, expectedMatched,
 			// Non-reasoning probe models legitimately produce fast visible text.
 		case hold.Class == ClassMissingThinking:
 			if thinkingRequired && output >= thinkingGuardMinOutputTokens && sig.ReasoningTokens <= 0 {
-				return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "missing thinking", Signals: sig}
+				return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.missing_thinking", Signals: sig}
 			}
 		default:
 			return hold
@@ -390,20 +390,20 @@ func classifyProbeResult(sig Signals, cfg config.QualityConfig, expectedMatched,
 	sig.GenerationMS = gen
 	sig.TPS = speed
 	if class == ClassNone && cfg.FailClosed && gen < cfg.MinGenerationMS && !qualitySpeedSkipped(sig) {
-		return QualityVerdict{Action: QualityActionWithhold, Class: ClassInsufficientGeneration, Reason: "insufficient generation window", Signals: sig}
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassInsufficientGeneration, Reason: "reason.detail.insufficient_generation_window", Signals: sig}
 	}
 	if class != ClassNone {
 		return QualityVerdict{Action: QualityActionWithhold, Class: class, Reason: outputSpeedReason(class), Signals: sig}
 	}
-	return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "within_threshold", Signals: sig}
+	return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.within_threshold", Signals: sig}
 }
 
 func classifyPassiveAudit(sig Signals, cfg config.QualityConfig) QualityVerdict {
 	if !sig.Streaming {
-		return QualityVerdict{Action: QualityActionDeliver, Class: ClassIgnored, Reason: "not_build_stream", Signals: sig}
+		return QualityVerdict{Action: QualityActionDeliver, Class: ClassIgnored, Reason: "reason.detail.not_build_stream", Signals: sig}
 	}
 	if !sig.Terminal || !sig.FirstTokenKnown {
-		return QualityVerdict{Action: QualityActionDeliver, Class: ClassIgnored, Reason: "missing_first_token", Signals: sig}
+		return QualityVerdict{Action: QualityActionDeliver, Class: ClassIgnored, Reason: "reason.detail.missing_first_token", Signals: sig}
 	}
 	sig.EncryptedFloor = encryptedFloor(sig.ReasoningTokens, cfg)
 	if sig.EncryptedBytes > 0 && sig.EncryptedBytes >= sig.EncryptedFloor {
@@ -412,7 +412,7 @@ func classifyPassiveAudit(sig Signals, cfg config.QualityConfig) QualityVerdict 
 	sig.GenerationMS = generationWindowMS(sig.DurationMS, sig.FirstTokenMS, sig.ReasoningTokens)
 	sig.TPS = tps(sig.OutputTokens, sig.GenerationMS)
 	if sig.GenerationMS <= 0 || sig.OutputTokens < cfg.MinPassiveOutputTokens {
-		return QualityVerdict{Action: QualityActionDeliver, Class: ClassIgnored, Reason: "insufficient_output_tokens", Signals: sig}
+		return QualityVerdict{Action: QualityActionDeliver, Class: ClassIgnored, Reason: "reason.detail.insufficient_output_tokens", Signals: sig}
 	}
 	if cfg.ThinkingGuard && sig.ReasoningRequired && !sig.HasThinking && !isSemanticOnly(sig) {
 		output := sig.VisibleTokens
@@ -420,14 +420,14 @@ func classifyPassiveAudit(sig Signals, cfg config.QualityConfig) QualityVerdict 
 			output = sig.OutputTokens
 		}
 		if output >= cfg.MinPassiveOutputTokens {
-			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "no real reasoning evidence", Signals: sig}
+			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
 		}
 	}
 	class, speed, gen := classifyOutputSpeed(sig, cfg, cfg.FailClosed)
 	sig.GenerationMS = gen
 	sig.TPS = speed
 	if class == ClassNone {
-		return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "within_threshold", Signals: sig}
+		return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.within_threshold", Signals: sig}
 	}
 	return QualityVerdict{Action: QualityActionWithhold, Class: class, Reason: outputSpeedReason(class), Signals: sig}
 }
@@ -448,7 +448,7 @@ func classifyNonStreamResult(sig Signals, cfg config.QualityConfig, reasoningReq
 	sig.GenerationMS = 0
 	sig.TPS = 0
 	if isEmptyStream(sig) {
-		return QualityVerdict{Action: QualityActionWithhold, Class: ClassEmptyStream, Reason: "upstream response completed without content", Signals: sig}
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassEmptyStream, Reason: "reason.detail.upstream_response_completed_without_content", Signals: sig}
 	}
 	if cfg.ThinkingGuard && reasoningRequired && !sig.HasThinking && !isSemanticOnly(sig) {
 		output := sig.VisibleTokens
@@ -456,20 +456,20 @@ func classifyNonStreamResult(sig Signals, cfg config.QualityConfig, reasoningReq
 			output = sig.OutputTokens
 		}
 		if output >= minOutput {
-			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "no real reasoning evidence", Signals: sig}
+			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
 		}
 	}
-	return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "within_threshold", Signals: sig}
+	return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.within_threshold", Signals: sig}
 }
 
 func outputSpeedReason(class string) string {
 	switch class {
 	case ClassBufferedBurst:
-		return "short generation window dumped output"
+		return "reason.detail.short_generation_window_dumped_output"
 	case ClassHardTPS:
-		return "output tokens per second exceeded hard threshold"
+		return "reason.detail.output_tokens_per_second_exceeded_hard_threshold"
 	case ClassSoftTPS:
-		return "output tokens per second exceeded soft threshold"
+		return "reason.detail.output_tokens_per_second_exceeded_soft_threshold"
 	default:
 		return ""
 	}

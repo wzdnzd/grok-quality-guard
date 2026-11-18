@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+
+	"grok-quality-guard/internal/app/i18n"
 )
 
 func transparentMaxAttempts(policy Policy, replayable bool) int {
@@ -147,16 +149,27 @@ func (s *Service) closePluginStream(streamID, code, message string, status int) 
 	s.env.ClosePluginStream(streamID, code, message, status)
 }
 
+func (s *Service) closePluginErrorStream(streamID, locale, code string, status int) {
+	key := "api.error." + code
+	message := i18n.T(locale, key, nil)
+	if !i18n.Has(locale, key) {
+		message = i18n.T(locale, "api.error.internal", nil)
+	}
+	s.closePluginStream(streamID, code, message, status)
+}
+
 func (s *Service) recordTransparentOverflow(authID string, limit int64) {
 	if s == nil || s.env == nil || s.env.Store() == nil {
 		return
 	}
 	_ = s.env.Store().AppendEvent(Event{
-		Time:   time.Now().UTC(),
-		AuthID: authID,
-		Action: "transparent_overflow",
-		Result: "delivered",
-		Detail: fmt.Sprintf("hold buffer exceeded %d bytes; quality gate bypassed", limit),
+		Time:       time.Now().UTC(),
+		AuthID:     authID,
+		Action:     "transparent_overflow",
+		Result:     "delivered",
+		Detail:     fmt.Sprintf("hold buffer exceeded %d bytes; quality gate bypassed", limit),
+		DetailKey:  "event.detail.hold_buffer_exceeded",
+		DetailArgs: map[string]any{"limit": limit},
 	})
 }
 
@@ -165,12 +178,13 @@ func (s *Service) recordAttemptError(authID, class string, errValue error) error
 		return errValue
 	}
 	return s.env.Store().AppendEvent(Event{
-		Time:   time.Now().UTC(),
-		AuthID: authID,
-		Class:  class,
-		Action: "transparent_attempt",
-		Result: "failed",
-		Detail: sanitizeError(errValue),
+		Time:      time.Now().UTC(),
+		AuthID:    authID,
+		Class:     class,
+		Action:    "transparent_attempt",
+		Result:    "failed",
+		Detail:    sanitizeError(errValue),
+		DetailKey: "event.detail.quality_gate_error",
 	})
 }
 
@@ -182,7 +196,7 @@ func (s *Service) applyTransparentFailureVerdict(ctx context.Context, authID str
 		return
 	}
 	if verdict.Reason == "" && errValue != nil {
-		verdict.Reason = sanitizeError(errValue)
+		verdict.Reason = "reason.detail.unknown_error"
 	}
 	_ = s.env.ApplyVerdict(ctx, authID, verdict, "transparent", callbackID)
 }

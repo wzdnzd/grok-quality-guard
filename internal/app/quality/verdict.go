@@ -72,11 +72,13 @@ func noteHealthyObservation(account *AccountState, now time.Time, cfg QualityCon
 	account.HealthyStreak = 0
 	account.HealthyStreakStartedAt = time.Time{}
 	return &Event{
-		Time:   now,
-		AuthID: account.AuthID,
-		Action: "strike_decay",
-		Result: "expired",
-		Detail: fmt.Sprintf("healthy_streak=%d elapsed=%s", streak, elapsed.Round(time.Hour)),
+		Time:       now,
+		AuthID:     account.AuthID,
+		Action:     "strike_decay",
+		Result:     "expired",
+		Detail:     fmt.Sprintf("healthy_streak=%d elapsed=%s", streak, elapsed.Round(time.Hour)),
+		DetailKey:  "event.detail.healthy_streak",
+		DetailArgs: map[string]any{"streak": streak, "elapsed": elapsed.Round(time.Hour).String()},
 	}
 }
 
@@ -176,6 +178,8 @@ func (s *Service) applyVerdictLocked(
 		}
 		eventResult := "recorded"
 		eventDetail := source
+		eventDetailKey := ""
+		eventDetailArgs := map[string]any{}
 		if verdict.Reason != "" {
 			eventDetail += " · " + verdict.Reason
 		}
@@ -204,21 +208,24 @@ func (s *Service) applyVerdictLocked(
 					outcome.CrossVerify = true
 					eventAction = "cross_verify_schedule"
 					eventResult = "pending"
-					eventDetail = fmt.Sprintf("%s · 连续软 TPS %d/%d，等待交叉验证", source, account.SoftStrikes, threshold)
+					eventDetailKey = "event.detail.soft_tps_pending"
+					eventDetailArgs = map[string]any{"source": source, "strikes": account.SoftStrikes, "threshold": threshold}
 					if !preserveIsolation() {
 						account.State = StateSuspect
 					}
 				} else {
 					outcome.Actioned = true
 					eventResult = "threshold_reached"
-					eventDetail = fmt.Sprintf("%s · 连续软 TPS %d/%d", source, account.SoftStrikes, threshold)
+					eventDetailKey = "event.detail.soft_tps"
+					eventDetailArgs = map[string]any{"source": source, "strikes": account.SoftStrikes, "threshold": threshold}
 					if !preserveIsolation() {
 						account.State = StateDegraded
 					}
 				}
 			} else {
 				eventResult = "pending"
-				eventDetail = fmt.Sprintf("%s · 连续软 TPS %d/%d", source, account.SoftStrikes, threshold)
+				eventDetailKey = "event.detail.soft_tps"
+				eventDetailArgs = map[string]any{"source": source, "strikes": account.SoftStrikes, "threshold": threshold}
 				if !preserveIsolation() {
 					account.State = StateSuspect
 				}
@@ -227,7 +234,8 @@ func (s *Service) applyVerdictLocked(
 		case ClassRateLimited:
 			account.ProbeBackoffUntil = now.Add(backoff)
 			eventResult = "rate_limited"
-			eventDetail = source + " · upstream rate limit, not a quality failure"
+			eventDetailKey = "event.detail.rate_limited"
+			eventDetailArgs = map[string]any{"source": source}
 			if verdict.Reason != "" {
 				eventDetail += " · " + verdict.Reason
 			}
@@ -256,7 +264,8 @@ func (s *Service) applyVerdictLocked(
 					}
 				}
 				eventResult = "threshold_reached"
-				eventDetail = fmt.Sprintf("%s · 连续探测错误 %d/%d", source, account.ErrorStrikes, threshold)
+				eventDetailKey = "event.detail.probe_errors"
+				eventDetailArgs = map[string]any{"source": source, "strikes": account.ErrorStrikes, "threshold": threshold}
 				if verdict.Reason != "" {
 					eventDetail += " · " + verdict.Reason
 				}
@@ -265,7 +274,8 @@ func (s *Service) applyVerdictLocked(
 				}
 			} else {
 				eventResult = "pending"
-				eventDetail = fmt.Sprintf("%s · 连续探测错误 %d/%d", source, account.ErrorStrikes, threshold)
+				eventDetailKey = "event.detail.probe_errors"
+				eventDetailArgs = map[string]any{"source": source, "strikes": account.ErrorStrikes, "threshold": threshold}
 				if verdict.Reason != "" {
 					eventDetail += " · " + verdict.Reason
 				}
@@ -280,11 +290,17 @@ func (s *Service) applyVerdictLocked(
 			account.ThinkingStrikes = 0
 			outcome.Actioned = true
 			eventResult = "actioned"
+			eventDetailKey = "event.detail.credential_invalid"
+			if verdict.Class == ClassQuotaExhausted {
+				eventDetailKey = "event.detail.quota_exhausted"
+			}
+			eventDetailArgs = map[string]any{"source": source}
 
 		case ClassIgnored:
 			eventClass = ""
 			eventResult = "ignored"
-			eventDetail = source + " · 非质量类错误，未计入连续错误"
+			eventDetailKey = "event.detail.non_quality_error"
+			eventDetailArgs = map[string]any{"source": source}
 			if verdict.Reason != "" {
 				eventDetail += " · " + verdict.Reason
 			}
@@ -299,21 +315,24 @@ func (s *Service) applyVerdictLocked(
 					outcome.CrossVerify = true
 					eventAction = "cross_verify_schedule"
 					eventResult = "pending"
-					eventDetail = fmt.Sprintf("%s · 连续缺少真实思考 %d/%d，等待交叉验证", source, account.ThinkingStrikes, threshold)
+					eventDetailKey = "event.detail.missing_thinking_pending"
+					eventDetailArgs = map[string]any{"source": source, "strikes": account.ThinkingStrikes, "threshold": threshold}
 					if !preserveIsolation() {
 						account.State = StateSuspect
 					}
 				} else {
 					outcome.Actioned = true
 					eventResult = "threshold_reached"
-					eventDetail = fmt.Sprintf("%s · 连续缺少真实思考 %d/%d · permanent_eligible=%t", source, account.ThinkingStrikes, threshold, priorMissingStrike)
+					eventDetailKey = "event.detail.missing_thinking"
+					eventDetailArgs = map[string]any{"source": source, "strikes": account.ThinkingStrikes, "threshold": threshold, "eligible": priorMissingStrike}
 					if !preserveIsolation() {
 						account.State = StateDegraded
 					}
 				}
 			} else {
 				eventResult = "pending"
-				eventDetail = fmt.Sprintf("%s · 连续缺少真实思考 %d/%d", source, account.ThinkingStrikes, threshold)
+				eventDetailKey = "event.detail.missing_thinking_strikes"
+				eventDetailArgs = map[string]any{"source": source, "strikes": account.ThinkingStrikes, "threshold": threshold}
 				if !preserveIsolation() {
 					account.State = StateSuspect
 				}
@@ -338,12 +357,14 @@ func (s *Service) applyVerdictLocked(
 		}
 
 		return &Event{
-			Time:   time.Now().UTC(),
-			AuthID: authID,
-			Class:  eventClass,
-			Action: eventAction,
-			Result: eventResult,
-			Detail: eventDetail,
+			Time:       time.Now().UTC(),
+			AuthID:     authID,
+			Class:      eventClass,
+			Action:     eventAction,
+			Result:     eventResult,
+			Detail:     eventDetail,
+			DetailKey:  eventDetailKey,
+			DetailArgs: eventDetailArgs,
 		}, nil
 	})
 	if errUpdate != nil {

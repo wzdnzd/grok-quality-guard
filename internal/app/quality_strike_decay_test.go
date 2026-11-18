@@ -106,7 +106,7 @@ func TestProbeErrorDoesNotAdvanceStrikeDecay(t *testing.T) {
 		cfg.Quality.StrikeDecayMinHealthy = 3
 	})
 	seedStrikeAccount(t, plugin, "auth-1", time.Now().UTC().Add(-49*time.Hour), 2)
-	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassProbeError, Reason: "probe timeout"}, "probe", ""); errApply != nil {
+	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassProbeError, Reason: "reason.detail.probe_transport_error"}, "probe", ""); errApply != nil {
 		t.Fatal(errApply)
 	}
 	account, _ := plugin.stateAccount("auth-1")
@@ -129,7 +129,7 @@ func TestRateLimitedDoesNotResetConsecutiveCounters(t *testing.T) {
 	}); errUpdate != nil {
 		t.Fatal(errUpdate)
 	}
-	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassRateLimited, Reason: "upstream status 429 (rate limited)"}, "transparent", ""); errApply != nil {
+	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassRateLimited, Reason: "reason.detail.upstream_status_429_rate_limited"}, "transparent", ""); errApply != nil {
 		t.Fatal(errApply)
 	}
 	account, _ := plugin.stateAccount("auth-1")

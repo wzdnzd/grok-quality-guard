@@ -24,7 +24,7 @@ func (s *Service) queueProxyErrorRotation(authID string, verdict QualityVerdict)
 	if _, managed := s.env.ProxyBindingForAccount(stateAccount); !managed {
 		return
 	}
-	s.env.StartTask(proxyAutoRotateTaskKind, []string{authID}, "正在自动轮换代理", func(ctx context.Context) (any, error) {
+	s.env.StartTask(proxyAutoRotateTaskKind, []string{authID}, "task.progress.auto_rotate", func(ctx context.Context) (any, error) {
 		if errRotate := s.finishProxyErrorRotation(ctx, authID, verdict); errRotate != nil {
 			return nil, errRotate
 		}
@@ -82,12 +82,13 @@ func (s *Service) recordProxyRotationFailure(authID, class, status string, errRo
 		detail = "proxy rotation failed"
 	}
 	_ = store.AppendEvent(Event{
-		Time:   time.Now().UTC(),
-		AuthID: authID,
-		Class:  class,
-		Action: "proxy_rotate",
-		Result: "failed",
-		Detail: detail,
+		Time:      time.Now().UTC(),
+		AuthID:    authID,
+		Class:     class,
+		Action:    "proxy_rotate",
+		Result:    "failed",
+		Detail:    detail,
+		DetailKey: "event.detail.proxy_rotation_failed",
 	})
 }
 
@@ -148,11 +149,12 @@ func (s *Service) clearProxyFailureStrikes(ctx context.Context, authID string) e
 			account.State = StateUnknown
 		}
 		return &Event{
-			Time:   time.Now().UTC(),
-			AuthID: authID,
-			Action: "proxy_error_rotation",
-			Result: "strikes_reset",
-			Detail: "managed proxy replaced",
+			Time:      time.Now().UTC(),
+			AuthID:    authID,
+			Action:    "proxy_error_rotation",
+			Result:    "strikes_reset",
+			Detail:    "managed proxy replaced",
+			DetailKey: "event.detail.managed_proxy_replaced",
 		}, nil
 	})
 }

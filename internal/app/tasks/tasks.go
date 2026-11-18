@@ -26,10 +26,19 @@ const (
 	taskLimit     = 200
 )
 
+type taskStateError struct {
+	code    string
+	message string
+}
+
+func (e *taskStateError) Error() string { return e.message }
+
+func (e *taskStateError) ErrorCode() string { return e.code }
+
 var (
-	ErrTaskNotFound = errors.New("task not found")
-	ErrTaskFinished = errors.New("task already finished")
-	ErrTaskActive   = errors.New("task is still active")
+	ErrTaskNotFound = &taskStateError{code: "task_not_found", message: "task not found"}
+	ErrTaskFinished = &taskStateError{code: "task_finished", message: "task already finished"}
+	ErrTaskActive   = &taskStateError{code: "task_active", message: "task is still active"}
 )
 
 // Task is the management-facing view of one long-running operation.
@@ -60,6 +69,7 @@ type Task struct {
 	DurationMS     int64     `json:"duration_ms,omitempty"`
 	Result         any       `json:"result,omitempty"`
 	Error          string    `json:"error,omitempty"`
+	ErrorCode      string    `json:"error_code,omitempty"`
 	ErrorStatus    int       `json:"error_status,omitempty"`
 }
 
@@ -124,7 +134,7 @@ func (m *Manager) Wait() {
 
 func (m *Manager) Start(kind string, authIDs []string, progress string, fn func(context.Context) (any, error)) Task {
 	if m == nil {
-		return Task{Kind: kind, Status: taskStatusFailed, Error: "task manager is not initialized"}
+		return Task{Kind: kind, Status: taskStatusFailed, Error: "task manager is not initialized", ErrorCode: "operation_failed"}
 	}
 	now := time.Now().UTC()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -133,7 +143,7 @@ func (m *Manager) Start(kind string, authIDs []string, progress string, fn func(
 		ID:           nextTaskID(now),
 		Kind:         strings.TrimSpace(kind),
 		Category:     TaskCategory(kind),
-		Label:        TaskLabel(kind),
+		Label:        TaskLabelKey(kind),
 		AuthIDs:      ids,
 		AuthCount:    len(ids),
 		Status:       taskStatusQueued,
@@ -251,19 +261,22 @@ func (m *Manager) runTask(ctx context.Context, taskID string, fn func(context.Co
 		entry.task.Status = taskStatusCancelled
 		entry.task.Result = result
 		entry.task.Error = ""
+		entry.task.ErrorCode = ""
 		entry.task.ErrorStatus = 0
-		entry.task.CurrentStage = "已取消"
+		entry.task.CurrentStage = "task.stage.cancelled"
 	} else if errTask != nil {
 		entry.task.Status = taskStatusFailed
 		entry.task.Error = redact.SanitizeError(errTask)
+		entry.task.ErrorCode = ErrorCode(errTask)
 		entry.task.ErrorStatus = taskErrorStatus(errTask)
 		entry.task.Result = result
-		entry.task.CurrentStage = "执行失败"
+		entry.task.CurrentStage = "task.stage.failed"
 	} else {
 		entry.task.Status = taskStatusSucceeded
 		entry.task.Result = result
 		entry.task.Error = ""
-		entry.task.CurrentStage = "已完成"
+		entry.task.ErrorCode = ""
+		entry.task.CurrentStage = "task.stage.completed"
 	}
 	entry.task.Progress = ""
 	if entry.task.Completed > entry.task.Total && entry.task.Total > 0 {
@@ -324,6 +337,29 @@ func (m *Manager) pruneRecentLocked(now time.Time) {
 		if recent.expiresAt.IsZero() || !recent.expiresAt.After(now) {
 			delete(m.recent, id)
 		}
+	}
+}
+
+// ErrorCode returns a stable localization code for an error produced while a
+// managed task runs. The task view keeps the code machine-readable and the
+// management layer translates it on read.
+func ErrorCode(errValue error) string {
+	if errValue == nil {
+		return ""
+	}
+	var coded interface{ ErrorCode() string }
+	if errors.As(errValue, &coded) {
+		if code := strings.TrimSpace(coded.ErrorCode()); code != "" {
+			return code
+		}
+	}
+	switch {
+	case errors.Is(errValue, context.Canceled):
+		return "operation_canceled"
+	case errors.Is(errValue, context.DeadlineExceeded):
+		return "operation_timeout"
+	default:
+		return "operation_failed"
 	}
 }
 
@@ -527,8 +563,8 @@ func (m *Manager) CancelTask(taskID string) (Task, error) {
 			return task, ErrTaskFinished
 		}
 		entry.cancelRequested = true
-		entry.task.Progress = "正在取消任务"
-		entry.task.CurrentStage = "正在取消任务"
+		entry.task.Progress = "task.stage.cancelling"
+		entry.task.CurrentStage = "task.stage.cancelling"
 		entry.task.UpdatedAt = time.Now().UTC()
 		m.persistActiveMetadataLocked(entry, true)
 		if entry.cancel != nil {
@@ -995,30 +1031,46 @@ func TaskCategory(kind string) string {
 	}
 }
 
-// TaskLabel returns a stable user-facing name for a task kind.
-func TaskLabel(kind string) string {
-	labels := map[string]string{
-		"accounts.probe":                "主动探测账号",
-		"accounts.probe_selected":       "批量检测账号",
-		"accounts.restore_selected":     "批量恢复账号",
-		"accounts.disable_selected":     "批量禁用账号",
-		"quality.cross_verify":          "质量交叉验证",
-		"proxy.auto_rotate":             "质量异常后轮换代理",
-		"proxy.bind":                    "批量绑定代理",
-		"proxy.clear":                   "批量清除代理",
-		"proxy.rotate":                  "批量轮换代理",
-		"proxy.adopt":                   "批量接管代理",
-		"proxy.bind_unbound":            "绑定未绑定账号",
-		"proxy.template.apply":          "应用代理模板",
-		"proxy.source.create":           "添加代理",
-		"proxy.source.update":           "保存代理",
-		"proxy.source.delete":           "删除代理",
-		"proxy.sources.test_selected":   "批量检测代理",
-		"proxy.sources.delete_selected": "批量删除代理",
-		"proxy.change.retry":            "重试代理同步",
+// TaskLabelKey returns the stable localization key for a task kind.
+func TaskLabelKey(kind string) string {
+	switch strings.TrimSpace(kind) {
+	case "accounts.probe":
+		return "task.label.accounts_probe"
+	case "accounts.probe_selected":
+		return "task.label.accounts_probe_selected"
+	case "accounts.restore_selected":
+		return "task.label.accounts_restore_selected"
+	case "accounts.disable_selected":
+		return "task.label.accounts_disable_selected"
+	case "quality.cross_verify":
+		return "task.label.quality_cross_verify"
+	case "proxy.auto_rotate":
+		return "task.label.proxy_auto_rotate"
+	case "proxy.bind":
+		return "task.label.proxy_bind"
+	case "proxy.clear":
+		return "task.label.proxy_clear"
+	case "proxy.rotate":
+		return "task.label.proxy_rotate"
+	case "proxy.adopt":
+		return "task.label.proxy_adopt"
+	case "proxy.bind_unbound":
+		return "task.label.proxy_bind_unbound"
+	case "proxy.template.apply":
+		return "task.label.proxy_template_apply"
+	case "proxy.source.create":
+		return "task.label.proxy_source_create"
+	case "proxy.source.update":
+		return "task.label.proxy_source_update"
+	case "proxy.source.delete":
+		return "task.label.proxy_source_delete"
+	case "proxy.sources.test_selected":
+		return "task.label.proxy_sources_test_selected"
+	case "proxy.sources.delete_selected":
+		return "task.label.proxy_sources_delete_selected"
+	case "proxy.change.retry":
+		return "task.label.proxy_change_retry"
+	default:
+		return "task.label.default"
 	}
-	if label := strings.TrimSpace(labels[strings.TrimSpace(kind)]); label != "" {
-		return label
-	}
-	return "任务"
 }

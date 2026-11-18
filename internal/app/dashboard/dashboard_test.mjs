@@ -3,8 +3,14 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { performance } from 'node:perf_hooks';
 
+const localeResources = Object.fromEntries(['zh-CN', 'zh-TW', 'en'].map((locale) => [
+  locale,
+  JSON.parse(fs.readFileSync(new URL(`../i18n/locales/${locale}.json`, import.meta.url), 'utf8'))
+]));
 const html = fs.readFileSync(new URL('./dashboard.html', import.meta.url), 'utf8');
-const scripts = [...html.matchAll(/<script(?:[^>]*)>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
+const documentHtml = html
+  .replace('<script type="application/json" id="i18n-resources">{}</script>', `<script type="application/json" id="i18n-resources">${JSON.stringify(localeResources)}</script>`);
+const scripts = [...documentHtml.matchAll(/<script(?![^>]*type="application\/json")(?:[^>]*)>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
 for (const script of scripts) new vm.Script(script);
 const source = scripts.find((script) => script.includes('const API ='))
   .replace(/\s+applyLocationHash\(\);\s+refreshAll\(true\);\s*$/, '');
@@ -69,17 +75,26 @@ class Element {
   getClientRects() { return [{}]; }
 }
 
-function harness() {
+function harness(options = {}) {
   const elements = new Map();
   const cards = new Map();
   const groups = new Map();
+  const storage = new Map(Object.entries(options.storage || {}));
+  const storageWrites = [];
+  const localStorage = {
+    getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+    setItem(key, value) { storage.set(key, String(value)); storageWrites.push({ key, value: String(value) }); },
+    removeItem(key) { storage.delete(key); }
+  };
   const get = (id) => {
     if (!elements.has(id)) elements.set(id, new Element(id));
     return elements.get(id);
   };
+  get('i18n-resources').textContent = JSON.stringify(localeResources);
   for (const id of ['proxySourceDrawer', 'accountDrawer', 'confirmDialog']) get(id).hidden = true;
   const document = {
     body: new Element('body'),
+    documentElement: new Element('html'),
     activeElement: new Element('opener'),
     hidden: false,
     getElementById: get,
@@ -103,9 +118,14 @@ function harness() {
   const historyCalls = [];
   const context = vm.createContext({
     document,
+    navigator: {
+      languages: options.languages || [],
+      language: options.language || ''
+    },
     window: {
       location: { hash: '#overview' },
       history: { replaceState(_state, _title, hash) { historyCalls.push(hash); } },
+      localStorage,
       addEventListener() {},
       clearTimeout() {},
       setInterval() {},
@@ -116,7 +136,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, collectPolicy, populatePolicyForm, applyLocationHash };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { i18n, state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderOverview, renderAccounts, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyNodeEditor, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, collectPolicy, populatePolicyForm, applyLocationHash };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -152,7 +172,7 @@ function harness() {
     groups.set(group.index, card);
     return card;
   }
-  return { dashboard: context.dashboard, get, context, mock, placeholder, groupCard, document, historyCalls };
+  return { dashboard: context.dashboard, get, context, mock, placeholder, groupCard, document, historyCalls, storage, storageWrites };
 }
 
 const plain = (value) => JSON.parse(JSON.stringify(value));
@@ -163,6 +183,89 @@ const deferred = () => {
 };
 const cases = [];
 const test = (name, run) => cases.push({ name, run });
+
+test('Interface language follows browser locale, persisted choice, and supported fallbacks', () => {
+  let ui = harness({ languages: ['zh-Hant-TW', 'en-US'], language: 'zh-Hant-TW' }).dashboard;
+  assert.equal(ui.i18n.locale, 'zh-TW');
+  ui = harness({ languages: ['zh-HK'], language: 'zh-HK' }).dashboard;
+  assert.equal(ui.i18n.locale, 'zh-TW');
+  ui = harness({ languages: ['zh-Hans-CN'], language: 'zh-Hans-CN' }).dashboard;
+  assert.equal(ui.i18n.locale, 'zh-CN');
+  ui = harness({ languages: ['en-GB'], language: 'en-GB' }).dashboard;
+  assert.equal(ui.i18n.locale, 'en');
+  ui = harness({ languages: ['fr-FR'], language: 'fr-FR' }).dashboard;
+  assert.equal(ui.i18n.locale, 'zh-CN');
+});
+
+test('Language switching updates document language, persistence, interpolation, and source fallback', () => {
+  const { dashboard: ui, document, storageWrites } = harness({ languages: ['zh-CN'], language: 'zh-CN' });
+  assert.equal(ui.i18n.applyLocale('en', { persist: true }), 'en');
+  assert.equal(document.documentElement.lang, 'en');
+  assert.equal(storageWrites.at(-1).value, 'en');
+  assert.equal(ui.i18n.detectLocale(), 'en');
+  assert.equal(ui.i18n.translateSource('账号详情'), 'Account details');
+  assert.equal(ui.i18n.t('count.accounts', { count: 2 }), '2 accounts');
+  assert.equal(ui.i18n.applyLocale('zh-TW'), 'zh-TW');
+  assert.equal(document.documentElement.lang, 'zh-TW');
+  assert.equal(ui.i18n.translateSource('账号详情'), '帳號詳情');
+  assert.equal(ui.i18n.t('ui.account_details'), '帳號詳情');
+  assert.equal(ui.i18n.applyLocale('zh-CN'), 'zh-CN');
+  assert.equal(ui.i18n.translateSource('账号详情'), '账号详情');
+});
+
+test('English rendering paths do not leak Simplified Chinese copy', () => {
+  const { dashboard: ui, get } = harness({ languages: ['en-US'], language: 'en-US' });
+  ui.state.overview = {
+    enabled: true,
+    auth_count: 3,
+    states: { healthy: 2, suspect: 1, degraded: 0, cooling: 0, disabled_by_guard: 0 },
+    policy: { transparent_guard: false, passive_guard: true }
+  };
+  ui.state.policy = ui.state.overview.policy;
+  ui.state.accountsTotal = 3;
+  ui.state.accountPageSize = 50;
+  ui.state.accountPage = 1;
+  ui.state.accountList = { total: 3, page: 1, page_size: 50 };
+  ui.state.accounts = [
+    { auth_id: 'auth-1', display: 'a@example.com', state: 'healthy', proxy_status: 'bound', proxy_generation: 2, output_tokens: 10, reasoning_tokens: 5, encrypted_bytes: 12 },
+    { auth_id: 'auth-2', display: 'b@example.com', state: 'cooling', cooldown_until: '2026-11-18T10:00:00Z', proxy_status: 'unbound' }
+  ];
+  ui.state.proxy = {
+    binding_total: 2,
+    counts: { bound: 1, unbound: 1, external: 0, unknown: 0, drifted: 0, reconcile_required: 0 },
+    source_count: 1,
+    available_source_count: 1,
+    source_counts: { node: 1, template: 0, resin: 0 },
+    auto_bind: { enabled: true },
+    auto_bind_runtime: { last_scan_at: '2026-11-17T05:17:13Z', bound_total: 1, failed_total: 0, skipped_total: 0, excluded_count: 0 }
+  };
+  ui.state.proxySources = [{ id: 'node-1', kind: 'node', name: 'Node one', enabled: true, valid: true, endpoint: 'socks5h://u***@host:1080', binding_count: 1 }];
+  ui.state.proxySourceList = { total: 1, page: 1, page_size: 50 };
+  ui.state.leases = [{ auth_id: 'auth-1', display: 'a@example.com', proxy_status: 'bound', proxy: 'socks5h://u***@host:1080' }];
+  ui.state.leaseList = { total: 1, page: 1, page_size: 50 };
+  ui.state.events = [{ time: '2026-11-18T08:00:00Z', auth_id: 'auth-1', action: 'proxy_bind', result: 'bound', detail: 'source=node-1 account=lease-1 remote_lease=delete_queued' }];
+  ui.state.eventList = { total: 1, page: 1, page_size: 50 };
+  ui.state.taskCenter = {
+    items: [{ task_id: 'task-1', kind: 'accounts.probe_selected', category: 'account', label: '批量检测账号', status: 'running', total: 2, completed: 1, running: 1, waiting: 0 }],
+    total: 1, page: 1, page_size: 20,
+    counts: { active: 1, running_items: 1, failed_items: 0 },
+    history: { enabled: true, retention_days: 3, record_count: 1, archive_bytes: 1024, max_bytes: 2048 },
+    resident_queues: [{ id: 'auto_bind', label: '自动绑定队列', description: '自动绑定账号', status: 'idle', total: 0, completed: 0, running: 0, waiting: 0, succeeded: 0, failed: 0 }]
+  };
+
+  ui.renderOverview();
+  ui.renderAccounts();
+  ui.renderResin();
+  ui.renderProxySources();
+  ui.renderEvents();
+  ui.renderTaskCenter();
+  ui.renderProxyAutoBind();
+  const rendered = ['overviewMetrics', 'accountMetrics', 'accountRows', 'accountsCount', 'resinMetrics', 'resinNotice', 'proxySourceRows', 'proxySourceSummary', 'eventRows', 'eventsCount', 'taskMetrics', 'taskRows', 'residentQueues', 'proxyAutoBindText']
+    .map((id) => `${id}: ${get(id).innerHTML || ''}\n${get(id).textContent || ''}\n${get(id).title || ''}`)
+    .join('\n');
+  const leftovers = [...rendered.matchAll(/[^\n]*[\u3400-\u9fff][^\n]*/g)].map((match) => match[0].trim());
+  assert.deepEqual(leftovers, []);
+});
 
 test('CSV and TSV round-trip quoted delimiters, Unicode, and column alignment', () => {
   const { dashboard: ui } = harness();
@@ -286,8 +389,8 @@ test('A large relation table displays twenty rows without creating a whole tree'
 
 test('Account rows show binding status and truncate full cooldown labels', () => {
   const { dashboard: ui } = harness();
-  assert.match(html, /<th title="代理绑定状态与轮换代数">绑定状态<\/th>/);
-  assert.match(html, /<th title="冷却截止时间">冷却<\/th>/);
+  assert.match(html, /<th title="ui.proxy_binding_state_and_rotation_generation">ui.binding_status<\/th>/);
+  assert.match(html, /<th title="ui.cooldown_end_time">ui.cooldown<\/th>/);
   assert.match(html, /\.accounts-table td\.select-cell,\s*\.accounts-table td\.status-cell,\s*\.accounts-table td\.proxy-cell,\s*\.accounts-table td\.time-cell,\s*\.accounts-table td\.actions-cell\s*\{\s*vertical-align:\s*middle;/s);
   assert.doesNotMatch(html, /\.time-cell \.cell-primary,\s*\.time-cell \.subline/);
   const cooling = ui.accountRow({
@@ -556,7 +659,7 @@ test('Bulk proxy import filters invalid and duplicate lines and stays bounded', 
     'http://'
   ].join('\r\n');
   assert.match(html, /\.field \.proxy-import-text\s*\{\s*height: 400px;\s*min-height: 400px;/);
-  assert.match(html, /上限：100000 条 · 16 MiB/);
+  assert.match(localeResources['zh-CN']['ui.import_hint'], /上限：100000 条 · 16 MiB/);
   const parsed = ui.parseProxyImportText(text);
   assert.equal(parsed.lineCount, 7);
   assert.equal(parsed.validCount, 2);
@@ -565,9 +668,9 @@ test('Bulk proxy import filters invalid and duplicate lines and stays bounded', 
   assert.equal(parsed.comments, 1);
   assert.deepEqual(plain(parsed.valid), ['http://user:pass@proxy.example:8080', 'SOCKS5H://user:pass@[2001:db8::1]:1080']);
   assert.equal(parsed.invalidSamples.length, 3);
-  assert.match(html, /标准 URL 优先，失败后自动尝试地址在前或 host:port@user:pass/);
-  assert.match(html, /socks5h:\/\/proxy\.example:1080:user:pass/);
-  assert.match(html, /http:\/\/proxy\.example:8080@user:pass/);
+  assert.match(localeResources['zh-CN']['ui.import_hint'], /标准 URL 优先，失败后自动尝试地址在前或 host:port@user:pass/);
+  assert.match(localeResources['zh-CN']['ui.import_standard_url_placeholder'], /socks5h:\/\/proxy\.example:1080:user:pass/);
+  assert.match(localeResources['zh-CN']['ui.import_standard_url_placeholder'], /http:\/\/proxy\.example:8080@user:pass/);
   const many = Array.from({ length: 100_000 }, (_, index) => 'http://user:pass@proxy-' + index + '.example:' + (8000 + index % 1000)).join('\n');
   const batch = ui.parseProxyImportText(many);
   assert.equal(batch.validCount, 100_000);
@@ -804,7 +907,7 @@ test('Proxy source connectivity and check time use separate compact columns', ()
   assert.doesNotMatch(row, /检测：|尚未检测|检测时生成临时端点/);
   assert.doesNotMatch(row, />可用</);
   assert.match(row, /仅表示最近一次通过网络代理建立测试目标隧道的检测结果/);
-  assert.match(html, /网络连通性<\/th>\s*<th title="最近一次网络连通性检测时间">检测时间<\/th>/);
+  assert.match(html, /ui.network_connectivity<\/th>\s*<th title="ui.time_of_the_latest_network_connectivity_check">ui.checked_at<\/th>/);
 
   const templateRow = ui.proxySourceRow({
     id: 'template-1', kind: 'template', name: 'Region template', enabled: true, valid: true,
@@ -907,8 +1010,9 @@ test('Resin rows use the unified edit, delete, and single-line type presentation
 });
 
 test('Proxy delete confirms stay concise and avoid trailing full stops', () => {
-  assert.match(html, /将删除此代理并清理受管理代理，失败项保留并报告/);
-  assert.match(html, /将删除 ' \+ ids\.length \+ ' 个代理并清理受管理代理，失败项保留并报告/);
+  assert.match(html, /i18n\.t\('ui\.delete_proxy_detail'\)/);
+  assert.match(html, /i18n\.t\('ui\.delete_selected_proxies_detail', \{ count: ids\.length \}\)/);
+  assert.equal(localeResources['zh-CN']['ui.delete_proxy_detail'], '将删除此代理并清理受管理代理，失败项保留并报告');
   assert.doesNotMatch(html, /成功项不会回滚。|成功项不会回滚'/);
 });
 
@@ -916,8 +1020,8 @@ test('Proxy management uses a compact workspace toolbar with underlined sub-navi
   assert.match(html, /<div class="proxy-workspace-bar">/);
   assert.doesNotMatch(html, /代理工作区|统一管理账号绑定关系/);
   assert.doesNotMatch(html, /proxyTasksBtn|查看任务中心|renderProxyTaskBadge/);
-  assert.match(html, /data-proxy-subtab="bindings">账号绑定/);
-  assert.match(html, /data-proxy-subtab="sources">代理资源/);
+  assert.match(html, /data-proxy-subtab="bindings">ui.account_bindings/);
+  assert.match(html, /data-proxy-subtab="sources">ui.proxy_sources/);
   assert.match(html, /<div class="proxy-workspace-status" id="proxyAutoBindBar">/);
   assert.match(html, /\.proxy-workspace-status\s*\{[\s\S]*?border-left: 1px solid var\(--line\)/);
   assert.match(html, /\.proxy-subnav \.tab-button\.active::after\s*\{\s*background: var\(--text\);/);
@@ -951,10 +1055,12 @@ test('Proxy help copy is concise, consistent, and stays inside the drawer', () =
   assert.match(row, /title="http:\/\/user:pass@long-proxy-host\.example:8080\/very\/long\/path"/);
   assert.doesNotMatch(row, /field full/);
   assert.match(html, /data-proxy-node-add/);
-  assert.match(html, /editing \? '编辑代理节点' : '添加代理节点'/);
-  assert.match(html, /增加一行/);
+  assert.match(html, /i18n\.t\(editing \? 'ui\.proxy_node_edit_title' : 'ui\.proxy_node_add_title'\)/);
+  assert.equal(localeResources['zh-CN']['ui.proxy_node_add_title'], '添加代理节点');
+  assert.match(html, /i18n\.t\('ui\.add_row'\)/);
+  assert.equal(localeResources['en']['ui.add_row'], 'Add row');
   assert.doesNotMatch(html, /\+ '添加节点<\/button>'/);
-  assert.match(html, /data-proxy-node-submit-label>保存节点<\/span>/);
+  assert.match(html, /data-proxy-node-submit-label>' \+ esc\(i18n\.t\('ui\.save_node'\)\)/);
   assert.match(html, /submitLabel\.textContent = rows\.length > 1/);
   assert.match(html, /proxy\.sources\.import_nodes', \{ nodes: nodes \}/);
   assert.match(html, /#proxySourceDrawer \.drawer-body \{[\s\S]*?overflow-x: hidden/);
@@ -1040,12 +1146,12 @@ test('Checkbox controls reserve a label line and retry fields share one row', ()
   assert.match(html, /\.field>\.check-row:first-child\s*\{\s*margin-top: 20px;/);
   assert.match(html, /\.settings-group \.retry-grid\s*\{\s*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
   assert.match(html, /class="field-grid retry-grid"/);
-  assert.match(html, /首次失败后的等待时长/);
-  assert.match(html, /退避等待的最长时间/);
+  assert.match(html, /ui.wait_time_after_the_first_failure/);
+  assert.match(html, /ui.longest_backoff_wait/);
 });
 
 test('Task history checkbox keeps its hint below the control and matches field height', () => {
-  assert.match(html, /<div class="field task-history-field">\s*<label class="check-row"><input id="p_task_history_enabled" type="checkbox"><span>保存历史任务<\/span><\/label>\s*<span class="hint">关闭后不再保存新任务记录<\/span>/);
+  assert.match(html, /<div class="field task-history-field">\s*<label class="check-row"><input id="p_task_history_enabled" type="checkbox"><span>ui.save_task_history<\/span><\/label>\s*<span class="hint">ui.stop_saving_new_task_records_when_disabled<\/span>/);
   assert.match(html, /\.policy-group-task-history \.field > \.check-row,\s*\.policy-group-task-history \.field > input\s*\{\s*height: 33px;\s*min-height: 33px;/);
   assert.doesNotMatch(html, /task-history-switch/);
 });
@@ -1090,19 +1196,19 @@ test('Routing affinity cards share a row and parameter hints explain their effec
   const prefer = html.indexOf('id="p_prefer_last_success"');
   const affinity = html.indexOf('id="p_session_affinity"');
   assert(ttl > 0 && ttl < prefer && prefer < affinity);
-  assert.match(html, /健康记录超过此时长后失效/);
-  assert.match(html, /仅选择健康且未过期的代理/);
+  assert.match(html, /ui.health_records_expire_after_this_duration/);
+  assert.match(html, /ui.choose_only_healthy_unexpired_proxies/);
   assert.match(html, /:password@proxy\.example:1080/);
   assert.doesNotMatch(html, /:密码@proxy\.example:1080/);
   assert.match(html, /\.check-card\.compact\s*\{[^}]*min-height: 33px;[^}]*margin-top: 20px;/s);
-  assert.match(html, /class="check-card compact" title="健康账号不做周期探测"><input id="p_probe_recovery_only"/);
+  assert.match(html, /class="check-card compact" title="ui.do_not_periodically_probe_healthy_accounts"><input id="p_probe_recovery_only"/);
   assert.match(html, /id="p_probe_scan_interval"/);
-  assert.doesNotMatch(html, /class="check-desc">健康账号不做周期探测/);
-  assert.match(html, /默认显示脱敏端点，点击眼睛查看完整端点/);
-  assert.match(html, /<th>端点<\/th>/);
+  assert.doesNotMatch(html, /class="check-desc">ui.do_not_periodically_probe_healthy_accounts/);
+  assert.match(html, /ui.bind_nodes_templates_and_proxy_services_in_one_place/);
+  assert.match(html, /<th>ui.endpoint<\/th>/);
   assert.match(html, /<option value="resin">Resin<\/option>/);
   assert.match(html, /proxyAddSourceKind/);
-  assert.match(html, /新增类型/);
+  assert.match(html, /ui.new_type/);
   assert.doesNotMatch(html, /resinFormHost|resinSourceBar|data-open-resin title=/);
 });
 
@@ -1231,7 +1337,7 @@ test('Resident queue detail is paged and proxy sync actions use the task center'
 });
 test('Task center is the unified six-tab entry and supports task deep links', async () => {
   const { dashboard: ui, context, get, historyCalls, mock } = harness();
-  assert.match(html, /data-tab="overview">概览<\/button>[\s\S]*data-tab="accounts">账号<\/button>[\s\S]*data-tab="resin">代理管理<\/button>[\s\S]*data-tab="tasks">任务中心<\/button>[\s\S]*data-tab="events">事件日志<\/button>[\s\S]*data-tab="settings">设置<\/button>/);
+  assert.match(html, /data-tab="overview">ui.overview<\/button>[\s\S]*data-tab="accounts">ui.account<\/button>[\s\S]*data-tab="resin">ui.proxy_management<\/button>[\s\S]*data-tab="tasks">ui.task_center<\/button>[\s\S]*data-tab="events">ui.event_log<\/button>[\s\S]*data-tab="settings">ui.settings<\/button>/);
   assert.doesNotMatch(html, /data-tab="accounts">账号质量<\/button>/);
   assert.match(html, /\.tabs\s*\{\s*width: 100%;\s*margin-bottom: 18px;/);
   mock('api', async (action) => {
@@ -1317,8 +1423,8 @@ test('Task detail exposes progress, queue counts, metadata and lazy item paging'
   assert.match(body, /操作失败，请稍后重试/);
   assert.doesNotMatch(body, /upstream failed/);
   assert.match(body, /已截断/);
-  assert.match(html, /skipped: '已跳过'/);
-  assert.match(html, /probed: '已检测'/);
+  assert.equal(localeResources['zh-CN']['task.status.skipped'], '已跳过');
+  assert.equal(localeResources['zh-CN']['task.status.probed'], '已检测');
 });
 
 test('Task center places cancel beside active status and delete beside finished status', () => {
@@ -1393,10 +1499,10 @@ test('Task center row actions confirm cancel and permanent deletion without sele
 test('Task history settings explain defaults and convert MiB to bytes', () => {
   const { dashboard: ui, get } = harness();
   assert.match(html, /id="p_task_history_enabled"/);
-  assert.match(html, /id="p_task_history_retention_days"[\s\S]*默认：3 天/);
-  assert.match(html, /id="p_task_history_max_records"[\s\S]*默认：500 条/);
-  assert.match(html, /id="p_task_history_max_bytes_mib"[\s\S]*默认：128 MiB/);
-  assert.match(html, /id="p_task_history_max_items"[\s\S]*默认：10000 条/);
+  assert.match(html, /id="p_task_history_retention_days"[\s\S]*ui.counted_from_task_completion_default_3_days/);
+  assert.match(html, /id="p_task_history_max_records"[\s\S]*ui.evict_the_oldest_tasks_first_when_exceeded_default_500/);
+  assert.match(html, /id="p_task_history_max_bytes_mib"[\s\S]*ui.compressed_disk_usage_of_completed_task_archives_in_mib/);
+  assert.match(html, /id="p_task_history_max_items"[\s\S]*ui.keep_the_summary_and_mark_item_details_as_truncated/);
   ui.state.policy = { task_history: { enabled: true, retention_days: 3, max_records: 500, max_bytes: 64 * 1048576, max_items_per_task: 10000 } };
   ui.populatePolicyForm();
   assert.equal(Number(get('p_task_history_max_bytes_mib').value), 64);
@@ -1492,7 +1598,23 @@ test('Live resident queue detail renders active and waiting object IDs', async (
     assert.match(body, new RegExp(testCase.id + '-waiting'));
   }
   assert.equal(requests.length, cases.length);
-});for (const { name, run } of cases) {
+});
+test('English proxy editor surfaces do not leak Simplified Chinese copy', async () => {
+  const { dashboard: ui, get } = harness({ languages: ['en-US'], language: 'en-US' });
+  const failures = [];
+  const check = async (name, open) => {
+    await open();
+    const rendered = get('proxySourceEditor').innerHTML + '\n' + get('proxySourceEditorTitle').textContent + '\n' + get('proxySourceEditorSubtitle').textContent;
+    const leftovers = [...rendered.matchAll(/[^\n]*[\u3400-\u9fff][^\n]*/g)].map((match) => match[0].trim());
+    if (leftovers.length) failures.push({ name, leftovers: [...new Set(leftovers)].slice(0, 20) });
+  };
+  await check('node', () => ui.openProxyNodeEditor(null));
+  await check('template', () => ui.openProxyTemplateEditor(null));
+  await check('resin', () => ui.openProxyResinEditor(null));
+  await check('import', () => ui.openProxyImportEditor());
+  assert.deepEqual(failures, []);
+});
+for (const { name, run } of cases) {
   await run();
   console.log('PASS ' + name);
 }

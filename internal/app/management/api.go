@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"grok-quality-guard/internal/app/action"
 	"grok-quality-guard/internal/app/dashboard"
+	"grok-quality-guard/internal/app/i18n"
 	proxy "grok-quality-guard/internal/proxy"
 )
 
@@ -28,11 +28,69 @@ type managementResponse struct {
 	Body       []byte      `json:"Body"`
 }
 
+type apiActionError struct {
+	Code       string
+	MessageKey string
+	Args       map[string]any
+	Status     int
+}
+
+func (e *apiActionError) Error() string { return e.MessageKey }
+
+func (e *apiActionError) ErrorCode() string { return e.Code }
+
+func newAPIActionError(code, messageKey string, status int, args map[string]any) error {
+	return &apiActionError{Code: code, MessageKey: messageKey, Args: args, Status: status}
+}
+
+func requestLocale(headers http.Header) string {
+	if headers == nil {
+		return i18n.DefaultLocale
+	}
+	values := make([]string, 0, 1)
+	for name, list := range headers {
+		if strings.EqualFold(name, "Accept-Language") {
+			values = append(values, list...)
+		}
+	}
+	return i18n.Negotiate(strings.Join(values, ","))
+}
+
+func localizedErrorMessage(locale, code string, status int, messageKey string, args map[string]any) string {
+	candidates := []string{messageKey, "api.error." + code, statusErrorKey(status)}
+	for _, key := range candidates {
+		if key != "" && i18n.Has(locale, key) {
+			return i18n.T(locale, key, args)
+		}
+	}
+	return i18n.T(locale, "api.error.internal", nil)
+}
+
+func statusErrorKey(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "api.error.invalid_request"
+	case http.StatusForbidden:
+		return "api.error.forbidden"
+	case http.StatusNotFound:
+		return "api.error.not_found"
+	case http.StatusConflict:
+		return "api.error.conflict"
+	case http.StatusTooManyRequests:
+		return "api.error.rate_limited"
+	case http.StatusBadGateway, http.StatusServiceUnavailable:
+		return "api.error.upstream_error"
+	default:
+		return "api.error.internal"
+	}
+}
+
 type restoreBatchItem struct {
 	AuthID      string `json:"auth_id"`
 	StateBefore string `json:"state_before"`
 	Status      string `json:"status"`
 	Error       string `json:"error,omitempty"`
+	ErrorCode   string `json:"error_code,omitempty"`
 }
 
 type restoreBatchResult struct {
@@ -57,6 +115,7 @@ type disableBatchItem struct {
 	StateBefore string `json:"state_before"`
 	Status      string `json:"status"`
 	Error       string `json:"error,omitempty"`
+	ErrorCode   string `json:"error_code,omitempty"`
 }
 
 type disableBatchResult struct {
@@ -75,6 +134,7 @@ type probeBatchItem struct {
 	Status      string `json:"status"`
 	Restored    bool   `json:"restored,omitempty"`
 	Error       string `json:"error,omitempty"`
+	ErrorCode   string `json:"error_code,omitempty"`
 }
 
 type probeBatchResult struct {
@@ -138,54 +198,82 @@ type accountView struct {
 
 func (s *Service) HandleManagement(request []byte) ([]byte, error) {
 	var req rpcManagementRequest
+	locale := i18n.DefaultLocale
 	if len(request) > 0 {
 		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
-			return okEnvelope(managementResponse{StatusCode: http.StatusBadRequest, Headers: jsonHeaders(), Body: jsonError("invalid_request", "decode management request")})
+			return okEnvelope(managementResponse{StatusCode: http.StatusBadRequest, Headers: jsonHeadersFor(locale), Body: jsonError("invalid_request", localizedErrorMessage(locale, "invalid_request", http.StatusBadRequest, "", nil))})
 		}
+		locale = requestLocale(req.Headers)
 	}
 	if strings.EqualFold(req.Method, http.MethodGet) && strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/dashboard") {
-		return okEnvelope(managementResponse{StatusCode: http.StatusOK, Headers: htmlHeaders(), Body: []byte(dashboard.HTML())})
+		return okEnvelope(managementResponse{StatusCode: http.StatusOK, Headers: htmlHeadersFor(locale), Body: []byte(dashboard.HTML())})
 	}
 	if !strings.EqualFold(req.Method, http.MethodPost) {
-		return okEnvelope(managementResponse{StatusCode: http.StatusMethodNotAllowed, Headers: jsonHeaders(), Body: jsonError("method_not_allowed", "only POST is accepted")})
+		return okEnvelope(managementResponse{StatusCode: http.StatusMethodNotAllowed, Headers: jsonHeadersFor(locale), Body: jsonError("method_not_allowed", localizedErrorMessage(locale, "method_not_allowed", http.StatusMethodNotAllowed, "", nil))})
 	}
 	var payload action.Request
 	if len(req.Body) > 0 {
 		if errUnmarshal := json.Unmarshal(req.Body, &payload); errUnmarshal != nil {
-			return okEnvelope(managementResponse{StatusCode: http.StatusBadRequest, Headers: jsonHeaders(), Body: jsonError("invalid_json", "action body must be valid JSON")})
+			return okEnvelope(managementResponse{StatusCode: http.StatusBadRequest, Headers: jsonHeadersFor(locale), Body: jsonError("invalid_json", localizedErrorMessage(locale, "invalid_json", http.StatusBadRequest, "", nil))})
 		}
 	}
 
 	if payload.Params == nil {
 		payload.Params = map[string]any{}
 	}
-	ctx := context.Background()
+	ctx := withRequestLocale(context.Background(), locale)
 	data, status, errAction := s.handleAction(ctx, payload)
 	if errAction != nil {
 		if status == 0 {
 			status = http.StatusBadRequest
 		}
 		code := actionErrorCode(status)
-		detail := map[string]any{"message": sanitizeError(errAction)}
+		messageKey := ""
+		var args map[string]any
+		var actionErr *apiActionError
+		if errors.As(errAction, &actionErr) {
+			if actionErr.Code != "" {
+				code = actionErr.Code
+			}
+			if actionErr.Status != 0 {
+				status = actionErr.Status
+			}
+			messageKey = actionErr.MessageKey
+			args = actionErr.Args
+		}
 		var proxyErr *proxyManagementError
 		if errors.As(errAction, &proxyErr) {
 			code = proxyErr.Code
+			if proxyErr.Status != 0 {
+				status = proxyErr.Status
+			}
 		}
+		var codedError interface{ ErrorCode() string }
+		if errors.As(errAction, &codedError) {
+			if value := strings.TrimSpace(codedError.ErrorCode()); value != "" {
+				code = value
+			}
+		}
+		var statusError interface{ HTTPStatus() int }
+		if errors.As(errAction, &statusError) && statusError.HTTPStatus() != 0 {
+			status = statusError.HTTPStatus()
+		}
+		detail := map[string]any{"message": localizedErrorMessage(locale, code, status, messageKey, args)}
 		var invalid *proxy.ValidationError
 		if errors.As(errAction, &invalid) {
 			code = invalid.Code
+			detail["message"] = localizedErrorMessage(locale, code, status, "", nil)
 			detail["path"] = invalid.Path
 		}
 		detail["code"] = code
 		body, _ := json.Marshal(map[string]any{"ok": false, "error": detail})
-		return okEnvelope(managementResponse{StatusCode: status, Headers: jsonHeaders(), Body: body})
+		return okEnvelope(managementResponse{StatusCode: status, Headers: jsonHeadersFor(locale), Body: body})
 	}
 	if status == 0 {
 		status = http.StatusOK
 	}
-	return okEnvelope(managementResponse{StatusCode: status, Headers: jsonHeaders(), Body: jsonOK(data)})
+	return okEnvelope(managementResponse{StatusCode: status, Headers: jsonHeadersFor(locale), Body: jsonOK(localizeResponseData(locale, data))})
 }
-
 func (s *Service) handleAction(ctx context.Context, request action.Request) (any, int, error) {
 	switch strings.ToLower(strings.TrimSpace(request.Action)) {
 	case "overview":
@@ -284,25 +372,25 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 	case "state_file.update":
 		return s.actionStateFileUpdate(request.Params)
 	case "events.list":
-		return s.actionEventsList(request.Params)
+		return s.actionEventsList(request.Params, requestLocaleFromContext(ctx))
 	case "tasks.get":
-		return s.actionTaskGet(request.Params)
+		return s.actionTaskGet(request.Params, requestLocaleFromContext(ctx))
 	case "tasks.cancel":
-		return s.actionTaskCancel(request.Params)
+		return s.actionTaskCancel(request.Params, requestLocaleFromContext(ctx))
 	case "tasks.list":
-		return s.actionTaskList(request.Params)
+		return s.actionTaskList(request.Params, requestLocaleFromContext(ctx))
 	case "tasks.center.list":
-		return s.actionTaskCenterList(request.Params)
+		return s.actionTaskCenterList(request.Params, requestLocaleFromContext(ctx))
 	case "tasks.center.queue":
 		return s.actionTaskCenterQueue(request.Params)
 	case "tasks.center.get", "tasks.center.items":
-		return s.actionTaskCenterDetail(request.Params)
+		return s.actionTaskCenterDetail(request.Params, requestLocaleFromContext(ctx))
 	case "tasks.center.cancel":
-		return s.actionTaskCancel(request.Params)
+		return s.actionTaskCancel(request.Params, requestLocaleFromContext(ctx))
 	case "tasks.center.delete":
 		return s.actionTaskCenterDelete(request.Params)
 	default:
-		return nil, http.StatusBadRequest, fmt.Errorf("unknown action")
+		return nil, http.StatusBadRequest, newAPIActionError("unknown_action", "api.error.unknown_action", http.StatusBadRequest, nil)
 	}
 }
 
@@ -450,16 +538,16 @@ func catalogAccountMatches(account Account, query string) bool {
 
 func (s *Service) selectedAccountCandidates(ctx context.Context, authIDs []string) ([]accountCandidate, error) {
 	if errRefresh := s.RefreshCatalog(ctx); errRefresh != nil {
-		return nil, fmt.Errorf("refresh auth catalog: %w", errRefresh)
+		return nil, newAPIActionError("upstream_error", "api.error.upstream_error", http.StatusBadGateway, nil)
 	}
 	if s.stateStore() == nil {
-		return nil, fmt.Errorf("state store is not initialized")
+		return nil, newAPIActionError("state_store_unavailable", "api.error.state_store_unavailable", http.StatusInternalServerError, nil)
 	}
 	candidates := make([]accountCandidate, 0, len(authIDs))
 	for _, authID := range authIDs {
 		account, okAccount := s.findAccount(authID)
 		if !okAccount {
-			return nil, fmt.Errorf("auth not found: %s", authID)
+			return nil, newAPIActionError("auth_not_found", "api.error.auth_not_found", http.StatusNotFound, nil)
 		}
 		candidates = append(candidates, accountCandidate{
 			authID:  authID,
@@ -482,11 +570,11 @@ func (s *Service) accountCandidateState(candidate accountCandidate) string {
 func (s *Service) actionAccountGet(ctx context.Context, params map[string]any) (any, int, error) {
 	authID := strings.TrimSpace(asString(params["auth_id"]))
 	if authID == "" {
-		return nil, http.StatusBadRequest, fmt.Errorf("auth_id is required")
+		return nil, http.StatusBadRequest, newAPIActionError("auth_id_required", "api.error.auth_id_required", http.StatusBadRequest, nil)
 	}
 	account, okAccount := s.findAccount(authID)
 	if !okAccount {
-		return nil, http.StatusNotFound, fmt.Errorf("auth not found")
+		return nil, http.StatusNotFound, newAPIActionError("auth_not_found", "api.error.auth_not_found", http.StatusNotFound, nil)
 	}
 	_, _, raw, errResolve := s.resolveAuth(ctx, account.ID)
 	if errResolve != nil {

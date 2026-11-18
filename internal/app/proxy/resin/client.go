@@ -28,6 +28,22 @@ func (e *DeleteError) Error() string {
 	return fmt.Sprintf("resin lease delete failed with status %d", e.Status)
 }
 
+func (e *DeleteError) ErrorCode() string {
+	if e == nil {
+		return "resin_cleanup_failed"
+	}
+	switch {
+	case e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden:
+		return "resin_cleanup_credential_rejected"
+	case e.Status == http.StatusTooManyRequests:
+		return "resin_cleanup_rate_limited"
+	case e.Status >= http.StatusInternalServerError:
+		return "resin_cleanup_upstream_error"
+	default:
+		return "resin_cleanup_failed"
+	}
+}
+
 var cleanupClient = &http.Client{
 	Timeout: 30 * time.Second,
 	Transport: &http.Transport{

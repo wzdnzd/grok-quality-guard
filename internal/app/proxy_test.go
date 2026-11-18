@@ -832,7 +832,7 @@ func TestProxySourceUnchangedSaveIsRejected(t *testing.T) {
 	_, _, errUpdate := plugin.updateProxyNode(proxyapp.NodeInput{
 		ID: node.ID, Name: node.Name, Enabled: &enabled, Priority: node.Priority, MaxBindings: node.MaxBindings,
 	})
-	if errUpdate == nil || !strings.Contains(errUpdate.Error(), "未发生变化") {
+	if errUpdate == nil || !strings.Contains(errUpdate.Error(), "api.error.proxy_source_unchanged") {
 		t.Fatalf("unchanged node save was not rejected: %v", errUpdate)
 	}
 	currentNode, _ := plugin.proxyExistingNode(node.ID)
@@ -852,7 +852,7 @@ func TestProxySourceUnchangedSaveIsRejected(t *testing.T) {
 		ID: template.ID, Name: template.Name, Enabled: &enabled, Priority: template.Priority,
 		MaxBindings: template.MaxBindings, UpdatePolicy: template.UpdatePolicy,
 	})
-	if errUpdate == nil || !strings.Contains(errUpdate.Error(), "未发生变化") {
+	if errUpdate == nil || !strings.Contains(errUpdate.Error(), "api.error.proxy_source_unchanged") {
 		t.Fatalf("unchanged template save was not rejected: %v", errUpdate)
 	}
 	state := plugin.stateStore().Snapshot()
@@ -875,7 +875,7 @@ func TestProxyNodeRejectsDuplicateCanonicalEndpoint(t *testing.T) {
 		t.Fatal(errCreate)
 	}
 	_, errDuplicate := plugin.createProxyNode(proxyapp.NodeInput{Name: "same endpoint", URL: "http://u:p@example.com:8080"})
-	if errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "代理节点已存在") {
+	if errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "api.error.proxy_duplicate") {
 		t.Fatalf("duplicate node was not rejected: %v", errDuplicate)
 	}
 	state := plugin.stateStore().Snapshot()
@@ -903,7 +903,7 @@ func TestProxyTemplateRejectsDuplicateDefinition(t *testing.T) {
 	duplicate.Name = "duplicate name"
 	duplicate.ValueGroups = []proxy.ValueGroup{{ID: "plans", Name: "Different display name", Columns: []string{"region", "plan"}, Rows: [][]string{{"us", "basic"}, {"cn", "pro"}}}}
 	_, errDuplicate := plugin.createProxyTemplate(duplicate)
-	if errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "代理模板已存在") {
+	if errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "api.error.proxy_duplicate") {
 		t.Fatalf("duplicate template was not rejected: %v", errDuplicate)
 	}
 	state := plugin.stateStore().Snapshot()
@@ -921,7 +921,7 @@ func TestProxyTemplateRejectsDuplicateDefinition(t *testing.T) {
 	_, _, errUpdate := plugin.updateProxyTemplate(proxyapp.TemplateInput{
 		ID: second.ID, URL: base.URL, Placeholders: base.Placeholders, ValueGroups: base.ValueGroups,
 	})
-	if errUpdate == nil || !strings.Contains(errUpdate.Error(), "代理模板已存在") {
+	if errUpdate == nil || !strings.Contains(errUpdate.Error(), "api.error.proxy_duplicate") {
 		t.Fatalf("template update was allowed to create a duplicate: %v", errUpdate)
 	}
 	state = plugin.stateStore().Snapshot()
@@ -962,7 +962,7 @@ func TestProxyTemplateRejectsSemanticallyEquivalentDefinition(t *testing.T) {
 			{Name: "pl1", Kind: proxy.PlaceholderEnum, Enum: &proxy.EnumSpec{Separator: "|", Values: []string{"SG", "US", "CN"}}},
 		},
 	})
-	if errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "代理模板已存在") {
+	if errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "api.error.proxy_duplicate") {
 		t.Fatalf("semantically equivalent template was not rejected: %v", errDuplicate)
 	}
 	state := plugin.stateStore().Snapshot()
@@ -1343,17 +1343,17 @@ func TestProxySourceNamesAreUniqueAcrossKinds(t *testing.T) {
 	if errCreate != nil {
 		t.Fatal(errCreate)
 	}
-	if _, errDuplicate := plugin.createProxyNode(proxyapp.NodeInput{Name: "primary", URL: "http://u:p@two.example:8080"}); errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "名称已存在") {
+	if _, errDuplicate := plugin.createProxyNode(proxyapp.NodeInput{Name: "primary", URL: "http://u:p@two.example:8080"}); errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "api.error.proxy_name_duplicate") {
 		t.Fatalf("duplicate node name was not rejected: %v", errDuplicate)
 	}
-	if _, errDuplicate := plugin.createProxyTemplate(proxyapp.TemplateInput{Name: "PRIMARY", URL: "http://user-{region}:secret@template.example:8080", Placeholders: []proxy.Placeholder{{Name: "region", Kind: proxy.PlaceholderEnum, Enum: &proxy.EnumSpec{Separator: ",", Input: "us"}}}}); errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "名称已存在") {
+	if _, errDuplicate := plugin.createProxyTemplate(proxyapp.TemplateInput{Name: "PRIMARY", URL: "http://user-{region}:secret@template.example:8080", Placeholders: []proxy.Placeholder{{Name: "region", Kind: proxy.PlaceholderEnum, Enum: &proxy.EnumSpec{Separator: ",", Input: "us"}}}}); errDuplicate == nil || !strings.Contains(errDuplicate.Error(), "api.error.proxy_name_duplicate") {
 		t.Fatalf("cross-kind duplicate name was not rejected: %v", errDuplicate)
 	}
 	template, errCreate := plugin.createProxyTemplate(proxyapp.TemplateInput{Name: "Template one", URL: "http://user-{region}:secret@template.example:8080", Placeholders: []proxy.Placeholder{{Name: "region", Kind: proxy.PlaceholderEnum, Enum: &proxy.EnumSpec{Separator: ",", Input: "us"}}}})
 	if errCreate != nil {
 		t.Fatal(errCreate)
 	}
-	if _, _, errUpdate := plugin.updateProxyNode(proxyapp.NodeInput{ID: first.ID, Name: template.Name}); errUpdate == nil || !strings.Contains(errUpdate.Error(), "名称已存在") {
+	if _, _, errUpdate := plugin.updateProxyNode(proxyapp.NodeInput{ID: first.ID, Name: template.Name}); errUpdate == nil || !strings.Contains(errUpdate.Error(), "api.error.proxy_name_duplicate") {
 		t.Fatalf("node rename to template name was not rejected: %v", errUpdate)
 	}
 	renamed, _, errUpdate := plugin.updateProxyNode(proxyapp.NodeInput{ID: first.ID, Name: "Primary renamed"})

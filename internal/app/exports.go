@@ -1,11 +1,20 @@
 package app
 
-import appredact "grok-quality-guard/internal/app/redact"
+import (
+	"grok-quality-guard/internal/app/i18n"
+	appredact "grok-quality-guard/internal/app/redact"
+)
 
 // PluginRegistration returns the ABI registration payload assembled from the
 // application capabilities and configuration schema.
 func PluginRegistration() registration {
-	return pluginRegistration()
+	return pluginRegistrationForLocale(i18n.DefaultLocale)
+}
+
+// PluginRegistrationForLocale returns the ABI registration payload with
+// user-visible metadata localized for the requested locale.
+func PluginRegistrationForLocale(locale string) registration {
+	return pluginRegistrationForLocale(locale)
 }
 
 // PluginIdentifier is the stable executor and management namespace.

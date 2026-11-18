@@ -94,6 +94,7 @@ func (s *Service) dropProxyAutoQueue() {
 	s.mgr.runtime.Running = false
 	s.mgr.runtime.WaitingReason = "disabled"
 	s.mgr.runtime.LastError = ""
+	s.mgr.runtime.LastErrorCode = ""
 }
 
 func (s *Service) proxyAutoBindLoop(ctx context.Context) {
@@ -206,8 +207,9 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 	offset := s.mgr.scanOffset
 	s.mgr.runtime.LastScanAt = time.Now().UTC()
 	s.mgr.runtime.WaitingReason = ""
-	if proxyAutoBindTransientMessage(s.mgr.runtime.LastError) {
+	if proxyAutoBindTransientState(s.mgr.runtime.LastErrorCode, s.mgr.runtime.LastError) {
 		s.mgr.runtime.LastError = ""
+		s.mgr.runtime.LastErrorCode = ""
 	}
 	s.mgr.mu.Unlock()
 	window := make([]Account, budget)
@@ -353,6 +355,15 @@ func proxyAutoBindNeedsReselection(result proxyBindingResult, err error) bool {
 	return ok
 }
 
+func proxyAutoBindTransientCode(code string) bool {
+	_, ok := proxyAutoBindReselectCodes[strings.ToLower(strings.TrimSpace(code))]
+	return ok
+}
+
+func proxyAutoBindTransientState(code, message string) bool {
+	return proxyAutoBindTransientCode(code) || proxyAutoBindTransientMessage(message)
+}
+
 func proxyAutoBindTransientMessage(value string) bool {
 	text := strings.ToLower(strings.TrimSpace(value))
 	if text == "" {
@@ -381,6 +392,7 @@ func (s *Service) resetProxyAutoBindForReselection(id, sourceID string) {
 	next.Attempts = 0
 	next.NextAttemptAt = time.Time{}
 	next.LastError = ""
+	next.LastErrorCode = ""
 	if sourceID != "" {
 		next.LastSourceID = sourceID
 	}
@@ -397,8 +409,10 @@ func (s *Service) setProxyWaiting(reason string, err error) {
 	s.mgr.runtime.Running = false
 	if err != nil {
 		s.mgr.runtime.LastError = redact.SanitizeError(err)
-	} else if proxyAutoBindTransientMessage(s.mgr.runtime.LastError) {
+		s.mgr.runtime.LastErrorCode = proxyErrorCode(err)
+	} else if proxyAutoBindTransientState(s.mgr.runtime.LastErrorCode, s.mgr.runtime.LastError) {
 		s.mgr.runtime.LastError = ""
+		s.mgr.runtime.LastErrorCode = ""
 	}
 	s.mgr.mu.Unlock()
 }
@@ -411,14 +425,17 @@ func (s *Service) recordProxyAutoResult(id string, result proxyBindingResult, er
 		s.mgr.runtime.BoundTotal++
 		s.mgr.runtime.LastSuccessAt = time.Now().UTC()
 		s.mgr.runtime.LastError = ""
+		s.mgr.runtime.LastErrorCode = ""
 	case reselection:
 		s.mgr.runtime.SkippedTotal++
-		if proxyAutoBindTransientMessage(s.mgr.runtime.LastError) {
+		if proxyAutoBindTransientState(s.mgr.runtime.LastErrorCode, s.mgr.runtime.LastError) {
 			s.mgr.runtime.LastError = ""
+			s.mgr.runtime.LastErrorCode = ""
 		}
 	case err != nil:
 		s.mgr.runtime.FailedTotal++
 		s.mgr.runtime.LastError = redact.SanitizeError(err)
+		s.mgr.runtime.LastErrorCode = proxyErrorCode(err)
 	default:
 		s.mgr.runtime.SkippedTotal++
 	}
@@ -462,6 +479,7 @@ func (s *Service) recordProxyAutoResult(id string, result proxyBindingResult, er
 	delay = delay / 100 * time.Duration(90+randomIndex(21))
 	state.AutoBind.NextAttemptAt = time.Now().UTC().Add(delay)
 	state.AutoBind.LastError = redact.SanitizeError(err)
+	state.AutoBind.LastErrorCode = proxyErrorCode(err)
 	state.AutoBind.LastSourceID = result.SourceID
 	_ = s.env.ProxyStore().CommitProxy(proxyCommit{Account: &proxyAccountCommit{AuthID: id, Binding: state.Proxy, AutoBind: state.AutoBind}})
 }
@@ -503,6 +521,9 @@ func (s *Service) proxyBindUnbound(ctx context.Context, opts proxyBindOptions) (
 		result, err := s.bindProxy(jobCtx, ids[i], opts)
 		if err != nil && result.Error == "" {
 			result.Error = redact.SanitizeError(err)
+		}
+		if err != nil && result.Code == "" {
+			result.Code = proxyErrorCode(err)
 		}
 		results[i] = result
 		tasks.ReportItem(jobCtx, result)
