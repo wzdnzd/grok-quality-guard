@@ -169,11 +169,36 @@ func (s *Service) actionRestore(ctx context.Context, params map[string]any) (any
 	return s.actionAccountGet(ctx, map[string]any{"auth_id": authID})
 }
 
+func (s *Service) actionRestorePreview(ctx context.Context, params map[string]any) (any, int, error) {
+	authIDs := action.AuthIDs(params)
+	if len(authIDs) == 0 {
+		return nil, http.StatusBadRequest, fmt.Errorf("auth_ids is required")
+	}
+	candidates, errCandidates := s.selectedAccountCandidates(ctx, authIDs)
+	if errCandidates != nil {
+		return nil, http.StatusBadRequest, errCandidates
+	}
+	result := restorePreviewResult{Count: len(candidates)}
+	for _, candidate := range candidates {
+		switch s.accountCandidateState(candidate) {
+		case StateHealthy:
+			result.Healthy++
+		case StateExternallyDisabled:
+			result.Restorable++
+			result.ExternalDisabled++
+		default:
+			result.Restorable++
+		}
+	}
+	return result, http.StatusOK, nil
+}
+
 func (s *Service) actionRestoreSelected(ctx context.Context, params map[string]any) (any, int, error) {
 	authIDs := action.AuthIDs(params)
 	if len(authIDs) == 0 {
 		return nil, http.StatusBadRequest, fmt.Errorf("auth_ids is required")
 	}
+	includeExternal := action.Bool(params, "include_external")
 	candidates, errCandidates := s.selectedAccountCandidates(ctx, authIDs)
 	if errCandidates != nil {
 		return nil, http.StatusBadRequest, errCandidates
@@ -199,14 +224,18 @@ func (s *Service) actionRestoreSelected(ctx context.Context, params map[string]a
 				result.Items[index] = entry
 				return
 			}
-			if errRestore := s.ManualRestore(jobCtx, candidate.authID); errRestore != nil {
+			if errRestore := s.ManualRestoreExternal(jobCtx, candidate.authID, includeExternal); errRestore != nil {
 				entry.Status = "failed"
 				entry.Error = sanitizeError(errRestore)
 				result.Items[index] = entry
 				return
 			}
 			if stateBefore == StateExternallyDisabled {
-				entry.Status = "external_left_disabled"
+				if includeExternal {
+					entry.Status = "external_restored"
+				} else {
+					entry.Status = "external_left_disabled"
+				}
 			} else {
 				entry.Status = "restored"
 			}
@@ -219,8 +248,75 @@ func (s *Service) actionRestoreSelected(ctx context.Context, params map[string]a
 			switch item.Status {
 			case "restored":
 				result.Restored++
+			case "external_restored":
+				result.ExternalRestored++
 			case "external_left_disabled":
 				result.ExternalLeftDisabled++
+			case "skipped":
+				result.Skipped++
+			case "failed":
+				result.Failed++
+			}
+		}
+		return result, nil
+	})
+	return task, http.StatusAccepted, nil
+}
+
+func (s *Service) actionDisableSelected(ctx context.Context, params map[string]any) (any, int, error) {
+	authIDs := action.AuthIDs(params)
+	if len(authIDs) == 0 {
+		return nil, http.StatusBadRequest, fmt.Errorf("auth_ids is required")
+	}
+	modifyAuth := action.Bool(params, "modify_auth")
+	candidates, errCandidates := s.selectedAccountCandidates(ctx, authIDs)
+	if errCandidates != nil {
+		return nil, http.StatusBadRequest, errCandidates
+	}
+	if s.hasActiveTask("accounts.disable_selected", "") {
+		return nil, http.StatusConflict, fmt.Errorf("disable task is already running")
+	}
+	task := s.startTask("accounts.disable_selected", authIDs, fmt.Sprintf("正在禁用 %d 个已选账号", len(candidates)), func(taskCtx context.Context) (any, error) {
+		result := disableBatchResult{
+			Items:        make([]disableBatchItem, len(candidates)),
+			Count:        len(candidates),
+			ModifiedAuth: modifyAuth,
+		}
+		indices := make([]int, len(candidates))
+		for index := range candidates {
+			indices[index] = index
+		}
+		errRun := runBoundedQueue(taskCtx, indices, s.probeQueueSize(), s.probeConcurrency(), func(jobCtx context.Context, index int) {
+			candidate := candidates[index]
+			stateBefore := s.accountCandidateState(candidate)
+			entry := disableBatchItem{AuthID: candidate.authID, StateBefore: stateBefore}
+			if stateBefore == StateExternallyDisabled || (stateBefore == StateDisabledByGuard && (!modifyAuth || candidate.account.Disabled)) {
+				entry.Status = "skipped"
+				result.Items[index] = entry
+				return
+			}
+			var errDisable error
+			if modifyAuth {
+				errDisable = s.ManualDisable(jobCtx, candidate.authID, "manual")
+			} else {
+				errDisable = s.ManualDisablePluginOnly(jobCtx, candidate.authID, "manual")
+			}
+			if errDisable != nil {
+				entry.Status = "failed"
+				entry.Error = sanitizeError(errDisable)
+				result.Items[index] = entry
+				return
+			}
+			entry.Status = "disabled"
+			result.Items[index] = entry
+		})
+		if errRun != nil {
+			return nil, errRun
+		}
+		for _, item := range result.Items {
+			switch item.Status {
+			case "disabled":
+				result.Disabled++
 			case "skipped":
 				result.Skipped++
 			case "failed":

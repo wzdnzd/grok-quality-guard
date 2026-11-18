@@ -75,6 +75,10 @@ func (s *Service) reconcileAccount(ctx context.Context, authID string) {
 		return
 	}
 	if authDisabled(raw) {
+		if stateAccount.PluginOnlyDisable {
+			_ = s.setStateExternal(authID, "")
+			return
+		}
 		if stateAccount.DisableKind == "" {
 			if stateAccount.State != StateExternallyDisabled {
 				_ = s.setStateExternal(authID, "")
@@ -94,6 +98,16 @@ func (s *Service) reconcileAccount(ctx context.Context, authID string) {
 		if stateAccount.State == StateExternallyDisabled {
 			_ = s.env.UpdateStateAccount(authID, func(account *AccountState) error {
 				account.State = StateUnknown
+				return nil
+			})
+		}
+		return
+	}
+	if stateAccount.PluginOnlyDisable {
+		expectedState := stateForDisableKind(stateAccount.DisableKind)
+		if stateAccount.State != expectedState {
+			_ = s.env.UpdateStateAccount(authID, func(account *AccountState) error {
+				account.State = expectedState
 				return nil
 			})
 		}

@@ -157,21 +157,29 @@ func (s *Service) holdProbeRecoveryLocked(
 }
 
 func (s *Service) applyGuardDisable(authID, kind string, duration time.Duration, class, source string, strike bool) error {
+	return s.applyGuardDisableWithOptions(authID, kind, duration, class, source, strike, false)
+}
+
+func (s *Service) applyGuardDisableWithOptions(authID, kind string, duration time.Duration, class, source string, strike, pluginOnly bool) error {
 	lock := s.env.AccountLock(authID)
 	lock.Lock()
 	defer lock.Unlock()
-	return s.applyGuardDisableLocked(context.Background(), authID, kind, duration, class, source, strike)
+	return s.applyGuardDisableLockedWithOptions(context.Background(), authID, kind, duration, class, source, strike, pluginOnly)
 }
 
 // applyGuardDisableLocked records the desired state before touching the auth
 // file so an interrupted write can be repaired by the reconciler. Callers must
 // hold the per-auth lock.
 func (s *Service) applyGuardDisableLocked(ctx context.Context, authID, kind string, duration time.Duration, class, source string, strike bool) error {
+	return s.applyGuardDisableLockedWithOptions(ctx, authID, kind, duration, class, source, strike, false)
+}
+
+func (s *Service) applyGuardDisableLockedWithOptions(ctx context.Context, authID, kind string, duration time.Duration, class, source string, strike, pluginOnly bool) error {
 	_, response, raw, errResolve := s.env.ResolveAuth(ctx, authID)
 	if errResolve != nil {
 		return errResolve
 	}
-	return s.saveGuardDisableLocked(ctx, authID, response, raw, kind, duration, class, source, strike)
+	return s.saveGuardDisableLockedWithOptions(ctx, authID, response, raw, kind, duration, class, source, strike, pluginOnly)
 }
 
 func (s *Service) saveGuardDisableLocked(
@@ -183,6 +191,19 @@ func (s *Service) saveGuardDisableLocked(
 	duration time.Duration,
 	class, source string,
 	strike bool,
+) error {
+	return s.saveGuardDisableLockedWithOptions(context.Background(), authID, response, raw, kind, duration, class, source, strike, false)
+}
+
+func (s *Service) saveGuardDisableLockedWithOptions(
+	_ context.Context,
+	authID string,
+	response pluginapi.HostAuthGetResponse,
+	raw map[string]json.RawMessage,
+	kind string,
+	duration time.Duration,
+	class, source string,
+	strike, pluginOnly bool,
 ) error {
 	defer s.env.RefreshSelectionAccount(authID)
 	store := s.env.Store()
@@ -212,6 +233,7 @@ func (s *Service) saveGuardDisableLocked(
 		account.CooldownUntil = until
 		account.DisableKind = kind
 		account.DisableReason = class
+		account.PluginOnlyDisable = pluginOnly && !authDisabled(raw)
 		account.PreviousDisabled = previousDisabled
 		if strike {
 			noteQualityFailure(account, time.Now().UTC())
@@ -220,14 +242,18 @@ func (s *Service) saveGuardDisableLocked(
 		if class != "" {
 			account.LastReason = class
 		}
-		intent := true
-		account.AuthDisabledIntent = &intent
+		if !pluginOnly {
+			intent := true
+			account.AuthDisabledIntent = &intent
+		} else {
+			account.AuthDisabledIntent = nil
+		}
 		return nil, nil
 	})
 	if errState != nil {
 		return errState
 	}
-	if !authDisabled(raw) {
+	if !pluginOnly && !authDisabled(raw) {
 		if errSave := s.env.SaveAuthDisabled(response.Name, raw, true); errSave != nil {
 			return fmt.Errorf("save guard-disabled auth: %w", errSave)
 		}
@@ -244,6 +270,7 @@ func (s *Service) setStateExternal(authID, class string) error {
 		account.State = StateExternallyDisabled
 		account.DisableKind = ""
 		account.DisableReason = ""
+		account.PluginOnlyDisable = false
 		account.CooldownUntil = time.Time{}
 		account.PreviousDisabled = false
 		account.AuthDisabledIntent = nil
@@ -265,7 +292,18 @@ func (s *Service) ManualDisable(ctx context.Context, authID, reason string) erro
 	return s.applyGuardDisable(authID, DisableKindPermanent, 0, reason, "manual", false)
 }
 
+func (s *Service) ManualDisablePluginOnly(ctx context.Context, authID, reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		reason = "manual"
+	}
+	return s.applyGuardDisableWithOptions(authID, DisableKindPermanent, 0, reason, "manual_plugin", false, true)
+}
+
 func (s *Service) ManualRestore(ctx context.Context, authID string) error {
+	return s.ManualRestoreExternal(ctx, authID, false)
+}
+
+func (s *Service) ManualRestoreExternal(ctx context.Context, authID string, includeExternal bool) error {
 	defer s.env.RefreshSelectionAccount(authID)
 	lock := s.env.AccountLock(authID)
 	lock.Lock()
@@ -279,8 +317,25 @@ func (s *Service) ManualRestore(ctx context.Context, authID string) error {
 		return errors.New("state store is not initialized")
 	}
 	stateAccount, hasState := s.env.StateAccount(authID)
-	guardOwned := hasState && stateAccount.DisableKind != ""
+	guardOwned := hasState && stateAccount.DisableKind != "" && !stateAccount.PluginOnlyDisable
 	if authDisabled(raw) && !guardOwned {
+		if includeExternal {
+			if errIntent := store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {
+				intent := false
+				account.AuthDisabledIntent = &intent
+				return nil, nil
+			}); errIntent != nil {
+				return errIntent
+			}
+			if errSave := s.env.SaveAuthDisabled(response.Name, raw, false); errSave != nil {
+				return fmt.Errorf("save externally restored auth: %w", errSave)
+			}
+			return store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {
+				resetGuardDisableState(account)
+				resetStrikeDecayState(account)
+				return newEvent(authID, "", "restore", "restored_external", "manual"), nil
+			})
+		}
 		if errUpdate := s.env.Store().UpdateAccount(authID, func(account *AccountState) (*Event, error) {
 			resetGuardDisableState(account)
 			resetStrikeDecayState(account)
@@ -331,6 +386,7 @@ func resetGuardDisableState(account *AccountState) {
 	account.ProbeBackoffUntil = time.Time{}
 	account.DisableKind = ""
 	account.DisableReason = ""
+	account.PluginOnlyDisable = false
 	account.PreviousDisabled = false
 	account.AuthDisabledIntent = nil
 	account.SoftStrikes = 0

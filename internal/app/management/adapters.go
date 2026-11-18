@@ -89,8 +89,14 @@ func (s *Service) ManualCooldown(ctx context.Context, authID string, duration ti
 func (s *Service) ManualDisable(ctx context.Context, authID, reason string) error {
 	return s.env.Quality().ManualDisable(ctx, authID, reason)
 }
+func (s *Service) ManualDisablePluginOnly(ctx context.Context, authID, reason string) error {
+	return s.env.Quality().ManualDisablePluginOnly(ctx, authID, reason)
+}
 func (s *Service) ManualRestore(ctx context.Context, authID string) error {
 	return s.env.Quality().ManualRestore(ctx, authID)
+}
+func (s *Service) ManualRestoreExternal(ctx context.Context, authID string, includeExternal bool) error {
+	return s.env.Quality().ManualRestoreExternal(ctx, authID, includeExternal)
 }
 
 func (s *Service) proxyBindingForAccount(account AccountState) (proxy.Binding, bool) {

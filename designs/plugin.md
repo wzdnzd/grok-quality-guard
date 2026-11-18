@@ -594,7 +594,7 @@ type QualityVerdict struct {
 | `quota_exhausted` | 上游明确额度耗尽，进入 24 小时冷却 | 否 |
 | `credential_invalid` | 上游拒绝凭据，账号被禁用并等待重新认证 | 否 |
 | `disabled_by_guard` | 冷却后再次确认，或管理员显式禁用 | 否 |
-| `externally_disabled` | 初始就被管理员禁用，插件不得修改 | 否 |
+| `externally_disabled` | 初始就被管理员禁用，插件默认不得修改 | 否 |
 
 `probing` 是临时运行标记，不作为持久状态。
 
@@ -733,8 +733,8 @@ CPA 或插件重启时，catalog 可能短暂为空或不完整。guard-owned st
 - 状态标为 `externally_disabled`
 - 不探测
 - 不自动恢复
-- 管理页只展示
-- 管理员显式 restore 只清除插件状态，不修改 auth
+- 管理页默认只展示，批量恢复时必须再次显式确认是否同时启用
+- 管理员单项 restore 或未勾选“同时恢复外部禁用账号”时，只清除插件状态，不修改 auth；批量恢复经显式确认后可修改 `disabled=false`
 
 ## 6. 透明保护设计
 
@@ -1872,9 +1872,11 @@ Content-Type: application/json
 | `accounts.probe` | `auth_id`、`force` | 提交异步探测任务，返回 `task_id` |
 | `accounts.probe_selected` | `auth_ids` | 将选中账号放入有界探测队列，需要恢复时先恢复再检测 |
 | `accounts.cooldown` | `auth_id`、`duration` | 手动冷却 |
-| `accounts.disable` | `auth_id`、`reason` | 手动永久禁用 |
+| `accounts.disable` | `auth_id`、`reason` | 手动永久禁用并修改 OAuth `disabled=true` |
+| `accounts.disable_selected` | `auth_ids`、`modify_auth` | 批量禁用；插件隔离或同时修改 OAuth |
+| `accounts.restore_preview` | `auth_ids` | 返回恢复范围与外部禁用数量 |
 | `accounts.restore` | `auth_id` | 恢复 guard-owned auth 并清除 strike |
-| `accounts.restore_selected` | `auth_ids` | 将有界队列中的选中账号恢复；健康账号跳过 |
+| `accounts.restore_selected` | `auth_ids`、`include_external` | 恢复选中账号；显式确认后可同时恢复外部禁用账号 |
 | `proxy.summary` | 无 | 代理来源、绑定状态和自动绑定运行时摘要 |
 | `proxy.sources.list/get` | `source_id` 等 | 代理来源列表与脱敏详情，节点、模板和 Resin 共用 |
 | `proxy.sources.validate/preview/test` | `kind`、`source` 等 | 配置验证、条件预览和端点检测 |

@@ -281,7 +281,7 @@ plugins:
 - `auto_action: cooldown_only`：首次确认异常时写入临时 `disabled=true`；冷却到期后执行恢复探测，仍异常则重新进入冷却，永不自动永久禁用
 - `auto_action: cooldown_then_disable`：首次确认异常时写入临时 `disabled=true`，冷却到期后执行恢复探测；再次确认 missing-thinking 时永久禁用
 
-插件只操作自己写入的 guard-owned 状态，不自动恢复管理员在插件外禁用的 auth。
+插件只操作自己写入的 guard-owned 状态，不自动恢复管理员在插件外禁用的 auth。只有批量恢复弹窗中显式勾选“同时恢复外部禁用账号”时，才会清除这些账号插件状态并把 OAuth `disabled` 改为 `false`。
 
 连续阈值与旧 grok2api/egress guard 策略对齐：
 
@@ -430,9 +430,11 @@ curl -X POST \
 | `accounts.probe` | 提交异步固定 prompt 探测任务 |
 | `accounts.probe_selected` | 检测选中的账号；需要恢复时在同一任务内先恢复再检测 |
 | `accounts.cooldown` | 手动冷却 |
-| `accounts.disable` | 手动永久禁用 |
+| `accounts.disable` | 手动永久禁用，同时修改 OAuth `disabled=true` |
+| `accounts.disable_selected` | 批量禁用选中账号，可选择仅插件隔离或同时修改 OAuth |
+| `accounts.restore_preview` | 预览选中账号的恢复范围与外部禁用数量 |
 | `accounts.restore` | 恢复 guard-owned 账号并清除 strike |
-| `accounts.restore_selected` | 恢复选中的账号 |
+| `accounts.restore_selected` | 恢复选中账号；可显式同时恢复外部禁用账号 |
 | `proxy.summary` | 代理来源、绑定状态和自动绑定运行时摘要 |
 | `proxy.sources.list/get` | 代理来源列表与脱敏详情 |
 | `proxy.sources.validate/preview/test` | 配置验证、条件预览和端点检测 |

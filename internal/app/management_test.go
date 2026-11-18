@@ -138,7 +138,7 @@ func TestManagementResourceAndActionAccess(t *testing.T) {
 	if strings.Contains(string(response.Body), "对齐旧插件") {
 		t.Fatal("dashboard should describe the setting semantically instead of referencing the old plugin")
 	}
-	for _, expected := range []string{"概览", "账号质量", "代理管理", "代理", "事件日志", "设置", "24 小时统计", "proxy.sources.create", "proxy.sources.update", "value=\"resin\">Resin", "presin_account_format", "proxy.bindings.clear", "proxy.sources.list", "proxy.auto_bind.update", "proxySyncFailures", "data-proxy-source-edit", "data-proxy-source-apply", "proxy.template.apply", "leaseSelectAll", "clearSelectedBtn", "accountsPager", "leasesPager", "eventsPager", "selectFilteredBtn", "selectAllAccountsBtn", "全选当前筛选", "全选所有账号", "选择本页全部账号", "本地轮换", "state_file.update", "id=\"p_state_file\" type=\"text\"", "p_selection_strategy", "p_prefer_last_success", "p_session_affinity", "policy.routing.selection_strategy", "session_affinity_max_entries", "summary-value truncate", "连续检测到缺少真实思考的响应达到该次数后触发处置或交叉验证", "const REASON_DETAIL_LABELS", "'expected marker missing': '探测标记缺失'", "'output tokens per second exceeded hard threshold': '输出 Token 速度超过硬阈值'", "'output tokens per second exceeded soft threshold': '输出 Token 速度超过软阈值'", "'probe stream produced no parseable events': '探测流未产生可解析事件'", "'probe stream ended without a terminal event': '探测流结束但未收到终止事件'", "真实思考：", "终止：", "解析失败：", "<td class=\"nowrap\">", "actions-cell", "includeTime: false", "accountRefreshBtn", "leaseRefreshBtn", "eventRefreshBtn", "accountProbeAllBtn", "accountRestoreAllBtn", "accountSelectionCount", "accountSelectAll", "accountSelectFilteredBtn", "accountSelectAllBtn", "accountClearSelectionBtn", "检测所选", "恢复所选", "accounts.probe_selected", "accounts.restore_selected", "accountDetails: new Map()", "summary: true", "api('accounts.get'", "proxySourceSelectAll", "proxySourceTestSelectedBtn", "proxySourceDeleteSelectedBtn", "proxy.sources.test_selected", "proxy.sources.delete_selected", "proxySourceEnabledFilter", "proxySourceHealthFilter", "tasks.cancel", "data-task-cancel", "网络连通性", "confirmDialog", "confirmAction", "confirmAccept", "confirmCancel"} {
+	for _, expected := range []string{"概览", "账号质量", "代理管理", "代理", "事件日志", "设置", "24 小时统计", "proxy.sources.create", "proxy.sources.update", "value=\"resin\">Resin", "presin_account_format", "proxy.bindings.clear", "proxy.sources.list", "proxy.auto_bind.update", "proxySyncFailures", "data-proxy-source-edit", "data-proxy-source-apply", "proxy.template.apply", "leaseSelectAll", "clearSelectedBtn", "accountsPager", "leasesPager", "eventsPager", "selectFilteredBtn", "selectAllAccountsBtn", "全选当前筛选", "全选所有账号", "选择本页全部账号", "本地轮换", "state_file.update", "id=\"p_state_file\" type=\"text\"", "p_selection_strategy", "p_prefer_last_success", "p_session_affinity", "policy.routing.selection_strategy", "session_affinity_max_entries", "summary-value truncate", "连续检测到缺少真实思考的响应达到该次数后触发处置或交叉验证", "const REASON_DETAIL_LABELS", "'expected marker missing': '探测标记缺失'", "'output tokens per second exceeded hard threshold': '输出 Token 速度超过硬阈值'", "'output tokens per second exceeded soft threshold': '输出 Token 速度超过软阈值'", "'probe stream produced no parseable events': '探测流未产生可解析事件'", "'probe stream ended without a terminal event': '探测流结束但未收到终止事件'", "真实思考：", "终止：", "解析失败：", "<td class=\"nowrap\">", "actions-cell", "includeTime: false", "accountRefreshBtn", "leaseRefreshBtn", "eventRefreshBtn", "accountProbeAllBtn", "accountRestoreAllBtn", "accountDisableAllBtn", "accountSelectionCount", "accountSelectAll", "accountSelectFilteredBtn", "accountSelectAllBtn", "accountClearSelectionBtn", "检测所选", "恢复所选", "禁用所选", "accounts.probe_selected", "accounts.restore_preview", "accounts.restore_selected", "accounts.disable_selected", "accountDetails: new Map()", "summary: true", "api('accounts.get'", "proxySourceSelectAll", "proxySourceTestSelectedBtn", "proxySourceDeleteSelectedBtn", "proxy.sources.test_selected", "proxy.sources.delete_selected", "proxySourceEnabledFilter", "proxySourceHealthFilter", "tasks.cancel", "data-task-cancel", "网络连通性", "confirmDialog", "confirmAction", "confirmAccept", "confirmCancel"} {
 		if !strings.Contains(string(response.Body), expected) {
 			t.Fatalf("dashboard is missing %q", expected)
 		}
@@ -462,6 +462,175 @@ func TestRestoreSelectedBatchManagement(t *testing.T) {
 	}
 }
 
+func TestRestoreSelectedExternalConfirmationAndPreview(t *testing.T) {
+	entriesHealthy, authsHealthy := singleGrokAuth(t, "auth-healthy", "[EMAIL]", nil)
+	entriesExternal, authsExternal := singleGrokAuth(t, "auth-external", "[EMAIL]", map[string]any{"disabled": true})
+	entries := append(entriesHealthy, entriesExternal...)
+	auths := make(map[string]json.RawMessage, len(authsHealthy)+len(authsExternal))
+	for key, value := range authsHealthy {
+		auths[key] = value
+	}
+	for key, value := range authsExternal {
+		auths[key] = value
+	}
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		state.Accounts["auth-healthy"].State = appstate.StateHealthy
+		state.Accounts["auth-external"].State = appstate.StateExternallyDisabled
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+
+	previewBody, errMarshal := json.Marshal(managementapp.ActionRequest{Action: "accounts.restore_preview", Params: map[string]any{"auth_ids": []string{"auth-healthy", "auth-external"}}})
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	previewResponse := callManagementForTest(t, plugin, http.MethodPost, "/plugins/grok-quality-guard/api", http.Header{"Content-Type": []string{"application/json"}}, previewBody)
+	if previewResponse.StatusCode != http.StatusOK {
+		t.Fatalf("restore preview status = %d body=%s", previewResponse.StatusCode, previewResponse.Body)
+	}
+	var previewEnvelope struct {
+		Data managementapp.RestorePreviewResult `json:"data"`
+	}
+	if errUnmarshal := json.Unmarshal(previewResponse.Body, &previewEnvelope); errUnmarshal != nil {
+		t.Fatalf("decode restore preview: %v", errUnmarshal)
+	}
+	if previewEnvelope.Data.Count != 2 || previewEnvelope.Data.Healthy != 1 || previewEnvelope.Data.ExternalDisabled != 1 {
+		t.Fatalf("unexpected restore preview: %#v", previewEnvelope.Data)
+	}
+
+	body, errMarshal := json.Marshal(managementapp.ActionRequest{Action: "accounts.restore_selected", Params: map[string]any{"auth_ids": []string{"auth-healthy", "auth-external"}, "include_external": true}})
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	response := callManagementForTest(t, plugin, http.MethodPost, "/plugins/grok-quality-guard/api", http.Header{"Content-Type": []string{"application/json"}}, body)
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("restore batch status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var envelope struct {
+		Data apptasks.Task `json:"data"`
+	}
+	if errUnmarshal := json.Unmarshal(response.Body, &envelope); errUnmarshal != nil {
+		t.Fatalf("decode restore task: %v", errUnmarshal)
+	}
+	task := waitTaskForTest(t, plugin, envelope.Data.ID)
+	if task.Status != taskStatusSucceeded {
+		t.Fatalf("restore batch task failed: %#v", task)
+	}
+	encodedResult, errMarshal := json.Marshal(task.Result)
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	var result managementapp.RestoreBatchResult
+	if errUnmarshal := json.Unmarshal(encodedResult, &result); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	if result.Count != 2 || result.Restored != 0 || result.ExternalRestored != 1 || result.ExternalLeftDisabled != 0 || result.Skipped != 1 {
+		t.Fatalf("unexpected restore summary: %#v", result)
+	}
+	state := plugin.stateStore().Snapshot()
+	if state.Accounts["auth-external"].State != appstate.StateUnknown {
+		t.Fatalf("external account state = %q, want unknown", state.Accounts["auth-external"].State)
+	}
+	saved, errDecode := rawAuthToMap(host.saves["auth-external"])
+	if errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	if appauth.Disabled(saved) {
+		t.Fatal("confirmed external restore left auth disabled")
+	}
+}
+
+func TestDisableSelectedBatchModes(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		modifyAuth bool
+	}{
+		{name: "plugin_only", modifyAuth: false},
+		{name: "modify_auth", modifyAuth: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			entriesHealthy, authsHealthy := singleGrokAuth(t, "auth-healthy", "[EMAIL]", nil)
+			entriesExternal, authsExternal := singleGrokAuth(t, "auth-external", "[EMAIL]", map[string]any{"disabled": true})
+			entries := append(entriesHealthy, entriesExternal...)
+			auths := make(map[string]json.RawMessage, len(authsHealthy)+len(authsExternal))
+			for key, value := range authsHealthy {
+				auths[key] = value
+			}
+			for key, value := range authsExternal {
+				auths[key] = value
+			}
+			host := newMockHostCall(entries, auths)
+			plugin := newTestPlugin(t, host, nil)
+
+			body, errMarshal := json.Marshal(managementapp.ActionRequest{Action: "accounts.disable_selected", Params: map[string]any{"auth_ids": []string{"auth-healthy", "auth-external"}, "modify_auth": testCase.modifyAuth}})
+			if errMarshal != nil {
+				t.Fatal(errMarshal)
+			}
+			response := callManagementForTest(t, plugin, http.MethodPost, "/plugins/grok-quality-guard/api", http.Header{"Content-Type": []string{"application/json"}}, body)
+			if response.StatusCode != http.StatusAccepted {
+				t.Fatalf("disable batch status = %d body=%s", response.StatusCode, response.Body)
+			}
+			var envelope struct {
+				Data apptasks.Task `json:"data"`
+			}
+			if errUnmarshal := json.Unmarshal(response.Body, &envelope); errUnmarshal != nil {
+				t.Fatalf("decode disable task: %v", errUnmarshal)
+			}
+			task := waitTaskForTest(t, plugin, envelope.Data.ID)
+			if task.Status != taskStatusSucceeded {
+				t.Fatalf("disable batch task failed: %#v", task)
+			}
+			encodedResult, errMarshal := json.Marshal(task.Result)
+			if errMarshal != nil {
+				t.Fatal(errMarshal)
+			}
+			var result managementapp.DisableBatchResult
+			if errUnmarshal := json.Unmarshal(encodedResult, &result); errUnmarshal != nil {
+				t.Fatal(errUnmarshal)
+			}
+			if result.Count != 2 || result.Disabled != 1 || result.Skipped != 1 || result.Failed != 0 || result.ModifiedAuth != testCase.modifyAuth {
+				t.Fatalf("unexpected disable summary: %#v", result)
+			}
+			state := plugin.stateStore().Snapshot()
+			account := state.Accounts["auth-healthy"]
+			if account.State != appstate.StateDisabledByGuard || account.DisableKind != appstate.DisableKindPermanent {
+				t.Fatalf("healthy account was not isolated: %#v", account)
+			}
+			if account.PluginOnlyDisable != !testCase.modifyAuth {
+				t.Fatalf("plugin-only flag = %t, want %t", account.PluginOnlyDisable, !testCase.modifyAuth)
+			}
+			if state.Accounts["auth-external"].State != appstate.StateExternallyDisabled {
+				t.Fatalf("external account state changed: %#v", state.Accounts["auth-external"])
+			}
+			if testCase.modifyAuth {
+				saved, errDecode := rawAuthToMap(host.saves["auth-healthy"])
+				if errDecode != nil {
+					t.Fatal(errDecode)
+				}
+				if !appauth.Disabled(saved) {
+					t.Fatal("auth-modifying disable did not set disabled=true")
+				}
+				return
+			}
+			if _, saved := host.saves["auth-healthy"]; saved {
+				t.Fatal("plugin-only disable modified the auth file")
+			}
+			if errReconcile := plugin.Reconcile(context.Background()); errReconcile != nil {
+				t.Fatal(errReconcile)
+			}
+			stateAccount, _ := plugin.stateAccount("auth-healthy")
+			if stateAccount.State != appstate.StateDisabledByGuard || !stateAccount.PluginOnlyDisable {
+				t.Fatalf("reconcile cleared plugin-only disable: %#v", stateAccount)
+			}
+			if _, saved := host.saves["auth-healthy"]; saved {
+				t.Fatal("reconcile modified a plugin-only disabled auth file")
+			}
+		})
+	}
+}
 func TestProbeSelectedBatchManagement(t *testing.T) {
 	entriesHealthy, authsHealthy := singleGrokAuth(t, "auth-healthy", "[EMAIL]", nil)
 	entriesSuspect, authsSuspect := singleGrokAuth(t, "auth-suspect", "[EMAIL]", nil)

@@ -138,6 +138,7 @@ func (s *Service) clearProxyFailureStrikes(ctx context.Context, authID string) e
 		account.ProbeBackoffUntil = time.Time{}
 		account.DisableKind = ""
 		account.DisableReason = ""
+		account.PluginOnlyDisable = false
 		account.PreviousDisabled = false
 		account.AuthDisabledIntent = nil
 		if account.LastReason == ClassProbeError || account.LastReason == ClassProxyError {

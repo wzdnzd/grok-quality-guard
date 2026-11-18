@@ -3379,6 +3379,10 @@
                   class="icon">
                   <use href="#i-check"></use>
                 </svg>恢复所选</button>
+              <button class="btn btn-xs btn-danger" type="button" id="accountDisableAllBtn" title="禁用当前已勾选账号" disabled><svg
+                  class="icon">
+                  <use href="#i-power"></use>
+                </svg>禁用所选</button>
             </div>
             <div class="toolbar-right">
               <span class="selection-note" id="accountSelectionCount">已选：0 个账号</span>
@@ -4890,6 +4894,9 @@
       const restoreButton = document.getElementById('accountRestoreAllBtn');
       restoreButton.disabled = selected === 0;
       restoreButton.title = selected > 0 ? '恢复当前已选：' + selected + ' 个账号' : '请先勾选账号';
+      const disableButton = document.getElementById('accountDisableAllBtn');
+      disableButton.disabled = selected === 0;
+      disableButton.title = selected > 0 ? '禁用当前已选：' + selected + ' 个账号' : '请先勾选账号';
     }
     function renderAccounts() {
       const overview = state.overview || {};
@@ -7431,9 +7438,10 @@
       }
       const probeConfirmed = await confirmAction({
         title: '检测所选账号',
-        detail: '将立即检测 ' + count + ' 个账号\n检测会发起真实模型请求并可能产生额度消耗，需要恢复的账号会在同一任务内先恢复再检测，外部禁用账号会跳过',
+        detail: '检测 ' + count + ' 个账号；会消耗额度，插件禁用账号先恢复后检测，外部禁用账号跳过',
         confirmLabel: '开始检测',
-        icon: 'play'
+        icon: 'play',
+        wide: true
       });
       if (!probeConfirmed) return;
       setBusy(button, true);
@@ -7472,25 +7480,82 @@
         toast('请先勾选需要恢复的账号', 'success');
         return;
       }
-      const restoreConfirmed = await confirmAction({
-        title: '恢复所选账号',
-        detail: '将恢复当前已选 ' + count + ' 个账号\n已由插件冷却、额度耗尽、凭据失效或隔离的账号会重新启用，健康账号会跳过，外部禁用账号只会清理插件状态，不会修改 OAuth 的 disabled 标记',
-        confirmLabel: '恢复账号',
-        icon: 'check'
-      });
-      if (!restoreConfirmed) return;
       setBusy(button, true);
       try {
-        const task = await api('accounts.restore_selected', { auth_ids: authIDs });
+        const preview = await api('accounts.restore_preview', { auth_ids: authIDs });
+        const externalCount = Number(preview && preview.external_disabled || 0);
+        const optionsHTML = externalCount > 0
+          ? '<div class="field"><label class="check-row"><input id="restoreExternalAccounts" type="checkbox"><span>同时恢复 ' + externalCount + ' 个外部禁用账号</span></label></div>'
+          : '';
+        const restoreConfirmed = await confirmAction({
+          title: '恢复所选账号',
+          detail: '恢复 ' + count + ' 个账号；健康账号跳过，插件禁用账号重新启用',
+          confirmLabel: '恢复账号',
+          icon: 'check',
+          wide: true,
+          optionsHTML: optionsHTML
+        });
+        if (!restoreConfirmed) return;
+        const includeExternal = externalCount > 0 && Boolean(document.getElementById('restoreExternalAccounts')?.checked);
+        const task = await api('accounts.restore_selected', { auth_ids: authIDs, include_external: includeExternal });
         toast('恢复任务已提交，后台执行中…');
         const result = await waitForTask(task, '恢复已选账号');
         const restored = Number(result && result.restored || 0);
+        const externalRestored = Number(result && result.external_restored || 0);
         const skipped = Number(result && result.skipped || 0);
         const external = Number(result && result.external_left_disabled || 0);
         const failed = Number(result && result.failed || 0);
-        let message = restored > 0 ? ('已恢复：' + restored + ' 个账号') : '没有账号被恢复';
+        const recovered = restored + externalRestored;
+        let message = recovered > 0 ? ('已恢复：' + recovered + ' 个账号') : '没有账号被恢复';
+        if (externalRestored) message += '，其中外部禁用 ' + externalRestored + ' 个';
         if (skipped) message += '，跳过 ' + skipped + ' 个健康账号';
         if (external) message += '，' + external + ' 个外部禁用账号仅清理插件状态';
+        if (failed) {
+          message += '，' + failed + ' 个失败';
+          const firstError = Array.isArray(result && result.items) ? result.items.find((item) => item && item.error) : null;
+          if (firstError && firstError.error) message += '：' + firstError.error;
+        }
+        toast(message, failed > 0 ? 'error' : 'success');
+        state.accountSelection.clear();
+        await refreshAll(true);
+      } catch (error) {
+        toast(error.message, 'error');
+      } finally {
+        setBusy(button, false);
+        syncAccountSelectionUI();
+      }
+    });
+    document.getElementById('accountDisableAllBtn').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      const authIDs = selectedAccountIDs();
+      const count = authIDs.length;
+      if (!count) {
+        syncAccountSelectionUI();
+        toast('请先勾选需要禁用的账号', 'success');
+        return;
+      }
+      setBusy(button, true);
+      try {
+        const disableConfirmed = await confirmAction({
+          title: '禁用所选账号',
+          detail: '禁用 ' + count + ' 个账号；默认仅在插件内隔离，不修改 OAuth 文件',
+          confirmLabel: '禁用账号',
+          icon: 'power',
+          tone: 'danger',
+          wide: true,
+          optionsHTML: '<div class="field"><label class="check-row"><input id="disableModifyAuth" type="checkbox"><span>同时修改 OAuth 文件</span></label></div>'
+        });
+        if (!disableConfirmed) return;
+        const modifyAuth = Boolean(document.getElementById('disableModifyAuth')?.checked);
+        const task = await api('accounts.disable_selected', { auth_ids: authIDs, modify_auth: modifyAuth });
+        toast('禁用任务已提交，后台执行中…');
+        const result = await waitForTask(task, '禁用已选账号');
+        const disabled = Number(result && result.disabled || 0);
+        const skipped = Number(result && result.skipped || 0);
+        const failed = Number(result && result.failed || 0);
+        let message = disabled > 0 ? ('已禁用：' + disabled + ' 个账号') : '没有账号被禁用';
+        message += modifyAuth ? '，已同步修改 OAuth 文件' : '，仅插件内禁用';
+        if (skipped) message += '，跳过 ' + skipped + ' 个已禁用账号';
         if (failed) {
           message += '，' + failed + ' 个失败';
           const firstError = Array.isArray(result && result.items) ? result.items.find((item) => item && item.error) : null;

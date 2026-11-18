@@ -431,6 +431,7 @@ func (s *Service) markProbeSuccess(authID string, sig Signals) error {
 		account.ProbeBackoffUntil = time.Time{}
 		account.DisableKind = ""
 		account.DisableReason = ""
+		account.PluginOnlyDisable = false
 		account.PreviousDisabled = false
 		account.AuthDisabledIntent = nil
 		account.SoftStrikes = 0

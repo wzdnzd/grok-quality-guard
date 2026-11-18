@@ -40,8 +40,32 @@ type restoreBatchResult struct {
 	Count                int                `json:"count"`
 	Restored             int                `json:"restored"`
 	Skipped              int                `json:"skipped"`
+	ExternalRestored     int                `json:"external_restored"`
 	ExternalLeftDisabled int                `json:"external_left_disabled"`
 	Failed               int                `json:"failed"`
+}
+
+type restorePreviewResult struct {
+	Count            int `json:"count"`
+	Restorable       int `json:"restorable"`
+	Healthy          int `json:"healthy"`
+	ExternalDisabled int `json:"external_disabled"`
+}
+
+type disableBatchItem struct {
+	AuthID      string `json:"auth_id"`
+	StateBefore string `json:"state_before"`
+	Status      string `json:"status"`
+	Error       string `json:"error,omitempty"`
+}
+
+type disableBatchResult struct {
+	Items        []disableBatchItem `json:"items"`
+	Count        int                `json:"count"`
+	Disabled     int                `json:"disabled"`
+	Skipped      int                `json:"skipped"`
+	Failed       int                `json:"failed"`
+	ModifiedAuth bool               `json:"modified_auth"`
 }
 
 type probeBatchItem struct {
@@ -180,8 +204,12 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 		return s.actionDisable(ctx, request.Params)
 	case "accounts.restore":
 		return s.actionRestore(ctx, request.Params)
+	case "accounts.restore_preview":
+		return s.actionRestorePreview(ctx, request.Params)
 	case "accounts.restore_selected":
 		return s.actionRestoreSelected(ctx, request.Params)
+	case "accounts.disable_selected":
+		return s.actionDisableSelected(ctx, request.Params)
 	case "proxy.summary":
 		return s.actionProxySummary(ctx)
 	case "proxy.sources.list":

@@ -106,6 +106,7 @@ type AccountState struct {
 	ProbeBackoffUntil            time.Time                  `json:"probe_backoff_until,omitzero"`
 	DisableKind                  string                     `json:"disable_kind,omitempty"`
 	DisableReason                string                     `json:"disable_reason,omitempty"`
+	PluginOnlyDisable            bool                       `json:"plugin_only_disable,omitempty"`
 	PreviousDisabled             bool                       `json:"previous_disabled,omitempty"`
 	AuthDisabledIntent           *bool                      `json:"auth_disabled_intent,omitempty"`
 	CatalogMissingSince          time.Time                  `json:"catalog_missing_since,omitzero"`
