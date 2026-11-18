@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	appstate "grok-quality-guard/internal/app/state"
 	appconfig "grok-quality-guard/internal/config"
 )
 
@@ -55,5 +56,106 @@ func TestSchedulerSnapshotTracksWaitingAndCompletions(t *testing.T) {
 	}
 	if snapshot.LastError != "probe timeout" {
 		t.Fatalf("last error = %q, want probe timeout", snapshot.LastError)
+	}
+}
+
+type blockingReconcileProbeEnvironment struct {
+	Environment
+	store   *appstate.Store
+	policy  appconfig.Policy
+	started chan struct{}
+}
+
+func (e *blockingReconcileProbeEnvironment) Store() *appstate.Store { return e.store }
+func (e *blockingReconcileProbeEnvironment) Policy() appconfig.Policy {
+	return e.policy
+}
+func (e *blockingReconcileProbeEnvironment) CatalogSnapshot() []Account { return nil }
+func (e *blockingReconcileProbeEnvironment) Reconcile(ctx context.Context) error {
+	select {
+	case e.started <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestProbeSchedulerStartsWhileReconcileIsBlocked(t *testing.T) {
+	env := &blockingReconcileProbeEnvironment{
+		store:   appstate.NewStore(""),
+		policy:  appconfig.PolicyFromConfig(appconfig.DefaultConfig()),
+		started: make(chan struct{}, 1),
+	}
+	service := NewService(env)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		service.probeLoop(ctx)
+		close(done)
+	}()
+
+	deadline := time.After(time.Second)
+	for {
+		snapshot := service.QueueSnapshot()
+		if snapshot.Started && !snapshot.LastScanAt.IsZero() {
+			break
+		}
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatalf("scheduler did not start while reconcile was blocked: %#v", snapshot)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	select {
+	case <-env.started:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("reconcile was not started")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("probe loop did not stop")
+	}
+}
+
+func TestSchedulerDeduplicatesQueuedAndActiveAccounts(t *testing.T) {
+	now := time.Now().UTC()
+	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
+	scheduler := newProbeScheduler(nil, context.Background())
+	accounts := []Account{{ID: "auth-1"}}
+	state := State{Accounts: map[string]*AccountState{
+		"auth-1": {AuthID: "auth-1", State: StateUnknown, FirstSeenAt: now.Add(-time.Hour)},
+	}}
+	if added := scheduler.enqueueDue(accounts, state, policy, now); added != 1 {
+		t.Fatalf("first enqueue added = %d, want 1", added)
+	}
+	if added := scheduler.enqueueDue(accounts, state, policy, now); added != 0 {
+		t.Fatalf("duplicate waiting enqueue added = %d, want 0", added)
+	}
+	scheduler.mu.Lock()
+	scheduler.queue = nil
+	scheduler.active = 1
+	scheduler.mu.Unlock()
+	if added := scheduler.enqueueDue(accounts, state, policy, now); added != 0 {
+		t.Fatalf("active duplicate enqueue added = %d, want 0", added)
+	}
+	scheduler.finish(probeCompletion{authID: "auth-1"})
+	if added := scheduler.enqueueDue(accounts, state, policy, now); added != 1 {
+		t.Fatalf("enqueue after completion added = %d, want 1", added)
+	}
+}
+
+func TestProbeScanIntervalUsesPolicy(t *testing.T) {
+	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
+	policy.Probe.ScanInterval = appconfig.NewDuration(7 * time.Second)
+	service := NewService(&blockingReconcileProbeEnvironment{
+		store:  appstate.NewStore(""),
+		policy: policy,
+	})
+	if got := service.probeScanInterval(); got != 7*time.Second {
+		t.Fatalf("probe scan interval = %s, want 7s", got)
 	}
 }

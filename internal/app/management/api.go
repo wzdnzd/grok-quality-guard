@@ -308,10 +308,7 @@ func (s *Service) actionOverview(ctx context.Context) (any, int, error) {
 	_ = s.ensureCatalog(ctx)
 	catalog := s.catalogSnapshot()
 	store := s.stateStore()
-	counts := map[string]int{}
-	if store != nil {
-		counts = store.StateCounts()
-	}
+	counts := catalogStateCounts(store, catalog)
 	recentAnomalies := 0
 	if store != nil {
 		recentAnomalies = store.RecentEventCount(time.Now().UTC().Add(-24 * time.Hour))
@@ -392,9 +389,7 @@ func (s *Service) actionAccountsList(ctx context.Context, params map[string]any)
 		views = items
 	}
 	stateCounts := map[string]int(nil)
-	if store != nil {
-		stateCounts = store.StateCounts()
-	}
+	stateCounts = catalogStateCounts(store, catalog)
 	return map[string]any{
 		"items":        views,
 		"page":         page,
@@ -402,6 +397,25 @@ func (s *Service) actionAccountsList(ctx context.Context, params map[string]any)
 		"total":        len(filtered),
 		"state_counts": stateCounts,
 	}, http.StatusOK, nil
+}
+
+func catalogStateCounts(store *Store, catalog []Account) map[string]int {
+	counts := make(map[string]int, 8)
+	values := []string(nil)
+	if store != nil {
+		values = store.AccountStateValuesForIDs(catalogAccountIDs(catalog))
+	}
+	for index, account := range catalog {
+		state := ""
+		if index < len(values) {
+			state = values[index]
+		}
+		if state == "" {
+			state = catalogAccountState(account, "")
+		}
+		counts[state]++
+	}
+	return counts
 }
 
 func catalogAccountIDs(accounts []Account) []string {

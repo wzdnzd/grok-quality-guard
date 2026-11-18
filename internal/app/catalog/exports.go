@@ -21,4 +21,7 @@ func (s *Service) SetGrokAuthModels(credentials []pluginapi.HostAuthModels) {
 
 const GuardCatalogMissingRetention = guardCatalogMissingRetention
 
-func ReadAuthProxyURL(path string) (string, bool) { return readAuthProxyURL(path) }
+func ReadAuthProxyURL(path string) (string, bool) {
+	proxyURL, _, loaded := readAuthMeta(path)
+	return proxyURL, loaded
+}

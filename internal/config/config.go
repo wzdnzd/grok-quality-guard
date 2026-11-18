@@ -20,6 +20,7 @@ const (
 	defaultProbeQueueSize           = 10000
 	maxProbeQueueSize               = 1000000
 	defaultProbeUnknownJitter       = 30 * time.Second
+	defaultProbeScanInterval        = 15 * time.Second
 	defaultTaskHistoryRetentionDays = 3
 	defaultTaskHistoryMaxRecords    = 500
 	defaultTaskHistoryMaxBytes      = int64(128 << 20)
@@ -115,6 +116,7 @@ type ProbeConfig struct {
 	MaxOutputTokens int      `yaml:"max_output_tokens" json:"max_output_tokens"`
 	Concurrency     int      `yaml:"concurrency" json:"concurrency"`
 	QueueSize       int      `yaml:"queue_size" json:"queue_size"`
+	ScanInterval    Duration `yaml:"scan_interval" json:"scan_interval"`
 	UnknownDelay    Duration `yaml:"unknown_delay" json:"unknown_delay"`
 	UnknownJitter   Duration `yaml:"unknown_jitter" json:"unknown_jitter"`
 	SuspectBackoff  Duration `yaml:"suspect_backoff" json:"suspect_backoff"`
@@ -230,6 +232,7 @@ func DefaultProbeConfig() ProbeConfig {
 		MaxOutputTokens: 768,
 		Concurrency:     1,
 		QueueSize:       defaultProbeQueueSize,
+		ScanInterval:    NewDuration(defaultProbeScanInterval),
 		UnknownDelay:    NewDuration(30 * time.Second),
 		UnknownJitter:   NewDuration(defaultProbeUnknownJitter),
 		SuspectBackoff:  NewDuration(15 * time.Minute),
@@ -483,6 +486,12 @@ func normalizeProbe(p *ProbeConfig) error {
 	}
 	if p.QueueSize > maxProbeQueueSize {
 		return fmt.Errorf("probe.queue_size must be <= %d", maxProbeQueueSize)
+	}
+	if p.ScanInterval.Duration <= 0 {
+		p.ScanInterval = defaults.ScanInterval
+	}
+	if p.ScanInterval.Duration < time.Second || p.ScanInterval.Duration > 24*time.Hour {
+		return fmt.Errorf("probe.scan_interval must be between 1s and 24h")
 	}
 	if p.UnknownDelay.Duration <= 0 {
 		p.UnknownDelay = defaults.UnknownDelay

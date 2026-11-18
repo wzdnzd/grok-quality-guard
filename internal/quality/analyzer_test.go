@@ -3,6 +3,7 @@ package quality
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"grok-quality-guard/internal/config"
 )
@@ -253,7 +254,7 @@ func TestProtocolAliasesAndNonStreamThinkingParsing(t *testing.T) {
 }
 
 func TestSSEParserHandlesHostLineChunks(t *testing.T) {
-	analyzer := NewStreamAnalyzerWithProtocol(qualityProtocolResponses)
+	analyzer := NewStreamAnalyzerWithProtocolAt(qualityProtocolResponses, time.Now().Add(-3*time.Second))
 	analyzer.ObserveChunk([]byte("event: response.output_text.delta"))
 	analyzer.ObserveChunk([]byte(`data: {"type":"response.output_text.delta","delta":"QUALITY_OK"}`))
 	analyzer.ObserveChunk([]byte("event: response.completed"))

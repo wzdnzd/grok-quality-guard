@@ -313,6 +313,7 @@ func (s *Service) recordProxyAutoResult(id string, result proxyBindingResult, er
 	if result.Committed {
 		s.mgr.runtime.BoundTotal++
 		s.mgr.runtime.LastSuccessAt = time.Now().UTC()
+		s.mgr.runtime.LastError = ""
 	} else if err != nil {
 		s.mgr.runtime.FailedTotal++
 		s.mgr.runtime.LastError = redact.SanitizeError(err)

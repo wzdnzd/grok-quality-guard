@@ -5,6 +5,7 @@ const (
 	DefaultProbeQueueSize     = defaultProbeQueueSize
 	MaxProbeQueueSize         = maxProbeQueueSize
 	DefaultProbeUnknownJitter = defaultProbeUnknownJitter
+	DefaultProbeScanInterval  = defaultProbeScanInterval
 )
 
 // Decode parses YAML over the built-in defaults and normalizes the result.

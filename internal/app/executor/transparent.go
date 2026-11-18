@@ -463,7 +463,7 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 		defer close(readDone)
 		defer close(readEvents)
 		for {
-			read, errRead := s.env.ReadModelStream(context.Background(), stream.StreamID)
+			read, errRead := s.env.ReadModelStream(attemptCtx, stream.StreamID)
 			event := streamReadEvent{Response: read, Err: errRead}
 			select {
 			case readEvents <- event:
@@ -478,7 +478,10 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 	defer func() {
 		cancelAttempt()
 		_ = s.env.CloseModelStream(stream.StreamID)
-		<-readDone
+		select {
+		case <-readDone:
+		case <-time.After(modelStreamCloseGrace):
+		}
 	}()
 
 	holdTimeout := cfg.HoldTimeout.Duration

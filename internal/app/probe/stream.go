@@ -2,14 +2,19 @@ package probe
 
 import (
 	"context"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
+
+const modelStreamCloseGrace = time.Second
 
 type streamReadResult struct {
 	Response pluginapi.HostModelStreamReadResponse
 	Err      error
 }
+
+type modelStreamReadFunc func(context.Context, string) (pluginapi.HostModelStreamReadResponse, error)
 
 type modelStreamReader struct {
 	ctx    context.Context
@@ -19,6 +24,10 @@ type modelStreamReader struct {
 }
 
 func (s *Service) openModelStreamReader(ctx context.Context, streamID string) *modelStreamReader {
+	return newModelStreamReader(ctx, streamID, s.env.ReadModelStream)
+}
+
+func newModelStreamReader(ctx context.Context, streamID string, read modelStreamReadFunc) *modelStreamReader {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -33,11 +42,11 @@ func (s *Service) openModelStreamReader(ctx context.Context, streamID string) *m
 		defer close(reader.done)
 		defer close(reader.events)
 		for {
-			response, errRead := s.env.ReadModelStream(context.Background(), streamID)
+			response, errRead := read(readerCtx, streamID)
 			result := streamReadResult{Response: response, Err: errRead}
 			select {
 			case reader.events <- result:
-			case <-reader.ctx.Done():
+			case <-readerCtx.Done():
 				return
 			}
 			if errRead != nil || response.Done {
@@ -68,5 +77,10 @@ func (reader *modelStreamReader) Close() {
 		return
 	}
 	reader.cancel()
-	<-reader.done
+	timer := time.NewTimer(modelStreamCloseGrace)
+	defer timer.Stop()
+	select {
+	case <-reader.done:
+	case <-timer.C:
+	}
 }

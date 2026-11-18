@@ -246,6 +246,7 @@ type authMetaJob struct {
 
 type authMetaValue struct {
 	proxyURL string
+	oauthID  string
 	loaded   bool
 }
 
@@ -266,6 +267,7 @@ func (s *Service) refreshAuthMeta(ctx context.Context, accounts, previousCatalog
 				account.ProxyURL = cached.ProxyURL
 				account.ProxyURLKnown = true
 				account.ProxyHash = cached.ProxyHash
+				account.OAuthID = cached.OAuthID
 				continue
 			}
 		}
@@ -277,14 +279,15 @@ func (s *Service) refreshAuthMeta(ctx context.Context, accounts, previousCatalog
 
 	values := make([]authMetaValue, len(accounts))
 	_ = runBoundedQueue(ctx, jobs, 64, 8, func(_ context.Context, job authMetaJob) {
-		proxyURL, loaded := readAuthProxyURL(job.path)
-		values[job.accountIndex] = authMetaValue{proxyURL: proxyURL, loaded: loaded}
+		proxyURL, oauthID, loaded := readAuthMeta(job.path)
+		values[job.accountIndex] = authMetaValue{proxyURL: proxyURL, oauthID: oauthID, loaded: loaded}
 	})
 	for _, job := range jobs {
 		value := values[job.accountIndex]
 		if value.loaded {
 			accounts[job.accountIndex].ProxyURL = value.proxyURL
 			accounts[job.accountIndex].ProxyURLKnown = true
+			accounts[job.accountIndex].OAuthID = value.oauthID
 			if value.proxyURL != "" {
 				accounts[job.accountIndex].ProxyHash = proxyapp.URLHash(value.proxyURL)
 			}
@@ -292,28 +295,47 @@ func (s *Service) refreshAuthMeta(ctx context.Context, accounts, previousCatalog
 	}
 }
 
-func readAuthProxyURL(path string) (string, bool) {
+func readAuthMeta(path string) (string, string, bool) {
 	data, errRead := os.ReadFile(path)
 	if errRead != nil {
-		return "", false
+		return "", "", false
 	}
 	if strings.TrimSpace(string(data)) == "null" {
-		return "", false
+		return "", "", false
 	}
 	var metadata struct {
 		ProxyURL json.RawMessage `json:"proxy_url"`
+		Sub      string          `json:"sub"`
+		Subject  string          `json:"subject"`
+		Metadata json.RawMessage `json:"metadata"`
 	}
 	if errUnmarshal := json.Unmarshal(data, &metadata); errUnmarshal != nil {
-		return "", false
+		return "", "", false
+	}
+	oauthID := strings.TrimSpace(metadata.Sub)
+	if oauthID == "" {
+		oauthID = strings.TrimSpace(metadata.Subject)
+	}
+	if oauthID == "" && len(metadata.Metadata) > 0 {
+		var nested struct {
+			Sub     string `json:"sub"`
+			Subject string `json:"subject"`
+		}
+		if json.Unmarshal(metadata.Metadata, &nested) == nil {
+			oauthID = strings.TrimSpace(nested.Sub)
+			if oauthID == "" {
+				oauthID = strings.TrimSpace(nested.Subject)
+			}
+		}
 	}
 	var proxyURL string
 	if len(metadata.ProxyURL) == 0 || string(metadata.ProxyURL) == "null" {
-		return "", true
+		return "", oauthID, true
 	}
 	if json.Unmarshal(metadata.ProxyURL, &proxyURL) != nil {
-		return "", false
+		return "", "", false
 	}
-	return strings.TrimSpace(proxyURL), true
+	return strings.TrimSpace(proxyURL), oauthID, true
 }
 func catalogStateNeedsRetention(account *AccountState) bool {
 	if account == nil {
@@ -482,7 +504,7 @@ func (s *Service) resolveAuth(ctx context.Context, authID string) (Account, plug
 	if index == "" {
 		index = account.ID
 	}
-	response, errGet := s.env.GetAuth(index)
+	response, errGet := s.env.GetAuthContext(ctx, index)
 	if errGet != nil {
 		return account, response, nil, errGet
 	}

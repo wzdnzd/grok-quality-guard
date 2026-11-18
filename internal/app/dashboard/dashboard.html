@@ -4725,6 +4725,8 @@
                       type="number" min="1"></div>
                   <div class="field"><label for="p_probe_queue_size">探测/批量队列容量</label><input id="p_probe_queue_size"
                       type="number" min="1" max="1000000"></div>
+                  <div class="field"><label for="p_probe_scan_interval">扫描间隔</label><input id="p_probe_scan_interval"
+                      type="text" placeholder="15s"></div>
                   <div class="field"><label for="p_probe_unknown_delay">待检测延迟</label><input id="p_probe_unknown_delay"
                       type="text" placeholder="30s"></div>
                   <div class="field"><label for="p_probe_unknown_jitter">待检测抖动</label><input id="p_probe_unknown_jitter"
@@ -5508,7 +5510,7 @@
       if (state.refreshing) return;
       state.refreshing = true;
       setBusy(button, true);
-      document.getElementById('syncLabel').textContent = '正在刷新' + label + '…';
+      document.getElementById('syncLabel').textContent = '正在刷新' + label;
       try {
         await refresh();
         document.getElementById('syncLabel').textContent = '更新于 ' + formatTime(new Date().toISOString());
@@ -5558,7 +5560,7 @@
     async function refreshAll(silent) {
       if (state.refreshing) return;
       state.refreshing = true;
-      document.getElementById('syncLabel').textContent = '正在同步…';
+      document.getElementById('syncLabel').textContent = '正在同步';
       const loadAccounts = state.activeTab === 'accounts';
       const loadLeases = state.activeTab === 'resin';
       const tasks = await Promise.allSettled([
@@ -5711,7 +5713,7 @@
         summaryItem('惩罚标记降级', esc(String(quality.strike_decay_after ?? 48) + 'h / ' + String(quality.strike_decay_min_healthy ?? 10) + ' 次健康')),
         summaryItem('检测与验证', esc('思考检测：' + (quality.thinking_guard !== false ? '开启' : '关闭') + ' · 交叉验证：' + ((quality.soft_cross_verify || quality.thinking_cross_verify) ? '部分开启' : '关闭'))),
         summaryItem('探测模型', esc(policy.probe && policy.probe.model || '-')),
-        summaryItem('任务并发与队列', esc('并发：' + num(policy.probe && policy.probe.concurrency || 1) + ' · 队列：' + num(policy.probe && policy.probe.queue_size || 10000))),
+        summaryItem('任务扫描与并发', esc('扫描：' + String(policy.probe && policy.probe.scan_interval || '15s') + ' · 并发：' + num(policy.probe && policy.probe.concurrency || 1) + ' · 队列：' + num(policy.probe && policy.probe.queue_size || 10000))),
         summaryItem('状态文件', esc(overview.state_file || '-'), { truncate: true, title: overview.state_file || '-' }),
         summaryItem('事件保留', esc(num(policy.events_limit || 0)))
       ].join('');
@@ -6260,7 +6262,7 @@
     async function saveProxyAutoBind(button) {
       const revision = formDraftRevision('proxyAutoBindForm');
       setBusy(button, true);
-      document.getElementById('proxyAutoBindStatus').textContent = '正在保存自动绑定设置…';
+      document.getElementById('proxyAutoBindStatus').textContent = '正在保存自动绑定设置';
       try {
         const config = collectProxyAutoBindConfig();
         const autoRotate = config.auto_rotate_after_quality_failure;
@@ -6532,7 +6534,7 @@
           expected_version: source ? Number(source.config_version || 0) : 0
         };
         setBusy(button, true);
-        status.textContent = entries.length > 1 ? '正在验证并添加节点…' : '正在验证并保存…';
+        status.textContent = entries.length > 1 ? '正在验证并添加节点' : '正在验证并保存';
         try {
           if (!editing && entries.length > 1) {
             const nodes = entries.map((entry) => ({ name: entry.name, url: entry.url, enabled: input.enabled, priority: input.priority, max_bindings: input.max_bindings }));
@@ -6898,7 +6900,7 @@
           return;
         }
         setBusy(button, true);
-        document.getElementById('proxySourceEditorStatus').textContent = '正在验证并保存…';
+        document.getElementById('proxySourceEditorStatus').textContent = '正在验证并保存';
         try {
           const input = collectProxyTemplateEditor(source, template);
           const queued = await api(source ? 'proxy.sources.update' : 'proxy.sources.create', { kind: 'template', source: input });
@@ -7021,7 +7023,7 @@
           return;
         }
         setBusy(button, true);
-        document.getElementById('proxySourceEditorStatus').textContent = '正在验证并保存…';
+        document.getElementById('proxySourceEditorStatus').textContent = '正在验证并保存';
         try {
           const input = collectProxyResinEditor(source, resin);
           const queued = await api(source ? 'proxy.sources.update' : 'proxy.sources.create', { kind: 'resin', source: input });
@@ -7926,7 +7928,7 @@
     const TASK_STATUS_LABELS = {
       queued: '等待执行', running: '执行中', succeeded: '已完成', failed: '失败',
       cancelled: '已取消', canceled: '已取消', interrupted: '已中断',
-      idle: '空闲', paused: '已暂停', skipped: '已跳过', pending: '等待中', waiting: '等待中',
+      idle: '空闲', starting: '启动中', paused: '已暂停', skipped: '已跳过', pending: '等待中', waiting: '等待中',
       partial: '部分完成', probed: '已检测', restored: '已恢复', disabled: '已禁用', deleted: '已删除',
       bound: '已绑定', cleared: '已清除', rotated: '已轮换', updated: '已更新', created: '已创建',
       reachable: '可连接', unreachable: '不可达', needs_reconcile: '需核对', reconcile_required: '需核对',
@@ -7943,7 +7945,7 @@
     }
     function taskStatusClass(value) {
       const status = String(value || '').toLowerCase();
-      if (['running', 'queued', 'pending', 'waiting'].includes(status)) return 'running';
+      if (['running', 'starting', 'queued', 'pending', 'waiting'].includes(status)) return 'running';
       if (['succeeded', 'probed', 'restored', 'disabled', 'deleted', 'bound', 'cleared', 'rotated', 'updated', 'created', 'reachable'].includes(status)) return 'succeeded';
       if (['failed', 'interrupted', 'unreachable', 'partial', 'needs_reconcile', 'reconcile_required', 'commit_unknown', 'permanent_failure', 'credential_blocked'].includes(status)) return 'failed';
       if (['skipped', 'superseded', 'unchanged', 'already_bound', 'external_left_disabled', 'protected', 'paused', 'idle', 'cancelled', 'canceled'].includes(status)) return 'paused';
@@ -8062,7 +8064,7 @@
       }
       if (state.taskCenterDetailLoading && !state.taskCenterDetail) {
         document.getElementById('taskDetailTitle').innerHTML = icon('eye') + '任务详情';
-        document.getElementById('taskDetailSubtitle').textContent = '正在加载任务明细…';
+        document.getElementById('taskDetailSubtitle').textContent = '正在加载任务明细';
         document.getElementById('taskDetailBody').innerHTML = '<div class="task-detail-empty"><span class="task-empty-icon"><svg class="icon spin"><use href="#i-refresh"></use></svg></span><h3>正在加载</h3><p>历史明细按需读取，不会影响其他页面</p></div>';
         document.getElementById('taskDetailBadge').hidden = true;
         return;
@@ -8497,6 +8499,7 @@
       setValue('p_probe_max_output', probe.max_output_tokens || 768);
       setValue('p_probe_concurrency', probe.concurrency || 1);
       setValue('p_probe_queue_size', probe.queue_size || 10000);
+      setValue('p_probe_scan_interval', probe.scan_interval || '15s');
       setValue('p_probe_unknown_delay', probe.unknown_delay || '30s');
       setValue('p_probe_unknown_jitter', probe.unknown_jitter || '30s');
       setValue('p_probe_suspect_backoff', probe.suspect_backoff || '15m');
@@ -8552,6 +8555,7 @@
       policy.probe.max_output_tokens = numberValue('p_probe_max_output', 768);
       policy.probe.concurrency = numberValue('p_probe_concurrency', 1);
       policy.probe.queue_size = numberValue('p_probe_queue_size', 10000);
+      policy.probe.scan_interval = valueOf('p_probe_scan_interval');
       policy.probe.unknown_delay = valueOf('p_probe_unknown_delay');
       policy.probe.unknown_jitter = valueOf('p_probe_unknown_jitter');
       policy.probe.suspect_backoff = valueOf('p_probe_suspect_backoff');
@@ -8572,11 +8576,11 @@
       if (!(taskHistory.max_bytes >= 1048576 && taskHistory.max_bytes <= 4294967296)) { toast('任务历史磁盘上限必须在 1 到 4096 MiB 之间', 'error'); return; }
       if (!(taskHistory.max_items_per_task >= 1 && taskHistory.max_items_per_task <= 100000)) { toast('单任务明细上限必须在 1 到 100000 之间', 'error'); return; }
       setBusy(button, true);
-      document.getElementById('policyStatus').textContent = '正在保存策略…';
+      document.getElementById('policyStatus').textContent = '正在保存策略';
       try {
         const currentStateFile = String((state.overview && state.overview.state_file) || '').trim();
         if (nextStateFile !== currentStateFile) {
-          document.getElementById('policyStatus').textContent = '正在切换状态文件路径…';
+          document.getElementById('policyStatus').textContent = '正在切换状态文件路径';
           const moved = await api('state_file.update', { state_file: nextStateFile });
           if (moved && moved.state_file) setValue('p_state_file', moved.state_file);
         }
@@ -8713,7 +8717,7 @@
       setBusy(button, true);
       try {
         const isProbe = action === 'accounts.probe';
-        if (isProbe) toast('主动探测任务已提交，后台执行中…');
+        if (isProbe) toast('主动探测任务已提交，后台执行中');
         const params = { auth_id: authID };
         if (isProbe) params.force = true;
         if (action === 'accounts.cooldown') params.duration = '12h';
@@ -8950,7 +8954,7 @@
       setBusy(button, true);
       try {
         const task = await api('accounts.probe_selected', { auth_ids: authIDs });
-        toast('检测任务已提交，后台执行中…');
+        toast('检测任务已提交，后台执行中');
         const result = await waitForTask(task, '检测已选账号');
         const probed = Number(result && result.probed || 0);
         const restored = Number(result && result.restored || 0);
@@ -9001,7 +9005,7 @@
         if (!restoreConfirmed) return;
         const includeExternal = externalCount > 0 && Boolean(document.getElementById('restoreExternalAccounts')?.checked);
         const task = await api('accounts.restore_selected', { auth_ids: authIDs, include_external: includeExternal });
-        toast('恢复任务已提交，后台执行中…');
+        toast('恢复任务已提交，后台执行中');
         const result = await waitForTask(task, '恢复已选账号');
         const restored = Number(result && result.restored || 0);
         const externalRestored = Number(result && result.external_restored || 0);
@@ -9051,7 +9055,7 @@
         if (!disableConfirmed) return;
         const modifyAuth = Boolean(document.getElementById('disableModifyAuth')?.checked);
         const task = await api('accounts.disable_selected', { auth_ids: authIDs, modify_auth: modifyAuth });
-        toast('禁用任务已提交，后台执行中…');
+        toast('禁用任务已提交，后台执行中');
         const result = await waitForTask(task, '禁用已选账号');
         const disabled = Number(result && result.disabled || 0);
         const skipped = Number(result && result.skipped || 0);

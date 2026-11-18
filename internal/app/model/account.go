@@ -6,6 +6,7 @@ import "time"
 // binding. It deliberately contains no host-only secrets.
 type Account struct {
 	ID            string
+	OAuthID       string // OAuth subject/sub claim, when exposed by the auth file.
 	AuthIndex     string
 	Type          string
 	Provider      string

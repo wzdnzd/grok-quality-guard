@@ -18,36 +18,56 @@ import (
 
 const probePrompt = "先用三点总结为什么天空呈蓝色，最后一行只输出 QUALITY_OK。"
 const probeMarker = "QUALITY_OK"
-const probeReconcileInterval = 5 * time.Minute
+const (
+	probeReconcileInterval = 5 * time.Minute
+	probeReconcileTimeout  = 5 * time.Minute
+)
 
 func (s *Service) probeLoop(ctx context.Context) {
-	timer := time.NewTimer(2 * time.Second)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return
-	case <-timer.C:
-	}
-	_ = s.env.Reconcile(ctx)
 	scheduler := newProbeScheduler(s, ctx)
 	s.setScheduler(scheduler)
 	defer func() {
 		scheduler.wait()
 		s.clearScheduler(scheduler)
 	}()
+
+	reconcileRunning := false
+	reconcileDone := make(chan struct{}, 1)
+	startReconcile := func() {
+		if reconcileRunning {
+			return
+		}
+		reconcileRunning = true
+		go func() {
+			reconcileCtx, cancel := context.WithTimeout(ctx, probeReconcileTimeout)
+			defer cancel()
+			_ = s.env.Reconcile(reconcileCtx)
+			select {
+			case reconcileDone <- struct{}{}:
+			case <-ctx.Done():
+			}
+		}()
+	}
+
+	// Reconcile repairs persisted guard state, but it must never gate scanning.
+	// A stuck auth read here previously left QueueSnapshot empty indefinitely.
 	scheduler.scanAndDispatch()
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
+	startReconcile()
+	scanTimer := time.NewTimer(s.probeScanInterval())
+	defer scanTimer.Stop()
 	reconcileTicker := time.NewTicker(probeReconcileInterval)
 	defer reconcileTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-scanTimer.C:
 			scheduler.scanAndDispatch()
+			scanTimer.Reset(s.probeScanInterval())
 		case <-reconcileTicker.C:
-			_ = s.env.Reconcile(ctx)
+			startReconcile()
+		case <-reconcileDone:
+			reconcileRunning = false
 		case result := <-scheduler.done:
 			scheduler.finish(result)
 			scheduler.dispatch()
@@ -65,6 +85,7 @@ type probeScheduler struct {
 	mu            sync.Mutex
 	queue         []string
 	queued        map[string]struct{}
+	queueKeys     map[string]string
 	active        int
 	succeeded     int
 	failed        int
@@ -75,8 +96,9 @@ type probeScheduler struct {
 }
 
 type probeCompletion struct {
-	authID string
-	err    error
+	authID   string
+	queueKey string
+	err      error
 }
 
 func newProbeScheduler(plugin *Service, ctx context.Context) *probeScheduler {
@@ -84,10 +106,11 @@ func newProbeScheduler(plugin *Service, ctx context.Context) *probeScheduler {
 		ctx = context.Background()
 	}
 	return &probeScheduler{
-		plugin: plugin,
-		ctx:    ctx,
-		done:   make(chan probeCompletion),
-		queued: make(map[string]struct{}),
+		plugin:    plugin,
+		ctx:       ctx,
+		done:      make(chan probeCompletion),
+		queued:    make(map[string]struct{}),
+		queueKeys: make(map[string]string),
 	}
 }
 
@@ -141,18 +164,30 @@ func (s *probeScheduler) enqueueDue(accounts []Account, state State, policy Poli
 		if len(s.queue) >= limit {
 			break
 		}
-		if _, exists := s.queued[account.ID]; exists {
+		accountKey := probeQueueKey(account)
+		if _, exists := s.queued[accountKey]; exists {
+			continue
+		}
+		if _, exists := s.queueKeys[account.ID]; exists {
 			continue
 		}
 		stateAccount, okState := state.Accounts[account.ID]
 		if !probeDueForAccount(stateAccount, okState, account.ID, policy, now) {
 			continue
 		}
-		s.queued[account.ID] = struct{}{}
+		s.queued[accountKey] = struct{}{}
+		s.queueKeys[account.ID] = accountKey
 		s.queue = append(s.queue, account.ID)
 		added++
 	}
 	return added
+}
+
+func probeQueueKey(account Account) string {
+	if oauthID := strings.TrimSpace(account.OAuthID); oauthID != "" {
+		return "oauth:" + oauthID
+	}
+	return "auth:" + strings.TrimSpace(account.ID)
 }
 
 func (s *probeScheduler) dispatch() {
@@ -167,6 +202,7 @@ func (s *probeScheduler) dispatch() {
 			return
 		}
 		authID := s.queue[0]
+		queueKey := s.queueKeys[authID]
 		copy(s.queue, s.queue[1:])
 		s.queue = s.queue[:len(s.queue)-1]
 		s.active++
@@ -180,7 +216,7 @@ func (s *probeScheduler) dispatch() {
 				_ = s.plugin.env.RecordInternalError(authID, errProbe)
 			}
 			select {
-			case s.done <- probeCompletion{authID: authID, err: errProbe}:
+			case s.done <- probeCompletion{authID: authID, queueKey: queueKey, err: errProbe}:
 			case <-s.ctx.Done():
 			}
 		}()
@@ -196,7 +232,12 @@ func (s *probeScheduler) finish(result probeCompletion) {
 	if s.active > 0 {
 		s.active--
 	}
-	delete(s.queued, result.authID)
+	queueKey := result.queueKey
+	if queueKey == "" {
+		queueKey = probeQueueKey(Account{ID: result.authID})
+	}
+	delete(s.queued, queueKey)
+	delete(s.queueKeys, result.authID)
 	if result.err != nil {
 		s.failed++
 		s.lastError = redact.SanitizeError(result.err)
@@ -660,6 +701,17 @@ func (s *Service) probeConcurrency() int {
 		return 1
 	}
 	return limit
+}
+
+func (s *Service) probeScanInterval() time.Duration {
+	if s == nil {
+		return config.DefaultProbeScanInterval
+	}
+	interval := s.env.Policy().Probe.ScanInterval.Duration
+	if interval <= 0 {
+		return config.DefaultProbeScanInterval
+	}
+	return interval
 }
 
 func (s *Service) probeQueueSize() int {

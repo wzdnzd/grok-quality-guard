@@ -47,6 +47,10 @@ func (p *Plugin) GetAuth(authIndex string) (pluginapi.HostAuthGetResponse, error
 	return p.getAuth(authIndex)
 }
 
+func (p *Plugin) GetAuthContext(ctx context.Context, authIndex string) (pluginapi.HostAuthGetResponse, error) {
+	return p.getAuthWithContext(ctx, authIndex)
+}
+
 func (p *Plugin) SelectionReady() bool { return p.routingSvc.IndexReady() }
 
 func (p *Plugin) RebuildSelectionIndex() error { return p.routingSvc.RebuildIndex() }

@@ -101,11 +101,19 @@ func TestProbeQueueConfigDefaultsAndBounds(t *testing.T) {
 	if cfg.Probe.UnknownJitter.Duration != defaultProbeUnknownJitter {
 		t.Fatalf("probe.unknown_jitter = %s, want %s", cfg.Probe.UnknownJitter.Duration, defaultProbeUnknownJitter)
 	}
+	if cfg.Probe.ScanInterval.Duration != defaultProbeScanInterval {
+		t.Fatalf("probe.scan_interval = %s, want %s", cfg.Probe.ScanInterval.Duration, defaultProbeScanInterval)
+	}
 
 	tooLarge := DefaultConfig()
 	tooLarge.Probe.QueueSize = maxProbeQueueSize + 1
 	if errNormalize := normalizeConfig(&tooLarge); errNormalize == nil {
 		t.Fatal("expected oversized probe queue error")
+	}
+	tooFast := DefaultConfig()
+	tooFast.Probe.ScanInterval = NewDuration(500 * time.Millisecond)
+	if errNormalize := normalizeConfig(&tooFast); errNormalize == nil {
+		t.Fatal("expected undersized probe scan interval error")
 	}
 }
 

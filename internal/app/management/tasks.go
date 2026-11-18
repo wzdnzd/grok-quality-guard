@@ -83,7 +83,14 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 	if shouldShowQualityProbeQueue(guardEnabled, probeQueue) {
 		completed := probeQueue.Succeeded + probeQueue.Failed
 		total := completed + probeQueue.Waiting + probeQueue.Active
-		status := "idle"
+		scanInterval := policy.Probe.ScanInterval.Duration
+		if scanInterval <= 0 {
+			scanInterval = 15 * time.Second
+		}
+		status := "starting"
+		if probeQueue.Started {
+			status = "idle"
+		}
 		if probeQueue.Active > 0 || probeQueue.Waiting > 0 {
 			status = "running"
 		}
@@ -92,6 +99,7 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 			"label":           "质量检测队列",
 			"category":        "quality",
 			"status":          status,
+			"started":         probeQueue.Started,
 			"description":     "扫描到期账号并逐项执行主动质量探测",
 			"total":           total,
 			"completed":       completed,
@@ -104,7 +112,7 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 			"last_success_at": probeQueue.LastSuccessAt,
 			"last_error":      probeQueue.LastError,
 			"updated_at":      latestTime(probeQueue.LastScanAt, probeQueue.LastSuccessAt),
-			"detail":          fmt.Sprintf("自动探测并发 %d，队列容量 %d；只处理到期的非健康账号。实时进度在此汇总，单账号结果写入事件日志。", policy.Probe.Concurrency, policy.Probe.QueueSize),
+			"detail":          fmt.Sprintf("扫描间隔 %s，自动探测并发 %d，队列容量 %d；只处理到期的非健康账号，等待和执行中的账号按 OAuth 身份去重。实时进度在此汇总，单账号结果写入事件日志", scanInterval, policy.Probe.Concurrency, policy.Probe.QueueSize),
 		})
 	}
 
@@ -142,28 +150,25 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 			"last_success_at": runtime.LastSuccessAt,
 			"last_error":      runtime.LastError,
 			"updated_at":      latestTime(runtime.LastScanAt, runtime.LastSuccessAt),
-			"detail":          "按账号逐项展示自动绑定结果；仅在自动绑定开启或队列仍有工作时显示。",
+			"detail":          "按账号逐项展示自动绑定结果；仅在自动绑定开启或队列仍有工作时显示",
 		})
 	}
 
 	if shouldShowProxyHealthQueue(autoConfig.Enabled, autoConfig.RequireHealthy) {
 		queues = append(queues, map[string]any{
-			"id":           "proxy_health",
-			"label":        "代理健康检查",
-			"category":     "proxy",
-			"status":       "running",
-			"description":  "自动绑定要求代理保持新鲜健康状态",
-			"total":        0,
-			"completed":    0,
-			"running":      0,
-			"waiting":      0,
-			"succeeded":    0,
-			"failed":       0,
-			"skipped":      0,
-			"last_scan_at": runtime.LastScanAt,
-			"last_error":   runtime.LastError,
-			"updated_at":   runtime.LastScanAt,
-			"detail":       "健康检查最长有效时间：" + autoConfig.HealthMaxAge + "；仅自动绑定需要健康检查时显示。",
+			"id":          "proxy_health",
+			"label":       "代理健康检查",
+			"category":    "proxy",
+			"status":      "running",
+			"description": "自动绑定要求代理保持新鲜健康状态",
+			"total":       0,
+			"completed":   0,
+			"running":     0,
+			"waiting":     0,
+			"succeeded":   0,
+			"failed":      0,
+			"skipped":     0,
+			"detail":      "健康检查最长有效时间：" + autoConfig.HealthMaxAge + "；仅自动绑定需要健康检查时显示",
 		})
 	}
 
@@ -204,7 +209,7 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 			"skipped":     0,
 			"updated_at":  updatedAt,
 			"last_error":  lastError,
-			"detail":      "包含自动绑定、模板应用和手动同步产生的逐个账号执行记录。",
+			"detail":      "包含自动绑定、模板应用和手动同步产生的逐个账号执行记录",
 		})
 	}
 
@@ -263,7 +268,7 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 			"resin_bound": resinBound,
 			"updated_at":  updatedAt,
 			"last_error":  lastError,
-			"detail":      "只有存在待清理租约，或 Resin 代理仍被账号使用时显示。",
+			"detail":      "只有存在待清理租约，或 Resin 代理仍被账号使用时显示",
 		})
 	}
 	return queues

@@ -100,3 +100,14 @@ func TestProxySourceInfoReturnsNameAndKind(t *testing.T) {
 		t.Fatalf("SourceInfo(missing) = %q, %q", name, kind)
 	}
 }
+func TestAutoBindRuntimeClearsLastErrorAfterSuccess(t *testing.T) {
+	service := NewService(proxyViewTestEnvironment{store: appstate.NewStore("")})
+	service.mgr.runtime.LastError = "automatic source availability changed"
+	service.recordProxyAutoResult("auth-1", proxyBindingResult{Committed: true}, nil)
+	if got := service.mgr.runtime.LastError; got != "" {
+		t.Fatalf("last error = %q, want cleared after successful bind", got)
+	}
+	if service.mgr.runtime.BoundTotal != 1 || service.mgr.runtime.LastSuccessAt.IsZero() {
+		t.Fatalf("success runtime was not updated: %#v", service.mgr.runtime)
+	}
+}

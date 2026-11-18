@@ -677,3 +677,105 @@ func uniqueStrings(values []string) []string {
 	}
 	return out
 }
+func TestProbeHostStreamReadTimeoutReleasesConcurrencySlot(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1", pluginapi.HostModelStreamReadResponse{Done: true})
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.Probe.Concurrency = 1
+		cfg.Probe.Timeout = appconfig.NewDuration(120 * time.Millisecond)
+	})
+
+	inner := hostCall
+	readEntered := make(chan struct{}, 1)
+	releaseRead := make(chan struct{})
+	defer close(releaseRead)
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostModelStreamRead {
+			select {
+			case readEntered <- struct{}{}:
+			default:
+			}
+			<-releaseRead
+		}
+		return inner(method, payload)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- plugin.ProbeAccount(context.Background(), "auth-1", true, "") }()
+	select {
+	case <-readEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("probe did not reach stream read")
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("probe did not return after stream read timeout")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if errAcquire := plugin.acquireProbeSlot(ctx, true); errAcquire != nil {
+		t.Fatalf("probe slot was not released after stream read timeout: %v", errAcquire)
+	}
+	plugin.releaseProbeSlot()
+}
+
+func TestProbeHostExecuteStreamTimeoutReleasesConcurrencySlot(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1", pluginapi.HostModelStreamReadResponse{Done: true})
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.Probe.Concurrency = 1
+		cfg.Probe.Timeout = appconfig.NewDuration(120 * time.Millisecond)
+	})
+
+	inner := hostCall
+	executeEntered := make(chan struct{}, 1)
+	releaseExecute := make(chan struct{})
+	lateClosed := make(chan struct{}, 1)
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		switch method {
+		case pluginabi.MethodHostModelExecuteStream:
+			select {
+			case executeEntered <- struct{}{}:
+			default:
+			}
+			<-releaseExecute
+		case pluginabi.MethodHostModelStreamClose:
+			select {
+			case lateClosed <- struct{}{}:
+			default:
+			}
+		}
+		return inner(method, payload)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- plugin.ProbeAccount(context.Background(), "auth-1", true, "") }()
+	select {
+	case <-executeEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("probe did not reach execute_stream")
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("probe did not return after execute_stream timeout")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if errAcquire := plugin.acquireProbeSlot(ctx, true); errAcquire != nil {
+		t.Fatalf("probe slot was not released after execute_stream timeout: %v", errAcquire)
+	}
+	plugin.releaseProbeSlot()
+
+	close(releaseExecute)
+	select {
+	case <-lateClosed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("late execute_stream result was not cleaned up")
+	}
+}

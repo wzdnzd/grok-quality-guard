@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ type Environment interface {
 	ListAuths() ([]pluginapi.HostAuthFileEntry, error)
 	ListAuthModels() ([]pluginapi.HostAuthModels, error)
 	GetAuth(string) (pluginapi.HostAuthGetResponse, error)
+	GetAuthContext(context.Context, string) (pluginapi.HostAuthGetResponse, error)
 	SelectionReady() bool
 	RebuildSelectionIndex() error
 	WakeProxyAutoBind()

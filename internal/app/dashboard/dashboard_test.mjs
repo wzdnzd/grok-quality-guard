@@ -895,6 +895,7 @@ test('Proxy management uses a compact workspace toolbar with underlined sub-navi
 test('Proxy UI uses unified naming and avoids Chinese full stops', () => {
   assert.doesNotMatch(html, /代理来源|个来源|来源名称|全部来源|添加来源|指定来源|来源范围/);
   assert.doesNotMatch(html, /。/);
+  assert.doesNotMatch(html, /…/);
   assert.doesNotMatch(html, /；/);
 });
 
@@ -1063,6 +1064,7 @@ test('Routing affinity cards share a row and parameter hints explain their effec
   assert.doesNotMatch(html, /:密码@proxy\.example:1080/);
   assert.match(html, /\.check-card\.compact\s*\{[^}]*min-height: 33px;[^}]*margin-top: 20px;/s);
   assert.match(html, /class="check-card compact" title="健康账号不做周期探测"><input id="p_probe_recovery_only"/);
+  assert.match(html, /id="p_probe_scan_interval"/);
   assert.doesNotMatch(html, /class="check-desc">健康账号不做周期探测/);
   assert.match(html, /默认显示脱敏端点，点击眼睛查看完整端点/);
   assert.match(html, /<th>端点<\/th>/);

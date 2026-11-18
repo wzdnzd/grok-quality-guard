@@ -3,6 +3,7 @@ package management
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +107,7 @@ type taskCenterQueueTestEnvironment struct {
 	policy     appconfig.Policy
 	enabled    bool
 	probeQueue ProbeQueueSnapshot
+	proxy      *proxyapp.Service
 }
 
 func (e taskCenterQueueTestEnvironment) Store() *appstate.Store   { return e.store }
@@ -114,7 +116,7 @@ func (e taskCenterQueueTestEnvironment) ConfigEnabled() bool      { return e.ena
 func (e taskCenterQueueTestEnvironment) ProbeQueueSnapshot() ProbeQueueSnapshot {
 	return e.probeQueue
 }
-func (e taskCenterQueueTestEnvironment) Proxy() *proxyapp.Service { return nil }
+func (e taskCenterQueueTestEnvironment) Proxy() *proxyapp.Service { return e.proxy }
 
 func TestTaskCenterShowsQualityProbeQueueWithoutProxy(t *testing.T) {
 	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
@@ -163,4 +165,83 @@ func TestQualityProbeQueueVisibility(t *testing.T) {
 	if !shouldShowQualityProbeQueue(false, ProbeQueueSnapshot{Waiting: 1}) {
 		t.Fatal("quality queue with waiting work should remain visible")
 	}
+}
+func TestQualityProbeQueueDoesNotReportIdleBeforeSchedulerStarts(t *testing.T) {
+	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
+	policy.TransparentGuard = true
+	service := NewService(taskCenterQueueTestEnvironment{
+		store:      appstate.NewStore(""),
+		policy:     policy,
+		enabled:    true,
+		probeQueue: ProbeQueueSnapshot{Started: false},
+	})
+	queues := service.taskCenterResidentQueues()
+	if len(queues) != 1 {
+		t.Fatalf("resident queues = %#v, want one quality queue", queues)
+	}
+	if queues[0]["status"] != "starting" || queues[0]["started"] != false {
+		t.Fatalf("quality queue startup state = %#v", queues[0])
+	}
+}
+
+type residentQueueProxyTestEnvironment struct {
+	proxyapp.Environment
+	store *appstate.Store
+}
+
+func (e residentQueueProxyTestEnvironment) ProxyStore() *appstate.Store { return e.store }
+
+func TestResidentQueueCopyHasNoTerminalPunctuation(t *testing.T) {
+	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
+	policy.TransparentGuard = true
+	store := appstate.NewStore("")
+	store.UpdateStateForTest(func(value *appstate.State) {
+		value.Proxy.AutoBind.Enabled = true
+		value.Proxy.AutoBind.RequireHealthy = true
+		value.Proxy.AutoBind.HealthMaxAge = "10m"
+		value.Proxy.Changes = []proxy.SourceChange{{
+			ID:     "change-1",
+			Status: "running",
+			Counts: proxy.ChangeCounts{Total: 1, Pending: 1},
+		}}
+		value.ResinLeaseDeletes = []appstate.ResinLeaseDelete{{
+			AuthID:     "auth-1",
+			Account:    "account-1",
+			SnapshotID: "snapshot-1",
+			Status:     "pending",
+		}}
+	})
+	proxyService := proxyapp.NewService(residentQueueProxyTestEnvironment{store: store})
+	service := NewService(taskCenterQueueTestEnvironment{
+		store:      store,
+		policy:     policy,
+		enabled:    true,
+		probeQueue: ProbeQueueSnapshot{Started: true, Waiting: 1},
+		proxy:      proxyService,
+	})
+	queues := service.taskCenterResidentQueues()
+	if len(queues) != 5 {
+		t.Fatalf("resident queues = %d, want 5: %#v", len(queues), queues)
+	}
+	for _, queue := range queues {
+		id, _ := queue["id"].(string)
+		for _, key := range []string{"description", "detail"} {
+			value, _ := queue[key].(string)
+			if residentQueueCopyEndsWithPunctuation(value) {
+				t.Fatalf("%s %s ends with punctuation: %q", id, key, value)
+			}
+		}
+	}
+}
+
+func residentQueueCopyEndsWithPunctuation(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	var last rune
+	for _, char := range value {
+		last = char
+	}
+	return strings.ContainsRune("。！？…；：，、,.!?;:", last)
 }
