@@ -196,6 +196,67 @@ func TestStateStoreRejectsUnknownFields(t *testing.T) {
 		t.Fatalf("unknown field load error = %v", errLoad)
 	}
 }
+
+func TestStateStoreAdoptsTaskHistoryDefaultForLegacyPolicy(t *testing.T) {
+	path, policy := legacyPolicyState(t, func(rawPolicy map[string]any) {
+		delete(rawPolicy, "task_history")
+	})
+	store := NewStore(path)
+	if errLoad := store.Load(policy, "revision"); errLoad != nil {
+		t.Fatal(errLoad)
+	}
+	history := store.Snapshot().Policy.TaskHistory
+	want := config.DefaultTaskHistoryConfig()
+	if history != want {
+		t.Fatalf("legacy task history = %#v, want %#v", history, want)
+	}
+}
+
+func TestStateStorePreservesExplicitDisabledTaskHistory(t *testing.T) {
+	path, policy := legacyPolicyState(t, func(rawPolicy map[string]any) {
+		rawPolicy["task_history"] = map[string]any{"enabled": false}
+	})
+	store := NewStore(path)
+	if errLoad := store.Load(policy, "revision"); errLoad != nil {
+		t.Fatal(errLoad)
+	}
+	history := store.Snapshot().Policy.TaskHistory
+	if history.Enabled || history.RetentionDays != 3 || history.MaxRecords != 500 || history.MaxBytes != 128<<20 || history.MaxItemsPerTask != 10000 {
+		t.Fatalf("explicit disabled task history was not preserved: %#v", history)
+	}
+}
+
+func legacyPolicyState(t *testing.T, mutate func(map[string]any)) (string, config.Policy) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "state.json")
+	policy := config.PolicyFromConfig(config.DefaultConfig())
+	store := NewStore(path)
+	if errLoad := store.Load(policy, "revision"); errLoad != nil {
+		t.Fatal(errLoad)
+	}
+	raw, errRead := os.ReadFile(path)
+	if errRead != nil {
+		t.Fatal(errRead)
+	}
+	var envelope map[string]any
+	if errUnmarshal := json.Unmarshal(raw, &envelope); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	rawPolicy, ok := envelope["policy"].(map[string]any)
+	if !ok {
+		t.Fatalf("state policy has unexpected shape: %#v", envelope["policy"])
+	}
+	mutate(rawPolicy)
+	raw, errMarshal := json.MarshalIndent(envelope, "", "  ")
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	if errWrite := os.WriteFile(path, raw, 0o600); errWrite != nil {
+		t.Fatal(errWrite)
+	}
+	return path, policy
+}
+
 func TestStateStoreUpdateAccountRollbackAndEventAppend(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	store := NewStore(path)

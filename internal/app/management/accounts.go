@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"grok-quality-guard/internal/app/action"
+	"grok-quality-guard/internal/app/tasks"
 	"net/http"
 	"strings"
 	"time"
@@ -85,6 +86,7 @@ func (s *Service) actionProbeSelected(ctx context.Context, params map[string]any
 			if stateBefore == StateExternallyDisabled {
 				entry.Status = "skipped"
 				result.Items[index] = entry
+				tasks.ReportItem(jobCtx, entry)
 				return
 			}
 			if requiresRestoreBeforeProbe(stateBefore) {
@@ -92,6 +94,7 @@ func (s *Service) actionProbeSelected(ctx context.Context, params map[string]any
 					entry.Status = "failed"
 					entry.Error = sanitizeError(errRestore)
 					result.Items[index] = entry
+					tasks.ReportItem(jobCtx, entry)
 					return
 				}
 				entry.Restored = true
@@ -100,6 +103,7 @@ func (s *Service) actionProbeSelected(ctx context.Context, params map[string]any
 				entry.Status = "failed"
 				entry.Error = sanitizeError(errProbe)
 				result.Items[index] = entry
+				tasks.ReportItem(jobCtx, entry)
 				return
 			}
 			if stateAfter, okState := s.stateAccount(candidate.authID); okState {
@@ -107,6 +111,7 @@ func (s *Service) actionProbeSelected(ctx context.Context, params map[string]any
 			}
 			entry.Status = "probed"
 			result.Items[index] = entry
+			tasks.ReportItem(jobCtx, entry)
 		})
 		if errRun != nil {
 			return nil, errRun
@@ -222,12 +227,14 @@ func (s *Service) actionRestoreSelected(ctx context.Context, params map[string]a
 			if stateBefore == StateHealthy {
 				entry.Status = "skipped"
 				result.Items[index] = entry
+				tasks.ReportItem(jobCtx, entry)
 				return
 			}
 			if errRestore := s.ManualRestoreExternal(jobCtx, candidate.authID, includeExternal); errRestore != nil {
 				entry.Status = "failed"
 				entry.Error = sanitizeError(errRestore)
 				result.Items[index] = entry
+				tasks.ReportItem(jobCtx, entry)
 				return
 			}
 			if stateBefore == StateExternallyDisabled {
@@ -240,6 +247,7 @@ func (s *Service) actionRestoreSelected(ctx context.Context, params map[string]a
 				entry.Status = "restored"
 			}
 			result.Items[index] = entry
+			tasks.ReportItem(jobCtx, entry)
 		})
 		if errRun != nil {
 			return nil, errRun
@@ -293,6 +301,7 @@ func (s *Service) actionDisableSelected(ctx context.Context, params map[string]a
 			if stateBefore == StateExternallyDisabled || (stateBefore == StateDisabledByGuard && (!modifyAuth || candidate.account.Disabled)) {
 				entry.Status = "skipped"
 				result.Items[index] = entry
+				tasks.ReportItem(jobCtx, entry)
 				return
 			}
 			var errDisable error
@@ -305,10 +314,12 @@ func (s *Service) actionDisableSelected(ctx context.Context, params map[string]a
 				entry.Status = "failed"
 				entry.Error = sanitizeError(errDisable)
 				result.Items[index] = entry
+				tasks.ReportItem(jobCtx, entry)
 				return
 			}
 			entry.Status = "disabled"
 			result.Items[index] = entry
+			tasks.ReportItem(jobCtx, entry)
 		})
 		if errRun != nil {
 			return nil, errRun

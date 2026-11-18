@@ -353,6 +353,7 @@ func (s *Service) proxyBindUnbound(ctx context.Context, opts proxyBindOptions) (
 			result.Error = redact.SanitizeError(err)
 		}
 		results[i] = result
+		tasks.ReportItem(jobCtx, result)
 	})
 	return results, err
 }

@@ -57,3 +57,25 @@ func TestManagerCancelUnknownTask(t *testing.T) {
 		t.Fatalf("cancel unknown task error = %v, want ErrTaskNotFound", errCancel)
 	}
 }
+
+func TestTaskKindsAreGroupedAndLabeledForTheTaskCenter(t *testing.T) {
+	tests := []struct {
+		kind     string
+		category string
+		label    string
+	}{
+		{kind: "accounts.probe_selected", category: "account", label: "批量检测账号"},
+		{kind: "proxy.sources.test_selected", category: "proxy", label: "批量检测代理"},
+		{kind: "resin.cleanup.retry", category: "proxy", label: "任务"},
+		{kind: "quality.cross_verify", category: "quality", label: "质量交叉验证"},
+		{kind: "system.cleanup", category: "system", label: "任务"},
+	}
+	for _, test := range tests {
+		if got := TaskCategory(test.kind); got != test.category {
+			t.Fatalf("TaskCategory(%q) = %q, want %q", test.kind, got, test.category)
+		}
+		if got := TaskLabel(test.kind); got != test.label {
+			t.Fatalf("TaskLabel(%q) = %q, want %q", test.kind, got, test.label)
+		}
+	}
+}

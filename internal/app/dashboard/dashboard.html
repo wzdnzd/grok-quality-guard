@@ -317,6 +317,7 @@
     }
 
     .tabs {
+      width: 100%;
       margin-bottom: 18px;
     }
 
@@ -565,8 +566,24 @@
     .overview-grid {
       display: grid;
       grid-template-columns: minmax(0, 1.4fr) minmax(290px, .8fr);
+      align-items: stretch;
       gap: 14px;
       margin-top: 14px;
+    }
+
+    .overview-card {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+    }
+
+    .overview-card > .card-body,
+    .overview-card > .recent-list {
+      flex: 1 1 auto;
+    }
+
+    .overview-card > .recent-list > .empty {
+      flex: 1 1 auto;
     }
 
     .bar-list {
@@ -1613,19 +1630,503 @@
       border-top: 1px solid var(--line);
     }
 
+    .policy-group-task-history {
+      grid-column: 1 / -1;
+    }
+
+    .policy-group-task-history .field-grid {
+      grid-template-columns: minmax(180px, 1.15fr) repeat(4, minmax(120px, 1fr));
+    }
+
+    .policy-group-task-history .task-history-switch {
+      min-height: 100%;
+    }
+
+    .task-center-grid {
+      display: grid;
+      grid-template-columns: minmax(320px, .88fr) minmax(420px, 1.35fr);
+      align-items: stretch;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .task-list-card,
+    .task-detail-card {
+      display: flex;
+      min-width: 0;
+      align-self: stretch;
+      flex-direction: column;
+    }
+
     .task-toolbar {
+      flex-wrap: nowrap;
+      padding: 9px 12px;
+    }
+
+    .task-toolbar .toolbar-left {
+      flex: 1 1 auto;
+      min-width: 0;
+      flex-wrap: nowrap;
+      gap: 6px;
+    }
+
+    .task-toolbar .search {
+      flex: 1 1 120px;
+      min-width: 60px;
+    }
+
+    .task-toolbar .control {
+      flex: 0 1 116px;
+      width: clamp(80px, 9vw, 116px);
+      min-width: 76px;
+      max-width: 116px;
+    }
+
+    .task-toolbar .toolbar-right {
+      flex: 0 0 auto;
+      margin-left: auto;
+      flex-wrap: nowrap;
+    }
+
+    #taskRefreshBtn {
+      white-space: nowrap;
+    }
+
+    .task-list {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      gap: 6px;
+      min-height: 0;
+      max-height: 620px;
+      padding: 8px;
+      overflow: auto;
+    }
+
+    .task-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 10px 12px;
+      width: 100%;
+      padding: 11px 12px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      transition: border-color .16s, background .16s;
+    }
+
+    .task-row:hover {
+      border-color: var(--line);
+      background: var(--surface-hover);
+    }
+
+    .task-row.selected {
+      border-color: var(--line-strong);
+      background: var(--surface);
+      box-shadow: inset 3px 0 0 var(--focus);
+    }
+
+    .task-row-main {
+      min-width: 0;
+    }
+
+    .task-row-title {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      flex-wrap: wrap;
-      margin: 2px 0 14px;
-      padding: 10px 12px;
-      border: 1px solid var(--line);
-      border-radius: 9px;
+      gap: 7px;
+      min-width: 0;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .task-row-title span:first-child {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .task-row-meta {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .task-row-progress {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .task-row-progress .progress-track {
+      flex: 1;
+    }
+
+    .task-row-count {
+      min-width: 54px;
+      color: var(--muted);
+      font-size: 10px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .task-status {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      min-width: 54px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--surface-muted);
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 650;
+      letter-spacing: .02em;
+      white-space: nowrap;
+    }
+
+    .task-status.running,
+    .task-status.queued {
+      background: var(--info-soft);
+      color: var(--info);
+    }
+
+    .task-status.succeeded {
+      background: var(--good-soft);
+      color: var(--good);
+    }
+
+    .task-status.failed,
+    .task-status.interrupted {
+      background: var(--bad-soft);
+      color: var(--bad);
+    }
+
+    .task-status.paused,
+    .task-status.idle {
+      background: var(--warn-soft);
+      color: var(--warn);
+    }
+
+    .progress-track {
+      height: 5px;
+      overflow: hidden;
+      border-radius: 999px;
       background: var(--surface-muted);
     }
 
+    .progress-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: var(--info);
+      transition: width .25s ease;
+    }
+
+    .progress-fill.good {
+      background: var(--good);
+    }
+
+    .progress-fill.bad {
+      background: var(--bad);
+    }
+
+    .task-detail-body {
+      flex: 1;
+      min-height: 430px;
+      max-height: 690px;
+      padding: 16px;
+      overflow: auto;
+    }
+
+    .task-detail-empty {
+      display: flex;
+      min-height: 390px;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 28px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .task-empty-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      margin-bottom: 10px;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      background: var(--surface-muted);
+    }
+
+    .task-empty-icon .icon {
+      width: 19px;
+      height: 19px;
+    }
+
+    .task-detail-empty h3 {
+      margin: 0;
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .task-detail-empty p {
+      max-width: 360px;
+      margin: 6px 0 0;
+      font-size: 11px;
+    }
+
+    .task-detail-section {
+      margin-top: 16px;
+    }
+
+    .task-detail-section:first-child {
+      margin-top: 0;
+    }
+
+    .task-detail-section h3 {
+      margin: 0 0 9px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .task-detail-hero {
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+
+    .task-detail-hero-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .task-detail-hero-title {
+      min-width: 0;
+    }
+
+    .task-detail-hero-title strong {
+      display: block;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .task-detail-hero-title p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .task-detail-hero .progress-track {
+      height: 7px;
+      margin-top: 12px;
+    }
+
+    .task-detail-percent {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .task-count-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .task-count {
+      padding: 8px 9px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+    }
+
+    .task-count span {
+      display: block;
+      color: var(--muted);
+      font-size: 9px;
+    }
+
+    .task-count strong {
+      display: block;
+      margin-top: 2px;
+      font-size: 14px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .task-meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px 14px;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+
+    .task-meta-item {
+      min-width: 0;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .task-meta-item strong {
+      display: block;
+      margin-top: 2px;
+      overflow: hidden;
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 550;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .task-meta-item.task-meta-wide {
+      grid-column: 1 / -1;
+    }
+
+    .task-meta-item.task-meta-wide strong {
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+
+    .task-result-box {
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .task-result-box.error {
+      border-color: color-mix(in srgb, var(--bad) 28%, var(--line));
+      background: var(--bad-soft);
+      color: var(--bad);
+    }
+
+    .task-item-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .task-item-toolbar .control {
+      width: auto;
+      min-width: 105px;
+    }
+
+    .task-item-table {
+      min-width: 0;
+    }
+
+    .task-item-table td {
+      vertical-align: top;
+    }
+
+    .task-item-json {
+      max-width: 340px;
+      overflow-wrap: anywhere;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 10px;
+    }
+
+    .task-detail-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 10px;
+    }
+
+    .task-center-toast-note {
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .task-queue-card {
+      margin-top: 14px;
+    }
+
+    .queue-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      padding: 12px;
+    }
+
+    .queue-card {
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+
+    .queue-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .queue-card-head strong {
+      display: block;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .queue-card-head p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .queue-card-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .queue-card .progress-track {
+      margin-top: 9px;
+    }
+
+    .queue-card-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .queue-card-error {
+      margin-top: 8px;
+      color: var(--bad);
+      font-size: 10px;
+    }
+
+    .task-detail-close {
+      display: none;
+    }
     .task-toolbar-summary {
       display: flex;
       align-items: center;
@@ -2307,6 +2808,47 @@
       .policy-group-quality .check-card {
         grid-column: auto;
       }
+
+      .policy-group-task-history,
+      .policy-group-task-history .field-grid {
+        grid-column: auto;
+      }
+
+      .policy-group-task-history .field-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .task-center-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .task-detail-card:not(.mobile-open) {
+        display: none;
+      }
+
+      .task-detail-card.mobile-open {
+        position: fixed;
+        inset: 12px;
+        z-index: 80;
+        display: flex;
+        flex-direction: column;
+        max-height: calc(100vh - 24px);
+        background: var(--card);
+        box-shadow: 0 18px 70px rgba(0, 0, 0, .35);
+      }
+
+      .task-detail-card.mobile-open .task-detail-body {
+        flex: 1;
+        max-height: none;
+      }
+
+      .task-detail-close {
+        display: inline-flex;
+      }
+
+      .queue-grid {
+        grid-template-columns: 1fr;
+      }
     }
 
     @media (max-width: 680px) {
@@ -2389,6 +2931,28 @@
       .toolbar-left,
       .toolbar-right {
         width: 100%;
+      }
+
+      .task-toolbar,
+      .task-toolbar .toolbar-left {
+        flex-wrap: wrap;
+      }
+
+      .task-toolbar .search {
+        flex: 1 1 100%;
+        min-width: 0;
+      }
+
+      .task-toolbar .control {
+        flex: 1 1 0;
+        width: auto;
+        min-width: 0;
+        max-width: none;
+      }
+
+      .task-toolbar .toolbar-right {
+        width: 100%;
+        justify-content: flex-end;
       }
 
       .search {
@@ -3265,9 +3829,11 @@
       <button class="tab-button active" id="tab-overview" type="button" role="tab" aria-selected="true"
         aria-controls="panel-overview" data-tab="overview">概览</button>
       <button class="tab-button" id="tab-accounts" type="button" role="tab" aria-selected="false"
-        aria-controls="panel-accounts" data-tab="accounts">账号质量</button>
+        aria-controls="panel-accounts" data-tab="accounts">账号</button>
       <button class="tab-button" id="tab-resin" type="button" role="tab" aria-selected="false"
         aria-controls="panel-resin" data-tab="resin">代理管理</button>
+      <button class="tab-button" id="tab-tasks" type="button" role="tab" aria-selected="false"
+        aria-controls="panel-tasks" data-tab="tasks">任务中心</button>
       <button class="tab-button" id="tab-events" type="button" role="tab" aria-selected="false"
         aria-controls="panel-events" data-tab="events">事件日志</button>
       <button class="tab-button" id="tab-settings" type="button" role="tab" aria-selected="false"
@@ -3288,61 +3854,57 @@
           <div class="stats-grid" id="overviewStats"></div>
         </section>
         <div class="overview-grid">
-          <div class="stack">
-            <section class="card" aria-labelledby="qualityTitle">
-              <div class="card-header compact">
-                <div>
-                  <h2 id="qualityTitle"><svg class="icon">
-                      <use href="#i-users"></use>
-                    </svg>账号质量分布</h2>
-                  <p>按当前状态统计已纳入守护的 Grok 账号</p>
-                </div>
-                <button class="btn btn-ghost btn-xs" type="button" data-goto-tab="accounts">查看账号</button>
+          <section class="card overview-card" aria-labelledby="qualityTitle">
+            <div class="card-header compact">
+              <div>
+                <h2 id="qualityTitle"><svg class="icon">
+                    <use href="#i-users"></use>
+                  </svg>账号质量分布</h2>
+                <p>按当前状态统计已纳入守护的 Grok 账号</p>
               </div>
-              <div class="card-body">
-                <div class="bar-list" id="qualityBars"></div>
+              <button class="btn btn-ghost btn-xs" type="button" data-goto-tab="accounts">查看账号</button>
+            </div>
+            <div class="card-body">
+              <div class="bar-list" id="qualityBars"></div>
+            </div>
+          </section>
+          <section class="card overview-card" aria-labelledby="policySummaryTitle">
+            <div class="card-header compact">
+              <div>
+                <h2 id="policySummaryTitle"><svg class="icon">
+                    <use href="#i-sliders"></use>
+                  </svg>当前策略</h2>
               </div>
-            </section>
-            <section class="card" aria-labelledby="recentTitle">
-              <div class="card-header compact">
-                <div>
-                  <h2 id="recentTitle"><svg class="icon">
-                      <use href="#i-terminal"></use>
-                    </svg>最近事件</h2>
-                </div>
-                <button class="btn btn-ghost btn-xs" type="button" data-goto-tab="events">查看全部</button>
+              <button class="btn btn-ghost btn-xs" type="button" data-open-settings="policy">编辑策略</button>
+            </div>
+            <div class="card-body">
+              <div class="summary-grid" id="policySummary"></div>
+            </div>
+          </section>
+          <section class="card overview-card" aria-labelledby="recentTitle">
+            <div class="card-header compact">
+              <div>
+                <h2 id="recentTitle"><svg class="icon">
+                    <use href="#i-terminal"></use>
+                  </svg>最近事件</h2>
               </div>
-              <div class="recent-list" id="recentEvents"></div>
-            </section>
-          </div>
-          <div class="stack">
-            <section class="card" aria-labelledby="policySummaryTitle">
-              <div class="card-header compact">
-                <div>
-                  <h2 id="policySummaryTitle"><svg class="icon">
-                      <use href="#i-sliders"></use>
-                    </svg>当前策略</h2>
-                </div>
-                <button class="btn btn-ghost btn-xs" type="button" data-open-settings="policy">编辑策略</button>
+              <button class="btn btn-ghost btn-xs" type="button" data-goto-tab="events">查看全部</button>
+            </div>
+            <div class="recent-list" id="recentEvents"></div>
+          </section>
+          <section class="card overview-card" aria-labelledby="resinSummaryTitle">
+            <div class="card-header compact">
+              <div>
+                <h2 id="resinSummaryTitle"><svg class="icon">
+                    <use href="#i-database"></use>
+                  </svg>代理概览</h2>
               </div>
-              <div class="card-body">
-                <div class="summary-grid" id="policySummary"></div>
-              </div>
-            </section>
-            <section class="card" aria-labelledby="resinSummaryTitle">
-              <div class="card-header compact">
-                <div>
-                  <h2 id="resinSummaryTitle"><svg class="icon">
-                      <use href="#i-database"></use>
-                    </svg>代理概览</h2>
-                </div>
-                <button class="btn btn-ghost btn-xs" type="button" data-goto-tab="resin">管理代理</button>
-              </div>
-              <div class="card-body">
-                <div class="summary-grid" id="resinSummary"></div>
-              </div>
-            </section>
-          </div>
+              <button class="btn btn-ghost btn-xs" type="button" data-goto-tab="resin">管理代理</button>
+            </div>
+            <div class="card-body">
+              <div class="summary-grid" id="resinSummary"></div>
+            </div>
+          </section>
         </div>
       </section>
       <section class="tab-panel" id="panel-accounts" role="tabpanel" aria-labelledby="tab-accounts">
@@ -3352,7 +3914,7 @@
             <div>
               <h2 id="accountsTitle"><svg class="icon">
                   <use href="#i-users"></use>
-                </svg>账号质量</h2>
+                </svg>账号</h2>
               <p>查看真实思考证据、TPS、冷却状态和租约，点击“详情”可执行账号操作</p>
             </div>
             <div class="card-actions"><span class="badge" id="accountsCount">0 个账号</span></div>
@@ -3449,7 +4011,7 @@
             <button class="btn btn-xs" type="button" id="proxyAutoBindRunBtn">立即扫描</button>
             <button class="btn btn-xs btn-ghost" type="button" id="proxyAutoBindToggleSettingsBtn" aria-expanded="false"
               aria-controls="proxyAutoBindSettings">设置</button>
-            <button class="btn btn-xs btn-ghost" type="button" id="proxyTasksBtn">任务详情</button>
+            <button class="btn btn-xs btn-ghost" type="button" id="proxyTasksBtn">查看任务中心</button>
           </span>
         </div>
         <section class="card" id="proxyAutoBindSettings" aria-labelledby="proxyAutoBindSettingsTitle" hidden>
@@ -3718,6 +4280,78 @@
           </section>
         </div>
       </section>
+      <section class="tab-panel" id="panel-tasks" role="tabpanel" aria-labelledby="tab-tasks">
+        <div class="metric-grid" id="taskMetrics"></div>
+        <div class="task-center-grid">
+          <section class="card task-list-card" aria-labelledby="taskListTitle">
+            <div class="card-header">
+              <div>
+                <h2 id="taskListTitle"><svg class="icon"><use href="#i-terminal"></use></svg>任务中心</h2>
+                <p>账号、代理和质量交叉验证等异步批量任务统一在此查看</p>
+              </div>
+              <div class="card-actions"><span class="badge" id="tasksCount">0 个任务</span></div>
+            </div>
+            <div class="toolbar task-toolbar">
+              <div class="toolbar-left">
+                <label class="search"><svg class="icon"><use href="#i-search"></use></svg><input id="taskSearch"
+                    type="search" placeholder="搜索任务、账号或错误" autocomplete="off"></label>
+                <select class="control" id="taskCategoryFilter" aria-label="筛选任务类型">
+                  <option value="all">全部类型</option>
+                  <option value="account">账号任务</option>
+                  <option value="proxy">代理任务</option>
+                  <option value="quality">质量验证</option>
+                  <option value="system">系统任务</option>
+                </select>
+                <select class="control" id="taskStatusFilter" aria-label="筛选任务状态">
+                  <option value="all">全部状态</option>
+                  <option value="active">进行中</option>
+                  <option value="succeeded">已完成</option>
+                  <option value="failed">失败</option>
+                  <option value="interrupted">已中断</option>
+                  <option value="cancelled">已取消</option>
+                </select>
+              </div>
+              <div class="toolbar-right"><button class="btn btn-xs" id="taskRefreshBtn" type="button"><svg
+                    class="icon"><use href="#i-refresh"></use></svg>刷新</button></div>
+            </div>
+            <div class="task-list" id="taskRows" aria-live="polite"></div>
+            <div class="pagination" id="taskPager" hidden></div>
+            <div class="empty" id="tasksEmpty" hidden><svg class="icon"><use href="#i-terminal"></use></svg>
+              <div>暂无匹配任务</div>
+            </div>
+          </section>
+          <section class="card task-detail-card" id="taskDetailCard" aria-live="polite">
+            <div class="card-header task-detail-header">
+              <div>
+                <h2 id="taskDetailTitle"><svg class="icon"><use href="#i-eye"></use></svg>任务详情</h2>
+                <p id="taskDetailSubtitle">从左侧选择一个任务查看执行信息</p>
+              </div>
+              <div class="card-actions">
+                <span class="badge" id="taskDetailBadge" hidden></span>
+                <button class="btn btn-xs btn-ghost icon-btn task-detail-close" type="button" id="taskDetailClose"
+                  aria-label="关闭任务详情"><svg class="icon"><use href="#i-x"></use></svg></button>
+              </div>
+            </div>
+            <div class="task-detail-body" id="taskDetailBody">
+              <div class="task-detail-empty"><span class="task-empty-icon"><svg class="icon"><use
+                      href="#i-terminal"></use></svg></span>
+                <h3>选择任务查看详情</h3>
+                <p>可查看任务进度、成功与失败数量、逐项执行结果和历史记录，历史详情仅在打开时加载</p>
+              </div>
+            </div>
+          </section>
+        </div>
+        <section class="card task-queue-card" aria-labelledby="residentQueuesTitle">
+          <div class="card-header compact">
+            <div>
+              <h2 id="residentQueuesTitle"><svg class="icon"><use href="#i-activity"></use></svg>常驻队列</h2>
+              <p id="taskHistorySummary">仅显示当前实际启用或仍有工作的队列</p>
+            </div>
+            <button class="btn btn-xs btn-ghost" type="button" data-goto-tab="settings" data-open-settings="tasks">配置任务历史</button>
+          </div>
+          <div class="queue-grid" id="residentQueues"></div>
+        </section>
+      </section>
       <section class="tab-panel" id="panel-events" role="tabpanel" aria-labelledby="tab-events">
         <section class="card" aria-labelledby="eventsTitle">
           <div class="card-header">
@@ -3809,6 +4443,27 @@
                       id="p_session_affinity_max_entries" type="number" min="1" max="100000"></div>
                 </div>
               </section>
+              <section class="policy-group policy-group-task-history">
+                <h3 class="section-title"><svg class="icon"><use href="#i-terminal"></use></svg>任务中心与历史记录</h3>
+                <div class="field-grid">
+                  <label class="check-card task-history-switch"><input id="p_task_history_enabled" type="checkbox"><span
+                      class="check-copy"><span class="check-title">保存历史任务</span><span
+                        class="check-desc">关闭后只显示当前任务，不再保留新完成记录</span></span></label>
+                  <div class="field"><label for="p_task_history_retention_days">保留天数</label><input
+                      id="p_task_history_retention_days" type="number" min="1" max="365"><span
+                      class="hint">从任务完成时间开始计算，默认：3 天</span></div>
+                  <div class="field"><label for="p_task_history_max_records">最多记录数</label><input
+                      id="p_task_history_max_records" type="number" min="1" max="10000"><span
+                      class="hint">超出后优先清理最旧任务，默认：500 条</span></div>
+                  <div class="field"><label for="p_task_history_max_bytes_mib">历史归档占用上限</label><input
+                      id="p_task_history_max_bytes_mib" type="number" min="1" max="4096"><span
+                      class="hint">已完成任务归档的压缩磁盘占用，单位 MiB，超出后优先清理最旧任务，默认：128 MiB</span></div>
+                  <div class="field"><label for="p_task_history_max_items">单任务明细上限</label><input
+                      id="p_task_history_max_items" type="number" min="1" max="100000"><span
+                      class="hint">超出后保留汇总，逐项明细标记为已截断，默认：10000 条</span></div>
+                </div>
+              </section>
+
               <section class="policy-group policy-group-quality">
                 <h3 class="section-title"><svg class="icon">
                     <use href="#i-gauge"></use>
@@ -4000,10 +4655,24 @@
       proxyOperationSourceChoices: [],
       proxySourceList: null,
       proxyTasks: new Map(),
-      proxyChanges: [],
-      proxyTasksRefreshing: false,
-      resinCleanupList: null,
-      resinCleanupPage: 1,
+      taskCenter: null,
+      taskCenterRefreshing: false,
+      taskCenterListRequest: 0,
+      taskCenterPage: 1,
+      taskCenterPageSize: 20,
+      taskCenterQuery: '',
+      taskCenterCategory: 'all',
+      taskCenterStatus: 'all',
+      taskCenterSelectedID: '',
+      taskCenterDetail: null,
+      taskCenterDetailPage: 1,
+      taskCenterDetailStatus: 'all',
+      taskCenterDetailLoading: false,
+      taskCenterDetailRequest: 0,
+      taskCenterSelectedQueue: null,
+      taskCenterQueueDetail: null,
+      taskQueuePage: 1,
+      taskQueueDetailRequest: 0,
       proxyEditing: null,
       proxyEditorSequence: 0,
       proxyPreviewSequence: 0,
@@ -4034,6 +4703,7 @@
     };
     const formDrafts = new Map();
     let toastTimer = 0;
+    let taskSearchTimer = 0;
     const STATE_LABELS = {
       unknown: '待检测', healthy: '健康', suspect: '可疑', degraded: '降智', cooling: '冷却中',
       quota_exhausted: '额度耗尽', credential_invalid: '凭据失效',
@@ -4474,28 +5144,26 @@
       if (!task || !task.task_id) return value;
       state.proxyTasks.set(task.task_id, Object.assign({ label: label }, task));
       renderProxyTaskBadge();
+      toast((label || '任务') + '已提交，可在任务中心查看进度');
+      if (state.activeTab === 'tasks') refreshTaskCenter(true);
       const deadline = Date.now() + 30 * 60 * 1000;
-      let lastProgress = '';
       while (task.status === 'queued' || task.status === 'running') {
-        if (Date.now() > deadline) throw new Error((label || '任务') + '等待超时，可稍后在事件日志查看结果');
-        if (task.progress && task.progress !== lastProgress) {
-          lastProgress = task.progress;
-          toast((label || '任务') + '：' + task.progress);
-        }
+        if (Date.now() > deadline) throw new Error((label || '任务') + '等待超时，请到任务中心查看当前状态');
         await new Promise((resolve) => window.setTimeout(resolve, 1000));
         task = await api('tasks.get', { task_id: task.task_id });
         state.proxyTasks.set(task.task_id, Object.assign({ label: label }, task));
         renderProxyTaskBadge();
-        if (state.proxyEditing && state.proxyEditing.kind === 'tasks') renderProxyTaskDrawer();
+        if (state.activeTab === 'tasks') renderTaskCenter();
       }
-      if (task.status === 'failed' || task.status === 'cancelled' || task.status === 'canceled') {
+      if (task.status === 'failed' || task.status === 'cancelled' || task.status === 'canceled' || task.status === 'interrupted') {
         const error = new Error(task.error || ((label || '任务') + (task.status === 'cancelled' ? '已取消' : '执行失败')));
         error.result = task.result;
         throw error;
       }
+      if (state.activeTab === 'tasks') refreshTaskCenter(true);
       return task.result;
     } function setTab(name, updateHash) {
-      const allowed = ['overview', 'accounts', 'resin', 'events', 'settings'];
+      const allowed = ['overview', 'accounts', 'resin', 'tasks', 'events', 'settings'];
       if (!allowed.includes(name)) name = 'overview';
       state.activeTab = name;
       document.querySelectorAll('.tabs [data-tab]').forEach((button) => {
@@ -4507,12 +5175,23 @@
       document.querySelectorAll('main > .tab-panel').forEach((panel) => {
         panel.classList.toggle('active', panel.id === 'panel-' + name);
       });
-      if (updateHash !== false && window.history && window.history.replaceState) window.history.replaceState(null, '', '#' + name);
+      if (name !== 'tasks') document.getElementById('taskDetailCard').classList.remove('mobile-open');
+      if (updateHash !== false && window.history && window.history.replaceState) {
+        const hash = name === 'tasks' && state.taskCenterSelectedID ? 'tasks/' + encodeURIComponent(state.taskCenterSelectedID) : name;
+        window.history.replaceState(null, '', '#' + hash);
+      }
       if (name === 'resin') setProxySubtab(state.proxySubtab);
       if (name === 'accounts' || name === 'resin') window.setTimeout(() => ensureAccountData(), 0);
+      if (name === 'tasks') window.setTimeout(() => refreshTaskCenter(Boolean(state.taskCenter)), 0);
     }
-    function openSettings() {
+    function openSettings(section) {
       setTab('settings');
+      if (section !== 'tasks') return;
+      window.setTimeout(() => {
+        const group = document.querySelector('.policy-group-task-history');
+        group?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        document.getElementById('p_task_history_enabled')?.focus({ preventScroll: true });
+      }, 0);
     }
     function listParams(kind, all) {
       if (kind === 'accounts') return { page: state.accountPage, page_size: state.accountPageSize, summary: true, state: !all && state.accountState !== 'all' ? state.accountState : '', query: all ? '' : state.accountQuery };
@@ -5433,7 +6112,7 @@
       if (count || failed || skipped) message += completedMode ? '，完成：' + succeeded + ' · 失败：' + failed : '，成功：' + succeeded + ' · 跳过：' + skipped + ' · 失败：' + failed;
       else message += value.saved ? '' : '已完成';
       if (pending) message += ' · 待同步：' + pending;
-      if (value.change_id) message += '，可在任务详情查看同步进度';
+      if (value.change_id) message += '，可在任务中心查看同步进度';
       return { message: message, failed: failed };
     }
     function reportProxyResult(result, label) {
@@ -5446,104 +6125,42 @@
       const active = Array.from(state.proxyTasks.values()).filter((task) => ['queued', 'running'].includes(task.status)).length;
       const failed = Array.from(state.proxyTasks.values()).filter((task) => task.status === 'failed' || proxySyncFailures(task.result).length).length;
       const button = document.getElementById('proxyTasksBtn');
-      if (button) button.textContent = '任务详情' + (active ? ' · 进行中：' + active : '') + (failed ? ' · 失败：' + failed : '');
-    }
-    function proxyTaskLabel(kind) {
-      return { 'proxy.bind': '绑定代理', 'proxy.clear': '清除代理', 'proxy.rotate': '轮换代理', 'proxy.auto_rotate': '自动轮换代理', 'proxy.bind_unbound': '绑定未绑定账号', 'proxy.template.apply': '应用代理模板', 'proxy.source.update': '保存代理', 'proxy.source.delete': '删除代理', 'proxy.sources.test_selected': '批量检测代理', 'proxy.sources.delete_selected': '批量删除代理', 'proxy.source.sync': '同步代理绑定', 'resin.cleanup.retry': '重试代理清理' }[kind] || '代理后台任务';
-    }
-    async function refreshProxyTasks() {
-      if (state.proxyTasksRefreshing) return state.proxyEditing?.taskErrors || [];
-      state.proxyTasksRefreshing = true;
-      const values = await Promise.allSettled([api('tasks.list', { limit: 50 }), api('proxy.changes.list', { page: 1, page_size: 50 }), api('resin.cleanup.list', { page: state.resinCleanupPage, page_size: 20 })]);
-      if (values[0].status === 'fulfilled') {
-        const items = values[0].value?.items || [];
-        items.forEach((task) => { if (/proxy|resin/i.test(task.kind || task.action || task.label || '')) { const id = task.task_id || task.id; state.proxyTasks.set(id, Object.assign({ label: state.proxyTasks.get(id)?.label || proxyTaskLabel(task.kind) }, task)); } });
-      }
-      if (values[1].status === 'fulfilled') state.proxyChanges = values[1].value?.items || [];
-      if (values[2].status === 'fulfilled') {
-        state.resinCleanupList = values[2].value || {};
-        const page = Math.max(1, Math.ceil(Number(state.resinCleanupList.total || 0) / 20));
-        if (state.resinCleanupPage > page) {
-          state.resinCleanupPage = page;
-          const cleanup = await Promise.allSettled([api('resin.cleanup.list', { page: page, page_size: 20 })]);
-          if (cleanup[0].status === 'fulfilled') state.resinCleanupList = cleanup[0].value;
-          else values.push(cleanup[0]);
-        }
-      }
-      const editor = state.proxyEditing;
-      const detail = editor?.taskDetail;
-      if (editor?.kind === 'tasks' && detail && !editor.taskDetailLoading) {
-        const refresh = await Promise.allSettled([loadProxyTaskDetail(editor, detail.change_id ? 'change' : 'task', detail.change_id || detail.task_id, editor.taskDetailPage || 1)]);
-        if (refresh[0].status === 'rejected') values.push(refresh[0]);
-      }
-      state.proxyTasksRefreshing = false;
-      renderProxyTaskBadge();
-      return values.filter((value) => value.status === 'rejected').map((value) => value.reason.message);
-    }
-    async function openProxyTasks() {
-      if (!document.getElementById('proxySourceDrawer').hidden && !await closeProxyDrawer()) return;
-      beginProxyEditor('tasks', null);
-      document.getElementById('proxySourceEditorTitle').textContent = '代理任务与同步结果';
-      document.getElementById('proxySourceEditorSubtitle').textContent = '配置保存与逐账号同步分别展示，重试只处理失败项';
-      openProxyDrawer();
-      const errors = await refreshProxyTasks();
-      if (state.proxyEditing?.kind !== 'tasks') return;
-      state.proxyEditing.taskErrors = errors;
-      renderProxyTaskDrawer();
+      if (button) button.textContent = '任务中心' + (active ? ' · 进行中：' + active : '') + (failed ? ' · 失败：' + failed : '');
     }
     async function openProxyChangeDetails(changeID) {
-      try {
-        await openProxyTasks();
-        const editor = state.proxyEditing;
-        if (editor?.kind !== 'tasks') return;
-        if (await loadProxyTaskDetail(editor, 'change', changeID, 1)) renderProxyTaskDrawer();
-      } catch (error) { toast(error.message, 'error'); }
-    }
-    async function loadProxyTaskDetail(editor, kind, id, page) {
-      const request = (editor.taskDetailRequest || 0) + 1;
-      editor.taskDetailRequest = request; editor.taskDetailLoading = true;
-      try {
-        let detail = await api(kind === 'change' ? 'proxy.changes.get' : 'tasks.get', kind === 'change' ? { change_id: id, page: page, page_size: 20 } : { task_id: id });
-        if (kind === 'task' && detail.result?.change_id) detail = await api('proxy.changes.get', { change_id: detail.result.change_id, page: page, page_size: 20 });
-        if (state.proxyEditing !== editor || editor.taskDetailRequest !== request) return false;
-        editor.taskDetail = detail; editor.taskDetailPage = Number(detail.page || page); return true;
-      } finally { if (editor.taskDetailRequest === request) editor.taskDetailLoading = false; }
-    }
-    function renderProxyTaskDrawer() {
-      const editor = state.proxyEditing;
-      if (editor?.kind !== 'tasks') return;
-      const statusLabel = (value) => ({ queued: '等待执行', running: '执行中', succeeded: '完成', bound: '已绑定', rotated: '已轮换', cleared: '已清除', updated: '已更新', unchanged: '未变化', skipped: '已跳过', superseded: '被新操作替代', already_bound: '已有绑定', reachable: '可连通', unreachable: '不可达', deleted: '已删除', partial: '部分失败', failed: '失败', cancelled: '已取消', canceled: '已取消', pending: '待同步', waiting: '等待执行', retry_wait: '等待重试', paused: '已暂停', protected: '等待引用释放', needs_reconcile: '待核对', reconcile_required: '待核对', external: '外部配置', drifted: '与记录不一致', conflict: '代理已被修改', rotation_unavailable: '没有不同的代理' }[value] || '待更新');
-      const tasks = Array.from(state.proxyTasks.values()).slice(-50).reverse();
-      const taskRows = tasks.map((task) => {
-        const result = proxyResultMessage(task.result, '结果');
-        const taskID = esc(task.task_id || task.id);
-        const cancel = ['queued', 'running'].includes(task.status) ? ' <button class="btn btn-xs btn-danger" type="button" data-task-cancel="' + taskID + '">取消任务</button>' : '';
-        return '<tr><td>' + esc(task.label || task.kind || '代理任务') + '</td><td>' + esc(statusLabel(task.status)) + '</td><td>' + esc(task.progress || task.error || result.message) + '</td><td><button class="btn btn-xs" type="button" data-proxy-task-detail="' + taskID + '">查看结果</button>' + cancel + '</td></tr>';
-      }).join('');
-      const changes = state.proxyChanges.map((change) => '<tr><td>' + esc(change.source_id || '-') + '</td><td>' + esc(statusLabel(change.status)) + '</td><td>r' + esc(change.target_revision || '-') + '<div class="subline">成功：' + Number(change.counts?.succeeded || 0) + ' · 失败：' + Number(change.counts?.failed || 0) + ' · 待同步：' + Number(change.counts?.pending || 0) + '</div></td><td><button class="btn btn-xs" type="button" data-proxy-change-detail="' + esc(change.id || change.change_id) + '">详情</button>' + (Number(change.counts?.failed || 0) || ['partial', 'failed', 'needs_reconcile'].includes(change.status) ? ' <button class="btn btn-xs" type="button" data-proxy-change-retry="' + esc(change.id || change.change_id) + '">重试失败项</button>' : '') + (['queued', 'running', 'pending'].includes(change.status) ? ' <button class="btn btn-xs btn-ghost" type="button" data-proxy-change-cancel="' + esc(change.id || change.change_id) + '">取消未执行项</button>' : '') + '</td></tr>').join('');
-      const cleanup = state.resinCleanupList || {};
-      const cleanupRows = (cleanup.items || []).slice(0, 20).map((item) => '<tr><td>' + esc(item.auth_id || '-') + '<div class="subline mono">' + esc(item.account || '-') + '</div></td><td>' + esc(item.paused ? '已暂停' : statusLabel(item.status)) + '</td><td>' + esc(item.last_error || (item.next_attempt_at ? '下次尝试：' + formatFullTime(item.next_attempt_at) : '等待清理')) + '<div class="subline">已尝试：' + Number(item.attempts || 0) + ' 次</div></td><td><button class="btn btn-xs" type="button" data-cleanup-retry="' + esc(item.id) + '" ' + (item.paused ? 'disabled' : '') + '>立即重试</button> <button class="btn btn-xs btn-ghost" type="button" data-cleanup-pause="' + esc(item.id) + '" data-paused="' + (item.paused ? 'false' : 'true') + '">' + (item.paused ? '恢复清理' : '暂停清理') + '</button></td></tr>').join('');
-      const cleanupPages = Math.max(1, Math.ceil(Number(cleanup.total || 0) / 20));
-      const cleanupHTML = '<h3>代理租约清理</h3><div class="table-wrap"><table><thead><tr><th>账号 / 租约身份</th><th>状态</th><th>等待 / 失败原因</th><th>操作</th></tr></thead><tbody>' + (cleanupRows || '<tr><td colspan="4">暂无待清理租约</td></tr>') + '</tbody></table></div><div class="form-actions"><button class="btn btn-xs" type="button" data-cleanup-page="-1" ' + (state.resinCleanupPage <= 1 ? 'disabled' : '') + '>上一页</button><span>第 ' + state.resinCleanupPage + ' / ' + cleanupPages + ' 页 · 共：' + Number(cleanup.total || 0) + ' 项</span><button class="btn btn-xs" type="button" data-cleanup-page="1" ' + (state.resinCleanupPage >= cleanupPages ? 'disabled' : '') + '>下一页</button></div>';
-      const taskErrors = Array.from(new Set((editor.taskErrors || []).map((error) => String(error || '').trim()).filter(Boolean)));
-      const errors = taskErrors.length ? '<div class="notice warn task-error-notice" role="alert"><svg class="icon"><use href="#i-alert"></use></svg><span>任务数据加载失败：' + esc(taskErrors.join(' · ')) + '</span></div>' : '';
-      const detail = editor.taskDetail;
-      let detailHTML = '';
-      if (detail) {
-        const result = detail.result || detail;
-        const items = Array.isArray(result.items) ? result.items : (Array.isArray(result.results) ? result.results : []);
-        const remote = Boolean(detail.change_id && detail.page_size);
-        const total = remote ? Number(detail.total || 0) : items.length;
-        const page = Math.max(1, Math.min(remote ? Number(detail.page || 1) : editor.taskDetailPage || 1, Math.ceil(total / 20) || 1));
-        editor.taskDetailPage = page;
-        const visible = remote ? items : items.slice((page - 1) * 20, page * 20);
-        const itemLabel = visible.some((item) => item.source_id) ? '代理' : '账号';
-        detailHTML = '<section class="card proxy-task-results"><div class="form-section"><h3 class="section-title">逐项结果</h3><p role="status" aria-live="polite">' + esc(proxyResultMessage(result, '任务').message) + '</p><div class="table-wrap"><table><thead><tr><th>' + itemLabel + '</th><th>结果</th><th>原因</th></tr></thead><tbody>' + visible.map((item) => '<tr><td>' + esc(item.auth_id || item.source_id || '-') + '</td><td>' + esc(statusLabel(item.status)) + (item.needs_reconcile ? ' · 待核对' : '') + '</td><td>' + esc(item.error || '-') + '</td></tr>').join('') + '</tbody></table></div><div class="form-actions"><button class="btn btn-xs" type="button" data-task-detail-page="-1" ' + (page <= 1 ? 'disabled' : '') + '>上一页</button><span>第 ' + page + ' / ' + Math.max(1, Math.ceil(total / 20)) + ' 页 · 共：' + total + ' 项</span><button class="btn btn-xs" type="button" data-task-detail-page="1" ' + (page * 20 >= total ? 'disabled' : '') + '>下一页</button></div></div></section>';
+      const id = String(changeID || '').trim();
+      if (!id) return;
+      openTaskCenter();
+      await refreshTaskCenter(true);
+      const queue = (state.taskCenter?.resident_queues || []).find((item) => item.id === 'proxy_changes');
+      if (queue) {
+        await selectTaskCenterQueue('proxy_changes', true);
+        await openTaskCenterChange(id, 1);
+        return;
       }
-      const taskToolbar = '<div class="task-toolbar"><div class="task-toolbar-summary"><span class="task-toolbar-metric"><span>后台任务：</span><strong>' + tasks.length + '</strong><span>个</span></span><span class="task-toolbar-metric"><span>同步记录：</span><strong>' + state.proxyChanges.length + '</strong><span>条</span></span></div><button class="btn btn-xs" id="proxyTasksRefreshBtn" type="button">' + icon('refresh') + '刷新</button></div>';
-      replaceProxyHTML(document.getElementById('proxySourceEditor'), errors + taskToolbar + '<h3>后台任务</h3><div class="table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>进度 / 结果</th><th>操作</th></tr></thead><tbody>' + (taskRows || '<tr><td colspan="4">暂无任务</td></tr>') + '</tbody></table></div><h3>代理同步与回溯</h3><div class="table-wrap"><table><thead><tr><th>代理</th><th>状态</th><th>目标版本</th><th>操作</th></tr></thead><tbody>' + (changes || '<tr><td colspan="4">暂无同步记录</td></tr>') + '</tbody></table></div>' + detailHTML + cleanupHTML);
+      state.taskCenterSelectedID = '';
+      state.taskCenterDetail = null;
+      state.taskCenterSelectedQueue = {
+        id: 'proxy_changes',
+        label: '代理同步记录',
+        category: 'proxy',
+        status: 'idle',
+        description: '查看指定代理同步任务的逐项结果',
+        total: 0,
+        completed: 0,
+        running: 0,
+        waiting: 0,
+        succeeded: 0,
+        failed: 0,
+        skipped: 0,
+        synthetic: true
+      };
+      state.taskCenterQueueDetail = { loading: true, mode: 'change', data: { change_id: id, page: 1, page_size: 20 } };
+      state.taskQueuePage = 1;
+      document.getElementById('taskDetailCard').classList.add('mobile-open');
+      renderTaskCenter();
+      await openTaskCenterChange(id, 1);
     }
-
     async function showProxyEditorError(error, source, editor) {
       if (state.proxyEditing !== editor) return;
       const status = document.getElementById('proxySourceEditorStatus');
@@ -7120,6 +7737,494 @@
       group.rows = proxyRowsUnique(retained.concat(copied));
       markProxyEditorDirty(); renderProxyGroup(group.index); syncProxyPlaceholderCards(); renderProxyTemplateConditions();
     }
+    const TASK_STATUS_LABELS = {
+      queued: '等待执行', running: '执行中', succeeded: '已完成', failed: '失败',
+      cancelled: '已取消', canceled: '已取消', interrupted: '已中断',
+      idle: '空闲', paused: '已暂停', skipped: '已跳过', pending: '等待中', waiting: '等待中',
+      partial: '部分完成', probed: '已检测', restored: '已恢复', disabled: '已禁用', deleted: '已删除',
+      bound: '已绑定', cleared: '已清除', rotated: '已轮换', updated: '已更新', created: '已创建',
+      reachable: '可连接', unreachable: '不可达', needs_reconcile: '需核对', reconcile_required: '需核对',
+      commit_unknown: '结果未知', superseded: '已跳过', unchanged: '未变化', already_bound: '已绑定',
+      permanent_failure: '永久失败', credential_blocked: '凭据受限', external_left_disabled: '保持外部禁用',
+      protected: '已保护'
+    };
+    const TASK_CATEGORY_LABELS = { account: '账号任务', proxy: '代理任务', quality: '质量验证', system: '系统任务' };
+    function taskStatusLabel(value) {
+      return TASK_STATUS_LABELS[String(value || '').toLowerCase()] || String(value || '待更新');
+    }
+    function taskCategoryLabel(value) {
+      return TASK_CATEGORY_LABELS[String(value || '').toLowerCase()] || '任务';
+    }
+    function taskStatusClass(value) {
+      const status = String(value || '').toLowerCase();
+      if (['running', 'queued', 'pending', 'waiting'].includes(status)) return 'running';
+      if (['succeeded', 'probed', 'restored', 'disabled', 'deleted', 'bound', 'cleared', 'rotated', 'updated', 'created', 'reachable'].includes(status)) return 'succeeded';
+      if (['failed', 'interrupted', 'unreachable', 'partial', 'needs_reconcile', 'reconcile_required', 'commit_unknown', 'permanent_failure', 'credential_blocked'].includes(status)) return 'failed';
+      if (['skipped', 'superseded', 'unchanged', 'already_bound', 'external_left_disabled', 'protected', 'paused', 'idle', 'cancelled', 'canceled'].includes(status)) return 'paused';
+      return '';
+    }
+    function taskPercent(task) {
+      const total = Math.max(0, Number(task && task.total || 0));
+      const completed = Math.max(0, Number(task && task.completed || 0));
+      return total > 0 ? Math.max(0, Math.min(100, Math.round(completed / total * 100))) : 0;
+    }
+    function taskProgressText(task) {
+      if (!task) return '';
+      if (task.current_stage || task.progress) return task.current_stage || task.progress;
+      if (task.error) return task.error;
+      if (['queued', 'running'].includes(task.status)) return '准备执行';
+      const total = Number(task.total || 0);
+      return total > 0 ? '已处理 ' + Number(task.completed || 0) + ' / ' + total : '无逐项明细';
+    }
+    function taskDurationLabel(ms) {
+      const value = Number(ms || 0);
+      if (!value) return '-';
+      if (value < 1000) return value + ' 毫秒';
+      if (value < 60000) return (value / 1000).toFixed(value < 10000 ? 1 : 0) + ' 秒';
+      if (value < 3600000) return Math.floor(value / 60000) + ' 分 ' + Math.round((value % 60000) / 1000) + ' 秒';
+      return Math.floor(value / 3600000) + ' 小时 ' + Math.round((value % 3600000) / 60000) + ' 分';
+    }
+    function taskHistoryText(history) {
+      const value = history || {};
+      if (value.enabled === false) return '历史记录已关闭，仅显示当前任务';
+      return '历史：保留 ' + Number(value.retention_days || 3) + ' 天 · ' + Number(value.record_count || 0) + ' 条 · ' + formatBytes(value.archive_bytes || 0) + ' / ' + formatBytes(value.max_bytes || 0);
+    }
+    function taskResultSummary(task) {
+      if (!task) return '';
+      const result = task.result;
+      if (result && typeof result === 'object') {
+        const count = Number(result.count ?? result.total ?? result.counts?.total ?? 0);
+        const counts = result.counts || {};
+        if (count || counts.total || result.failed != null || result.succeeded != null) {
+          return '共 ' + num(count || counts.total || 0) + ' 项 · 成功 ' + num(result.succeeded ?? counts.succeeded ?? 0) + ' · 失败 ' + num(result.failed ?? counts.failed ?? 0) + ' · 跳过 ' + num(result.skipped ?? counts.skipped ?? 0);
+        }
+        if (result.message) return String(result.message);
+        if (result.change_id) return '代理同步变更：' + result.change_id;
+      }
+      return task.error || '';
+    }
+    function renderTaskPager(result) {
+      const el = document.getElementById('taskPager');
+      const total = Number(result.total || 0);
+      const size = Number(result.page_size || state.taskCenterPageSize || 20);
+      const pages = Math.max(1, Math.ceil(total / size));
+      const page = Math.min(Math.max(1, Number(result.page || state.taskCenterPage || 1)), pages);
+      state.taskCenterPage = page;
+      if (!total) { el.hidden = true; el.innerHTML = ''; return; }
+      el.hidden = false;
+      el.innerHTML = '<span class="pager-summary">第 ' + ((page - 1) * size + 1) + '-' + Math.min(page * size, total) + ' 个任务 · 共：' + total + ' 个 · 第 ' + page + ' / ' + pages + ' 页</span>' +
+        '<div class="pager-controls"><select class="control pager-size" id="taskPageSize" aria-label="每页任务数量">' +
+        [20, 50, 100].map((value) => '<option value="' + value + '"' + (value === size ? ' selected' : '') + '>' + value + '</option>').join('') +
+        '</select><button class="btn btn-xs" type="button" data-task-page="first" ' + (page <= 1 ? 'disabled' : '') + '>首页</button>' +
+        '<button class="btn btn-xs" type="button" data-task-page="prev" ' + (page <= 1 ? 'disabled' : '') + '>上一页</button>' +
+        '<button class="btn btn-xs" type="button" data-task-page="next" ' + (page >= pages ? 'disabled' : '') + '>下一页</button>' +
+        '<button class="btn btn-xs" type="button" data-task-page="last" ' + (page >= pages ? 'disabled' : '') + '>末页</button></div>';
+    }
+    function taskRow(task) {
+      const id = esc(task.task_id);
+      const status = String(task.status || '');
+      const percent = taskPercent(task);
+      const tone = status === 'failed' || status === 'interrupted' ? 'bad' : (status === 'succeeded' ? 'good' : '');
+      const meta = [taskCategoryLabel(task.category), task.auth_count ? '账号：' + task.auth_count : '', formatFullTime(task.created_at)].filter(Boolean).join(' · ');
+      return '<button class="task-row ' + (state.taskCenterSelectedID === task.task_id ? 'selected' : '') + '" type="button" data-task-select="' + id + '">' +
+        '<span class="task-row-main"><span class="task-row-title"><span>' + esc(task.label || task.kind || '任务') + '</span><span class="task-status ' + taskStatusClass(status) + '">' + esc(taskStatusLabel(status)) + '</span></span>' +
+        '<span class="task-row-meta">' + esc(meta) + ' · ' + esc(taskProgressText(task)) + '</span></span>' +
+        '<span class="task-row-count">' + Number(task.completed || 0) + ' / ' + Number(task.total || 0) + '</span>' +
+        '<span class="task-row-progress"><span class="progress-track"><span class="progress-fill ' + tone + '" style="width:' + percent + '%"></span></span><span class="task-row-count">' + percent + '%</span></span></button>';
+    }
+    function queueMetric(label, value) {
+      return '<span class="task-toolbar-metric"><span>' + esc(label) + '：</span><strong>' + esc(value) + '</strong></span>';
+    }
+    function renderResidentQueues(queues, history) {
+      const container = document.getElementById('residentQueues');
+      if (!container) return;
+      document.getElementById('taskHistorySummary').textContent = taskHistoryText(history);
+      if (!queues || !queues.length) {
+        container.innerHTML = '<div class="empty" style="grid-column:1/-1"><svg class="icon"><use href="#i-activity"></use></svg><div>当前没有启用中的常驻队列</div></div>';
+        return;
+      }
+      container.innerHTML = queues.map((queue) => {
+        const total = Number(queue.total || 0);
+        const completed = Number(queue.completed || 0);
+        const percent = total > 0 ? Math.min(100, Math.round(completed / total * 100)) : 0;
+        const stats = [queueMetric('运行', num(queue.running || 0)), queueMetric('等待', num(queue.waiting || 0)), queueMetric('成功', num(queue.succeeded || 0)), queueMetric('失败', num(queue.failed || 0))].join('');
+        const progress = total > 0 ? '<div class="progress-track"><div class="progress-fill ' + (Number(queue.failed || 0) ? 'bad' : 'good') + '" style="width:' + percent + '%"></div></div>' : '';
+        const detailButton = ['auto_bind', 'proxy_health', 'proxy_changes', 'resin_cleanup'].includes(queue.id) ? '<button class="btn btn-xs" type="button" data-task-queue="' + esc(queue.id) + '">查看队列</button>' : '';
+        return '<article class="queue-card"><div class="queue-card-head"><div><strong>' + esc(queue.label) + '</strong><p>' + esc(queue.description || queue.detail || '') + '</p></div><span class="task-status ' + taskStatusClass(queue.status) + '">' + esc(taskStatusLabel(queue.status)) + '</span></div>' +
+          '<div class="queue-card-stats">' + stats + '</div>' + progress + '<div class="queue-card-actions">' + detailButton + '<button class="btn btn-xs btn-ghost" type="button" data-task-queue-refresh="' + esc(queue.id) + '">刷新状态</button></div>' +
+          (queue.last_error ? '<div class="queue-card-error">' + esc(queue.last_error) + '</div>' : '') + '</article>';
+      }).join('');
+    }
+    function renderTaskDetailEmpty(title, detail) {
+      document.getElementById('taskDetailBody').innerHTML = '<div class="task-detail-empty"><span class="task-empty-icon"><svg class="icon"><use href="#i-terminal"></use></svg></span><h3>' + esc(title) + '</h3><p>' + esc(detail) + '</p></div>';
+      document.getElementById('taskDetailBadge').hidden = true;
+    }
+    function renderTaskDetail() {
+      const selectedQueue = state.taskCenterSelectedQueue;
+      if (selectedQueue) { renderTaskQueueDetail(); return; }
+      if (!state.taskCenterSelectedID) {
+        document.getElementById('taskDetailTitle').innerHTML = icon('eye') + '任务详情';
+        document.getElementById('taskDetailSubtitle').textContent = '从左侧选择一个任务查看执行信息';
+        renderTaskDetailEmpty('选择任务查看详情', '可查看任务进度、成功与失败数量、逐项执行结果和历史记录');
+        return;
+      }
+      if (state.taskCenterDetailLoading && !state.taskCenterDetail) {
+        document.getElementById('taskDetailTitle').innerHTML = icon('eye') + '任务详情';
+        document.getElementById('taskDetailSubtitle').textContent = '正在加载任务明细…';
+        document.getElementById('taskDetailBody').innerHTML = '<div class="task-detail-empty"><span class="task-empty-icon"><svg class="icon spin"><use href="#i-refresh"></use></svg></span><h3>正在加载</h3><p>历史明细按需读取，不会影响其他页面</p></div>';
+        document.getElementById('taskDetailBadge').hidden = true;
+        return;
+      }
+      const detail = state.taskCenterDetail;
+      if (!detail) {
+        renderTaskDetailEmpty('任务详情不可用', '任务记录可能已被历史保留策略清理');
+        return;
+      }
+      const task = detail.task || {};
+      const total = Math.max(0, Number(task.total || 0));
+      const completed = Math.max(0, Number(task.completed || 0));
+      const running = Math.max(0, Number(task.running || 0));
+      const waiting = Math.max(0, Number(task.waiting || 0));
+      const percent = total > 0 ? Math.max(0, Math.min(100, Math.round(completed / total * 100))) : 0;
+      const status = String(task.status || '');
+      document.getElementById('taskDetailTitle').innerHTML = icon('eye') + esc(task.label || task.kind || '任务详情');
+      document.getElementById('taskDetailSubtitle').textContent = taskCategoryLabel(task.category) + ' · ' + (task.kind || task.task_id);
+      const detailBadge = document.getElementById('taskDetailBadge');
+      detailBadge.hidden = false;
+      detailBadge.className = 'badge ' + (status === 'succeeded' ? 'good' : (status === 'failed' || status === 'interrupted' ? 'bad' : (status === 'running' || status === 'queued' ? 'info' : '')));
+      detailBadge.textContent = taskStatusLabel(status);
+      const itemFilter = '<select class="control" id="taskItemStatusFilter" aria-label="筛选逐项结果"><option value="all"' + (state.taskCenterDetailStatus === 'all' ? ' selected' : '') + '>全部结果</option><option value="succeeded"' + (state.taskCenterDetailStatus === 'succeeded' ? ' selected' : '') + '>成功</option><option value="failed"' + (state.taskCenterDetailStatus === 'failed' ? ' selected' : '') + '>失败</option><option value="skipped"' + (state.taskCenterDetailStatus === 'skipped' ? ' selected' : '') + '>跳过</option></select>';
+      const counts = '<div class="task-count-grid">' +
+        '<div class="task-count"><span>任务总数</span><strong>' + num(total) + '</strong></div>' +
+        '<div class="task-count"><span>已完成</span><strong>' + num(completed) + '</strong></div>' +
+        '<div class="task-count"><span>正在处理</span><strong>' + num(running) + '</strong></div>' +
+        '<div class="task-count"><span>等待中</span><strong>' + num(waiting) + '</strong></div>' +
+        '<div class="task-count"><span>成功</span><strong>' + num(task.succeeded || 0) + '</strong></div>' +
+        '<div class="task-count"><span>失败</span><strong>' + num(task.failed || 0) + '</strong></div>' +
+        '<div class="task-count"><span>跳过</span><strong>' + num(task.skipped || 0) + '</strong></div>' +
+        '<div class="task-count"><span>耗时</span><strong>' + esc(taskDurationLabel(task.duration_ms)) + '</strong></div></div>';
+      const meta = '<div class="task-meta-grid">' +
+        '<div class="task-meta-item">任务 ID<strong title="' + esc(task.task_id) + '">' + esc(task.task_id) + '</strong></div>' +
+        '<div class="task-meta-item">任务类型<strong>' + esc(task.kind || '-') + '</strong></div>' +
+        '<div class="task-meta-item">创建时间<strong>' + esc(formatFullTime(task.created_at)) + '</strong></div>' +
+        '<div class="task-meta-item">开始时间<strong>' + esc(formatFullTime(task.started_at)) + '</strong></div>' +
+        '<div class="task-meta-item">结束时间<strong>' + esc(formatFullTime(task.ended_at)) + '</strong></div>' +
+        '<div class="task-meta-item">最近更新<strong>' + esc(formatFullTime(task.updated_at)) + '</strong></div>' +
+        '<div class="task-meta-item">来源<strong>' + esc(detail.source === 'history' ? '历史归档' : '当前任务') + '</strong></div>' +
+        '<div class="task-meta-item">明细保留<strong>' + num(task.items_stored || 0) + ' / ' + num(task.item_count || 0) + (task.items_truncated ? '（已截断）' : '') + '</strong></div>' +
+        (Array.isArray(task.auth_ids) && task.auth_ids.length ? '<div class="task-meta-item task-meta-wide">涉及账号<strong>' + esc(task.auth_ids.join('、')) + (Number(task.auth_count || 0) > task.auth_ids.length ? ' 等 ' + num(task.auth_count) + ' 个' : '') + '</strong></div>' : '') +
+        '</div>';
+      const resultSummary = taskResultSummary(task);
+      const resultHTML = (task.error || resultSummary) ? '<div class="task-result-box ' + (task.error ? 'error' : '') + '">' + esc(resultSummary || task.error) + '</div>' : '';
+      const items = Array.isArray(detail.items) ? detail.items : [];
+      const itemTotal = Number(detail.item_total ?? detail.total ?? items.length);
+      const itemRows = items.map((item) => {
+        const value = item && typeof item === 'object' ? item : { result: item };
+        const identity = value.auth_id || value.source_id || value.account || value.id || value.name || '-';
+        const statusValue = value.status || value.result || '-';
+        const reason = value.error || value.message || value.reason || value.detail || (value.endpoint ? '端点：' + value.endpoint : '') || (value.next_attempt_at ? '下次尝试：' + formatFullTime(value.next_attempt_at) : '-');
+        return '<tr><td class="mono">' + esc(identity) + '</td><td><span class="task-status ' + taskStatusClass(value.status) + '">' + esc(taskStatusLabel(statusValue)) + '</span></td><td class="task-item-json">' + esc(reason) + '</td></tr>';
+      }).join('');
+      const itemPagination = '<div class="task-item-toolbar"><span class="muted">匹配 ' + num(detail.total || 0) + ' 条 · 共保留 ' + num(itemTotal) + ' 条' + (detail.items_truncated ? '（超出上限，已截断）' : '') + '</span><span class="muted">第 ' + Number(detail.page || 1) + ' / ' + Math.max(1, Math.ceil(Number(detail.total || 0) / Number(detail.page_size || 20))) + ' 页</span></div>';
+      const itemTable = '<div class="table-wrap task-item-table"><table><thead><tr><th>账号 / 对象</th><th>结果</th><th>原因 / 明细</th></tr></thead><tbody>' + (itemRows || '<tr><td colspan="3" class="muted">暂无逐项明细</td></tr>') + '</tbody></table></div>';
+      const itemActions = '<div class="form-actions task-detail-actions"><button class="btn btn-xs" type="button" data-task-item-page="-1" ' + (Number(detail.page || 1) <= 1 ? 'disabled' : '') + '>上一页</button><button class="btn btn-xs" type="button" data-task-item-page="1" ' + ((Number(detail.page || 1) * Number(detail.page_size || 20)) >= Number(detail.total || 0) ? 'disabled' : '') + '>下一页</button>' + (['queued', 'running'].includes(status) ? '<button class="btn btn-xs btn-danger" type="button" data-task-center-cancel="' + esc(task.task_id) + '">取消任务</button>' : '') + '</div>';
+      document.getElementById('taskDetailBody').innerHTML =
+        '<div class="task-detail-hero"><div class="task-detail-hero-top"><div class="task-detail-hero-title"><strong>' + esc(taskProgressText(task)) + '</strong><p>' + esc((task.current_stage || '') + (task.auth_count ? ' · 涉及 ' + task.auth_count + ' 个账号' : '')) + '</p></div><span class="muted">' + percent + '%</span></div><div class="progress-track"><div class="progress-fill ' + (status === 'failed' || status === 'interrupted' ? 'bad' : (status === 'succeeded' ? 'good' : '')) + '" style="width:' + percent + '%"></div></div><div class="task-detail-percent">' + num(completed) + ' / ' + num(total) + ' 项已完成' + (running || waiting ? ' · 正在处理 ' + num(running) + ' · 等待 ' + num(waiting) : '') + '</div></div>' +
+        '<div class="task-detail-section">' + counts + '</div>' +
+        '<div class="task-detail-section"><h3>任务信息</h3>' + meta + '</div>' +
+        (resultHTML ? '<div class="task-detail-section"><h3>结果摘要</h3>' + resultHTML + '</div>' : '') +
+        '<div class="task-detail-section"><div class="task-item-toolbar"><h3>逐项结果</h3>' + itemFilter + '</div>' + itemPagination + itemTable + itemActions + '</div>';
+    }
+    function taskQueuePager(data, pageAttribute) {
+      const total = Number(data?.total || 0);
+      const size = Math.max(1, Number(data?.page_size || 20));
+      const pages = Math.max(1, Math.ceil(total / size));
+      const page = Math.min(Math.max(1, Number(data?.page || 1)), pages);
+      if (!total) return '';
+      return '<div class="form-actions task-queue-pager"><span class="muted">第 ' + page + ' / ' + pages + ' 页 · 共：' + total + ' 项</span><span class="task-queue-pager-actions"><button class="btn btn-xs" type="button" ' + pageAttribute + '="-1" ' + (page <= 1 ? 'disabled' : '') + '>上一页</button><button class="btn btn-xs" type="button" ' + pageAttribute + '="1" ' + (page >= pages ? 'disabled' : '') + '>下一页</button></span></div>';
+    }
+    async function renderTaskQueueDetail() {
+      const queue = state.taskCenterSelectedQueue;
+      if (!queue) { renderTaskDetail(); return; }
+      const detailBadge = document.getElementById('taskDetailBadge');
+      detailBadge.hidden = false;
+      detailBadge.className = 'badge ' + (queue.status === 'failed' ? 'bad' : (queue.status === 'running' ? 'info' : (queue.status === 'succeeded' ? 'good' : '')));
+      detailBadge.textContent = taskStatusLabel(queue.status);
+      document.getElementById('taskDetailTitle').innerHTML = icon('activity') + esc(queue.label || '常驻队列');
+      document.getElementById('taskDetailSubtitle').textContent = queue.description || queue.detail || '';
+      const queueDetail = state.taskCenterQueueDetail;
+      if (queueDetail?.loading) {
+        document.getElementById('taskDetailBody').innerHTML = '<div class="task-detail-empty"><span class="task-empty-icon"><svg class="icon spin"><use href="#i-refresh"></use></svg></span><h3>正在读取队列</h3><p>只加载当前队列的工作项</p></div>';
+        return;
+      }
+      const stats = '<div class="task-count-grid">' +
+        '<div class="task-count"><span>队列总数</span><strong>' + num(queue.total || 0) + '</strong></div>' +
+        '<div class="task-count"><span>已完成</span><strong>' + num(queue.completed || 0) + '</strong></div>' +
+        '<div class="task-count"><span>处理中</span><strong>' + num(queue.running || 0) + '</strong></div>' +
+        '<div class="task-count"><span>等待</span><strong>' + num(queue.waiting || 0) + '</strong></div></div>';
+      let body = '<div class="task-detail-hero"><div class="task-detail-hero-top"><div class="task-detail-hero-title"><strong>' + esc(queue.description || queue.label) + '</strong><p>' + esc(queue.detail || '') + '</p></div><span class="task-status ' + taskStatusClass(queue.status) + '">' + esc(taskStatusLabel(queue.status)) + '</span></div></div><div class="task-detail-section">' + stats + '</div>';
+      if (queue.last_error) body += '<div class="task-detail-section"><h3>最近错误</h3><div class="task-result-box error">' + esc(queue.last_error) + '</div></div>';
+      if (queue.id === 'proxy_changes' && queueDetail) {
+        if (queueDetail.mode === 'change') {
+          const change = queueDetail.data || {};
+          const items = Array.isArray(change.items) ? change.items : [];
+          body += '<div class="task-detail-section"><div class="task-item-toolbar"><h3>同步明细：' + esc(change.change_id || '') + '</h3><button class="btn btn-xs" type="button" data-task-queue-back="1">' + (queue?.synthetic ? '返回任务中心' : '返回队列') + '</button></div><div class="table-wrap task-item-table"><table><thead><tr><th>账号</th><th>结果</th><th>原因</th></tr></thead><tbody>' + (items.map((item) => '<tr><td class="mono">' + esc(item.auth_id || '-') + '</td><td>' + esc(taskStatusLabel(item.status)) + '</td><td class="task-item-json">' + esc(item.error || '-') + '</td></tr>').join('') || '<tr><td colspan="3" class="muted">暂无明细</td></tr>') + '</tbody></table></div>' + taskQueuePager(change, 'data-task-change-page') + '</div>';
+        } else {
+          const items = Array.isArray(queueDetail.data?.items) ? queueDetail.data.items : [];
+          body += '<div class="task-detail-section"><h3>代理同步记录</h3><div class="table-wrap task-item-table"><table><thead><tr><th>代理</th><th>状态</th><th>进度</th><th>操作</th></tr></thead><tbody>' + (items.map((item) => '<tr><td class="mono">' + esc(item.source_id || item.id || '-') + '</td><td>' + esc(taskStatusLabel(item.status)) + '</td><td>' + esc('成功 ' + Number(item.counts?.succeeded || 0) + ' · 失败 ' + Number(item.counts?.failed || 0) + ' · 待同步 ' + Number(item.counts?.pending || 0)) + '</td><td><button class="btn btn-xs" type="button" data-task-change-detail="' + esc(item.id || item.change_id) + '">详情</button>' + (Number(item.counts?.failed || 0) ? ' <button class="btn btn-xs" type="button" data-task-change-retry="' + esc(item.id || item.change_id) + '">重试失败项</button>' : '') + '</td></tr>').join('') || '<tr><td colspan="4" class="muted">暂无同步记录</td></tr>') + '</tbody></table></div>' + taskQueuePager(queueDetail.data, 'data-task-queue-page') + '</div>';
+        }
+      } else if (queue.id === 'resin_cleanup' && queueDetail) {
+        const items = Array.isArray(queueDetail.data?.items) ? queueDetail.data.items : [];
+        body += '<div class="task-detail-section"><h3>待清理租约</h3><div class="table-wrap task-item-table"><table><thead><tr><th>账号</th><th>状态</th><th>下次尝试 / 错误</th><th>操作</th></tr></thead><tbody>' + (items.map((item) => '<tr><td class="mono">' + esc(item.auth_id || '-') + '</td><td>' + esc(item.paused ? '已暂停' : taskStatusLabel(item.status)) + '</td><td class="task-item-json">' + esc(item.last_error || (item.next_attempt_at ? formatFullTime(item.next_attempt_at) : '等待清理')) + '</td><td><button class="btn btn-xs" type="button" data-task-cleanup-retry="' + esc(item.id) + '" ' + (item.paused ? 'disabled' : '') + '>重试</button> <button class="btn btn-xs btn-ghost" type="button" data-task-cleanup-pause="' + esc(item.id) + '" data-paused="' + (item.paused ? 'false' : 'true') + '">' + (item.paused ? '恢复' : '暂停') + '</button></td></tr>').join('') || '<tr><td colspan="4" class="muted">当前没有待清理租约</td></tr>') + '</tbody></table></div>' + taskQueuePager(queueDetail.data, 'data-task-queue-page') + '</div>';
+      } else {
+        const actions = queue.id === 'auto_bind' || queue.id === 'proxy_health' ? '<button class="btn btn-xs" type="button" data-task-queue-action="auto_bind">打开自动绑定设置</button><button class="btn btn-xs btn-ghost" type="button" data-task-queue-action="scan">立即扫描</button>' : '';
+        body += '<div class="task-detail-section"><h3>执行说明</h3><div class="task-result-box">' + esc(queue.detail || queue.description || '暂无更多说明') + '</div>' + (actions ? '<div class="task-detail-actions">' + actions + '</div>' : '') + '</div>';
+      }
+      document.getElementById('taskDetailBody').innerHTML = body;
+    }
+    async function loadTaskCenterDetail(taskID, page, status, silent) {
+      const id = String(taskID || '').trim();
+      if (!id) return;
+      const request = ++state.taskCenterDetailRequest;
+      state.taskCenterDetailLoading = true;
+      if (!silent) state.taskCenterDetail = null;
+      renderTaskDetail();
+      try {
+        const detail = await api('tasks.center.get', { task_id: id, page: page || 1, page_size: 20, item_status: status && status !== 'all' ? status : '' });
+        if (request !== state.taskCenterDetailRequest || state.taskCenterSelectedID !== id) return;
+        state.taskCenterDetail = detail;
+        state.taskCenterDetailPage = Number(detail.page || page || 1);
+        state.taskCenterDetailStatus = status || 'all';
+      } catch (error) {
+        if (request !== state.taskCenterDetailRequest) return;
+        state.taskCenterDetail = null;
+        if (!silent) toast(error.message, 'error');
+      } finally {
+        if (request === state.taskCenterDetailRequest) {
+          state.taskCenterDetailLoading = false;
+          renderTaskDetail();
+        }
+      }
+    }
+    function selectTaskCenterTask(taskID, updateHash) {
+      state.taskQueueDetailRequest++;
+      state.taskCenterSelectedQueue = null;
+      state.taskCenterQueueDetail = null;
+      state.taskCenterSelectedID = String(taskID || '');
+      state.taskCenterDetail = null;
+      state.taskCenterDetailPage = 1;
+      state.taskCenterDetailStatus = 'all';
+      document.getElementById('taskDetailCard').classList.add('mobile-open');
+      renderTaskCenter();
+      if (state.taskCenterSelectedID) {
+        loadTaskCenterDetail(state.taskCenterSelectedID, 1, 'all', false);
+        if (updateHash !== false && window.history && window.history.replaceState) window.history.replaceState(null, '', '#tasks/' + encodeURIComponent(state.taskCenterSelectedID));
+      }
+    }
+    async function selectTaskCenterQueue(queueID, updateHash) {
+      const queues = state.taskCenter?.resident_queues || [];
+      const queue = queues.find((item) => item.id === queueID);
+      if (!queue) return;
+      state.taskCenterDetailRequest++;
+      state.taskCenterSelectedID = '';
+      state.taskCenterDetail = null;
+      state.taskCenterSelectedQueue = queue;
+      state.taskCenterQueueDetail = { loading: true };
+      state.taskQueuePage = 1;
+      document.getElementById('taskDetailCard').classList.add('mobile-open');
+      renderTaskCenter();
+      if (updateHash !== false && window.history && window.history.replaceState) window.history.replaceState(null, '', '#tasks');
+      try {
+        await loadTaskQueueDetail(queue, 1);
+      } catch (error) {
+        state.taskCenterQueueDetail = null;
+        renderTaskQueueDetail();
+        toast(error.message, 'error');
+      }
+    }
+    async function loadTaskQueueDetail(queue, page) {
+      if (!queue) return;
+      const queueID = String(queue.id || '');
+      const pageNo = Math.max(1, Number(page || 1));
+      const request = ++state.taskQueueDetailRequest;
+      if (queue.id !== 'proxy_changes' && queue.id !== 'resin_cleanup') {
+        if (state.taskCenterSelectedQueue?.id !== queueID) return;
+        state.taskCenterQueueDetail = { loading: false, mode: 'summary', data: queue };
+        state.taskQueuePage = 1;
+        renderTaskQueueDetail();
+        return;
+      }
+      const current = state.taskCenterQueueDetail;
+      const preserve = current && !current.loading && current.mode === 'list' && state.taskCenterSelectedQueue?.id === queueID;
+      if (!preserve) {
+        state.taskCenterQueueDetail = { loading: true, mode: 'list' };
+        renderTaskQueueDetail();
+      }
+      try {
+        const action = queue.id === 'proxy_changes' ? 'proxy.changes.list' : 'resin.cleanup.list';
+        const data = await api(action, { page: pageNo, page_size: 20 });
+        if (request !== state.taskQueueDetailRequest || state.taskCenterSelectedQueue?.id !== queueID) return;
+        state.taskCenterQueueDetail = { loading: false, mode: 'list', data: data };
+        state.taskQueuePage = Number(data?.page || pageNo);
+        renderTaskQueueDetail();
+      } catch (error) {
+        if (request !== state.taskQueueDetailRequest) return;
+        if (!preserve) state.taskCenterQueueDetail = null;
+        renderTaskQueueDetail();
+        throw error;
+      }
+    }
+    function renderTaskCenter() {
+      const result = state.taskCenter || {};
+      const items = Array.isArray(result.items) ? result.items : [];
+      const counts = result.counts || {};
+      const history = result.history || {};
+      document.getElementById('taskMetrics').innerHTML = [
+        metricCard('activity', num(counts.active || 0), '进行中任务', '等待或正在执行', Number(counts.active || 0) ? 'info' : 'good'),
+        metricCard('play', num(counts.running_items || 0), '正在处理', '当前并行工作项', Number(counts.running_items || 0) ? 'info' : ''),
+        metricCard('alert', num(counts.failed_items || 0), '失败工作项', '可在任务详情中查看原因', Number(counts.failed_items || 0) ? 'warn' : 'good'),
+        metricCard('database', history.enabled === false ? '已关闭' : num(history.record_count || 0) + ' 条', '历史任务', taskHistoryText(history))
+      ].join('');
+      document.getElementById('tasksCount').textContent = '当前筛选：' + num(result.total || 0) + ' 个任务';
+      document.getElementById('taskRows').innerHTML = items.map(taskRow).join('');
+      document.getElementById('tasksEmpty').hidden = items.length > 0;
+      renderTaskPager(result);
+      renderResidentQueues(result.resident_queues || [], history);
+      if (state.taskCenterSelectedQueue || state.taskCenterSelectedID) renderTaskDetail();
+      else renderTaskDetail();
+    }
+    async function refreshTaskCenter(silent) {
+      if (state.taskCenterRefreshing && silent) return;
+      const request = ++state.taskCenterListRequest;
+      state.taskCenterRefreshing = true;
+      try {
+        let result = null;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          result = await api('tasks.center.list', {
+            page: state.taskCenterPage,
+            page_size: state.taskCenterPageSize,
+            category: state.taskCenterCategory === 'all' ? '' : state.taskCenterCategory,
+            status: state.taskCenterStatus === 'all' ? '' : state.taskCenterStatus,
+            query: state.taskCenterQuery
+          });
+          if (request !== state.taskCenterListRequest) return;
+          const page = Number(result?.page || 1);
+          const pages = Math.max(1, Math.ceil(Number(result?.total || 0) / Number(result?.page_size || state.taskCenterPageSize || 20)));
+          if (page <= pages) break;
+          state.taskCenterPage = pages;
+        }
+        if (!result) return;
+        state.taskCenter = result;
+        state.taskCenterPage = Number(result.page || 1);
+        renderTaskCenter();
+        if (request !== state.taskCenterListRequest) return;
+        if (state.taskCenterSelectedID) {
+          const detailStatus = state.taskCenterDetail?.task?.status;
+          if (!state.taskCenterDetail || detailStatus === 'queued' || detailStatus === 'running') {
+            await loadTaskCenterDetail(state.taskCenterSelectedID, state.taskCenterDetailPage || 1, state.taskCenterDetailStatus || 'all', Boolean(state.taskCenterDetail));
+            if (request !== state.taskCenterListRequest) return;
+          }
+        }
+        if (state.taskCenterSelectedQueue) {
+          const selectedQueue = state.taskCenterSelectedQueue;
+          const latestQueue = (state.taskCenter.resident_queues || []).find((item) => item.id === selectedQueue.id);
+          if (latestQueue) {
+            state.taskCenterSelectedQueue = Object.assign({}, latestQueue, selectedQueue.synthetic ? { synthetic: true } : {});
+            const currentDetail = state.taskCenterQueueDetail;
+            if (!currentDetail?.loading) {
+              if (currentDetail?.mode === 'change' && currentDetail.data?.change_id) {
+                await openTaskCenterChange(currentDetail.data.change_id, currentDetail.data.page || 1, true);
+              } else {
+                await loadTaskQueueDetail(latestQueue, state.taskQueuePage || 1);
+              }
+            }
+          } else if (selectedQueue.synthetic && selectedQueue.id === 'proxy_changes') {
+            const currentDetail = state.taskCenterQueueDetail;
+            if (!currentDetail?.loading && currentDetail?.mode === 'change' && currentDetail.data?.change_id) {
+              await openTaskCenterChange(currentDetail.data.change_id, currentDetail.data.page || 1, true);
+            }
+          } else {
+            state.taskCenterSelectedQueue = null;
+            state.taskCenterQueueDetail = null;
+            renderTaskDetail();
+          }
+        }
+      } catch (error) {
+        if (request !== state.taskCenterListRequest) return;
+        if (!silent) toast(error.message, 'error');
+      } finally {
+        if (request === state.taskCenterListRequest) state.taskCenterRefreshing = false;
+      }
+    }
+    function openTaskCenter(taskID) {
+      setTab('tasks');
+      if (taskID) selectTaskCenterTask(taskID, true);
+    }
+    function closeTaskCenterDetail(updateHash) {
+      state.taskCenterDetailRequest++;
+      state.taskQueueDetailRequest++;
+      state.taskCenterSelectedID = '';
+      state.taskCenterSelectedQueue = null;
+      state.taskCenterQueueDetail = null;
+      state.taskCenterDetail = null;
+      document.getElementById('taskDetailCard').classList.remove('mobile-open');
+      renderTaskCenter();
+      if (updateHash !== false && window.history && window.history.replaceState) window.history.replaceState(null, '', '#tasks');
+    }
+    async function openTaskCenterChange(changeID, page, silent) {
+      const id = String(changeID || '').trim();
+      if (!id) return;
+      const pageNo = Math.max(1, Number(page || 1));
+      const request = ++state.taskQueueDetailRequest;
+      const current = state.taskCenterQueueDetail;
+      const preserve = current?.mode === 'change' && current?.data?.change_id === id && Number(current?.data?.page || 1) === pageNo;
+      if (!preserve) {
+        state.taskCenterQueueDetail = { loading: true, mode: 'change', data: { change_id: id, page: pageNo, page_size: 20 } };
+        renderTaskQueueDetail();
+      }
+      try {
+        const data = await api('proxy.changes.get', { change_id: id, page: pageNo, page_size: 20 });
+        if (request !== state.taskQueueDetailRequest || state.taskCenterSelectedQueue?.id !== 'proxy_changes') return;
+        const counts = data?.counts || {};
+        const queue = state.taskCenterSelectedQueue;
+        if (queue) {
+          queue.status = data?.status || queue.status;
+          queue.total = Number(data?.total ?? counts.total ?? queue.total ?? 0);
+          queue.succeeded = Number(counts.succeeded || 0);
+          queue.failed = Number(counts.failed || 0);
+          queue.completed = queue.succeeded + queue.failed;
+          queue.waiting = Number(counts.pending || 0);
+          queue.running = data?.status === 'running' && queue.waiting > 0 ? Math.max(1, Number(queue.running || 0)) : 0;
+        }
+        state.taskCenterQueueDetail = { loading: false, mode: 'change', data: data };
+        state.taskQueuePage = Number(data?.page || pageNo);
+        renderTaskQueueDetail();
+      } catch (error) {
+        if (request !== state.taskQueueDetailRequest) return;
+        if (!preserve) {
+          state.taskCenterQueueDetail = null;
+          renderTaskQueueDetail();
+        }
+        if (!silent) throw error;
+      }
+    }
+    async function refreshTaskCenterQueue(queueID, announce) {
+      await refreshTaskCenter(true);
+      const latest = (state.taskCenter?.resident_queues || []).find((item) => item.id === queueID);
+      if (!latest) {
+        state.taskCenterSelectedQueue = null;
+        state.taskCenterQueueDetail = null;
+        renderTaskDetail();
+      }
+      if (announce) toast('队列状态已刷新', 'success');
+    }
+    function watchTaskInBackground(value, label) {
+      if (!value || !value.task_id) return;
+      waitForTask(value, label).then((result) => {
+        if (state.activeTab === 'tasks') refreshTaskCenter(true);
+        if (result && label && state.activeTab !== 'tasks') toast(label + '已完成，可在任务中心查看结果', 'success');
+      }).catch((error) => toast(error.message || (label || '任务') + '执行失败', 'error'));
+    }
     function eventMatches(event) {
       const query = state.eventQuery.toLowerCase().trim();
       const text = [event.auth_id, event.class, event.action, event.result, event.detail].join(' ').toLowerCase();
@@ -7144,7 +8249,7 @@
       document.getElementById('eventsCount').textContent = '筛选：' + result.total + ' · 共：' + state.events.length + ' 条事件';
       renderPager('events', result);
     }
-    function setValue(id, value) { const el = document.getElementById(id); if (el) el.value = value == null ? '' : value; }
+    function setValue(id, value) { const el = document.getElementById(id); if (el) el.value = value == null ? '' : String(value); }
     function setChecked(id, value) { const el = document.getElementById(id); if (el) el.checked = Boolean(value); }
     function valueOf(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
     function numberValue(id, fallback) { const parsed = Number(valueOf(id)); return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback; }
@@ -7155,11 +8260,17 @@
       const quality = policy.quality || {};
       const probe = policy.probe || {};
       const routing = policy.routing || {};
+      const taskHistory = policy.task_history || {};
       setChecked('p_passive', policy.passive_guard !== false);
       setChecked('p_transparent', policy.transparent_guard === true);
       setValue('p_auto_action', policy.auto_action || 'observe');
       setValue('p_model_prefixes', (policy.model_prefixes || ['grok-']).join(', '));
       setValue('p_events_limit', policy.events_limit || 1000);
+      setChecked('p_task_history_enabled', taskHistory.enabled !== false);
+      setValue('p_task_history_retention_days', taskHistory.retention_days || 3);
+      setValue('p_task_history_max_records', taskHistory.max_records || 500);
+      setValue('p_task_history_max_bytes_mib', Math.max(1, Math.round(Number(taskHistory.max_bytes || 134217728) / 1048576)));
+      setValue('p_task_history_max_items', taskHistory.max_items_per_task || 10000);
       setValue('p_state_file', (state.overview && state.overview.state_file) || '');
       setValue('p_selection_strategy', routing.selection_strategy || 'round_robin');
       setChecked('p_prefer_last_success', routing.prefer_last_success !== false);
@@ -7207,6 +8318,12 @@
       policy.auto_action = valueOf('p_auto_action');
       policy.model_prefixes = (valueOf('p_model_prefixes') || '').split(',').map((item) => item.trim()).filter(Boolean);
       policy.events_limit = numberValue('p_events_limit', 1000);
+      policy.task_history = policy.task_history || {};
+      policy.task_history.enabled = document.getElementById('p_task_history_enabled').checked;
+      policy.task_history.retention_days = numberValue('p_task_history_retention_days', 3);
+      policy.task_history.max_records = numberValue('p_task_history_max_records', 500);
+      policy.task_history.max_bytes = Math.round(numberValue('p_task_history_max_bytes_mib', 128) * 1048576);
+      policy.task_history.max_items_per_task = numberValue('p_task_history_max_items', 10000);
       policy.routing = policy.routing || {};
       policy.routing.selection_strategy = valueOf('p_selection_strategy') || 'round_robin';
       policy.routing.prefer_last_success = document.getElementById('p_prefer_last_success').checked;
@@ -7257,6 +8374,11 @@
       if (!(policy.probe.queue_size >= 1 && policy.probe.queue_size <= 1000000)) { toast('后台队列容量必须在 1 到 1000000 之间', 'error'); return; }
       if (!policy.routing.session_affinity_ttl) { toast('会话亲和 TTL 不能为空', 'error'); return; }
       if (!nextStateFile) { toast('状态文件路径不能为空', 'error'); return; }
+      const taskHistory = policy.task_history || {};
+      if (!(taskHistory.retention_days >= 1 && taskHistory.retention_days <= 365)) { toast('任务历史保留天数必须在 1 到 365 之间', 'error'); return; }
+      if (!(taskHistory.max_records >= 1 && taskHistory.max_records <= 10000)) { toast('任务历史记录数必须在 1 到 10000 之间', 'error'); return; }
+      if (!(taskHistory.max_bytes >= 1048576 && taskHistory.max_bytes <= 4294967296)) { toast('任务历史磁盘上限必须在 1 到 4096 MiB 之间', 'error'); return; }
+      if (!(taskHistory.max_items_per_task >= 1 && taskHistory.max_items_per_task <= 100000)) { toast('单任务明细上限必须在 1 到 100000 之间', 'error'); return; }
       setBusy(button, true);
       document.getElementById('policyStatus').textContent = '正在保存策略…';
       try {
@@ -7430,6 +8552,158 @@
     document.getElementById('accountRefreshBtn').addEventListener('click', (event) => refreshAccounts(event.currentTarget));
     document.getElementById('leaseRefreshBtn').addEventListener('click', (event) => refreshResin(event.currentTarget));
     document.getElementById('eventRefreshBtn').addEventListener('click', (event) => refreshEvents(event.currentTarget));
+    document.getElementById('taskSearch').addEventListener('input', (event) => {
+      state.taskCenterQuery = event.target.value;
+      state.taskCenterPage = 1;
+      window.clearTimeout(taskSearchTimer);
+      taskSearchTimer = window.setTimeout(() => refreshTaskCenter(false), 250);
+    });
+    document.getElementById('taskCategoryFilter').addEventListener('change', (event) => {
+      state.taskCenterCategory = event.target.value;
+      state.taskCenterPage = 1;
+      refreshTaskCenter(false);
+    });
+    document.getElementById('taskStatusFilter').addEventListener('change', (event) => {
+      state.taskCenterStatus = event.target.value;
+      state.taskCenterPage = 1;
+      refreshTaskCenter(false);
+    });
+    document.getElementById('taskRefreshBtn').addEventListener('click', (event) => {
+      refreshTaskCenter(false).then(() => toast('任务列表已刷新', 'success'));
+    });
+    document.getElementById('taskRows').addEventListener('click', (event) => {
+      const row = event.target.closest('[data-task-select]');
+      if (row) selectTaskCenterTask(row.dataset.taskSelect, true);
+    });
+    document.getElementById('taskPager').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-task-page]');
+      if (!button || button.disabled) return;
+      const total = Number(state.taskCenter?.total || 0);
+      const size = Number(state.taskCenterPageSize || state.taskCenter?.page_size || 20);
+      const pages = Math.max(1, Math.ceil(total / size));
+      const action = button.dataset.taskPage;
+      if (action === 'first') state.taskCenterPage = 1;
+      else if (action === 'prev') state.taskCenterPage = Math.max(1, state.taskCenterPage - 1);
+      else if (action === 'next') state.taskCenterPage = Math.min(pages, state.taskCenterPage + 1);
+      else if (action === 'last') state.taskCenterPage = pages;
+      refreshTaskCenter(false);
+    });
+    document.getElementById('taskPager').addEventListener('change', (event) => {
+      if (event.target.id !== 'taskPageSize') return;
+      state.taskCenterPageSize = Number(event.target.value) || 20;
+      state.taskCenterPage = 1;
+      refreshTaskCenter(false);
+    });
+    document.getElementById('residentQueues').addEventListener('click', async (event) => {
+      const open = event.target.closest('[data-task-queue]');
+      if (open) { selectTaskCenterQueue(open.dataset.taskQueue, true); return; }
+      const refresh = event.target.closest('[data-task-queue-refresh]');
+      if (refresh) { await refreshTaskCenterQueue(refresh.dataset.taskQueueRefresh, true); }
+    });
+    document.getElementById('taskDetailClose').addEventListener('click', () => closeTaskCenterDetail(true));
+    document.getElementById('taskDetailBody').addEventListener('change', (event) => {
+      if (event.target.id !== 'taskItemStatusFilter') return;
+      state.taskCenterDetailStatus = event.target.value;
+      loadTaskCenterDetail(state.taskCenterSelectedID, 1, state.taskCenterDetailStatus, false);
+    });
+    document.getElementById('taskDetailBody').addEventListener('click', async (event) => {
+      const itemPage = event.target.closest('[data-task-item-page]');
+      if (itemPage) {
+        const page = Math.max(1, Number(state.taskCenterDetailPage || 1) + Number(itemPage.dataset.taskItemPage || 0));
+        loadTaskCenterDetail(state.taskCenterSelectedID, page, state.taskCenterDetailStatus, false);
+        return;
+      }
+      const cancel = event.target.closest('[data-task-center-cancel]');
+      if (cancel) {
+        const confirmed = await confirmAction({
+          title: '取消任务',
+          detail: '将停止接受新的工作项，并等待正在执行的操作退出',
+          confirmLabel: '请求取消',
+          icon: 'power',
+          tone: 'danger'
+        });
+        if (!confirmed) return;
+        try {
+          await api('tasks.center.cancel', { task_id: cancel.dataset.taskCenterCancel });
+          toast('已请求取消任务', 'success');
+          await loadTaskCenterDetail(state.taskCenterSelectedID, state.taskCenterDetailPage, state.taskCenterDetailStatus, true);
+          refreshTaskCenter(true);
+        } catch (error) { toast(error.message, 'error'); }
+        return;
+      }
+      const queuePage = event.target.closest('[data-task-queue-page]');
+      if (queuePage) {
+        const page = Math.max(1, Number(state.taskQueuePage || 1) + Number(queuePage.dataset.taskQueuePage || 0));
+        try { await loadTaskQueueDetail(state.taskCenterSelectedQueue, page); }
+        catch (error) { toast(error.message, 'error'); }
+        return;
+      }
+      const changePage = event.target.closest('[data-task-change-page]');
+      if (changePage) {
+        const change = state.taskCenterQueueDetail?.data;
+        const page = Math.max(1, Number(change?.page || 1) + Number(changePage.dataset.taskChangePage || 0));
+        try { await openTaskCenterChange(change?.change_id, page); }
+        catch (error) { toast(error.message, 'error'); }
+        return;
+      }
+      const back = event.target.closest('[data-task-queue-back]');
+      if (back) {
+        if (state.taskCenterSelectedQueue?.synthetic) closeTaskCenterDetail(true);
+        else await loadTaskQueueDetail(state.taskCenterSelectedQueue, state.taskQueuePage || 1);
+        return;
+      }
+      const changeDetail = event.target.closest('[data-task-change-detail]');
+      if (changeDetail) {
+        try { await openTaskCenterChange(changeDetail.dataset.taskChangeDetail, 1); }
+        catch (error) { toast(error.message, 'error'); }
+        return;
+      }
+      const changeRetry = event.target.closest('[data-task-change-retry]');
+      if (changeRetry) {
+        try {
+          const task = await api('proxy.changes.retry', { change_id: changeRetry.dataset.taskChangeRetry });
+          await waitForTask(task, '重试代理同步');
+          await loadTaskQueueDetail(state.taskCenterSelectedQueue, state.taskQueuePage || 1);
+          toast('失败项已重新执行', 'success');
+          refreshTaskCenter(true);
+        } catch (error) { toast(error.message, 'error'); }
+        return;
+      }
+      const cleanupRetry = event.target.closest('[data-task-cleanup-retry]');
+      if (cleanupRetry) {
+        try {
+          await api('resin.cleanup.retry', { id: cleanupRetry.dataset.taskCleanupRetry });
+          await loadTaskQueueDetail(state.taskCenterSelectedQueue, state.taskQueuePage || 1);
+          toast('清理任务已重新排队', 'success');
+          refreshTaskCenter(true);
+        } catch (error) { toast(error.message, 'error'); }
+        return;
+      }
+      const cleanupPause = event.target.closest('[data-task-cleanup-pause]');
+      if (cleanupPause) {
+        try {
+          await api('resin.cleanup.pause', { id: cleanupPause.dataset.taskCleanupPause, paused: cleanupPause.dataset.paused === 'true' });
+          await loadTaskQueueDetail(state.taskCenterSelectedQueue, state.taskQueuePage || 1);
+          toast(cleanupPause.dataset.paused === 'true' ? '清理任务已暂停' : '清理任务已恢复', 'success');
+          refreshTaskCenter(true);
+        } catch (error) { toast(error.message, 'error'); }
+        return;
+      }
+      const queueAction = event.target.closest('[data-task-queue-action]');
+      if (queueAction) {
+        try {
+          if (queueAction.dataset.taskQueueAction === 'auto_bind') {
+            setTab('resin');
+            setProxySubtab('bindings');
+            window.setTimeout(() => setProxyAutoBindSettingsOpen(true), 0);
+          } else if (queueAction.dataset.taskQueueAction === 'scan') {
+            await api('proxy.auto_bind.run');
+            toast('已触发自动绑定扫描', 'success');
+            window.setTimeout(() => refreshTaskCenter(true), 1000);
+          }
+        } catch (error) { toast(error.message, 'error'); }
+      }
+    });
     document.getElementById('accountProbeAllBtn').addEventListener('click', async (event) => {
       const button = event.currentTarget;
       const authIDs = selectedAccountIDs();
@@ -7660,7 +8934,7 @@
       const retry = event.target.closest('[data-proxy-source-retry]');
       if (retry) { retryProxySourceSync(retry.dataset.proxySourceRetry, retry); return; }
       const change = event.target.closest('[data-proxy-source-change]');
-      if (change) { openProxyChangeDetails(change.dataset.proxySourceChange); return; }
+      if (change) { openProxyChangeDetails(change.dataset.proxySourceChange).catch((error) => toast(error.message, 'error')); return; }
       const remove = event.target.closest('[data-proxy-source-delete]');
       if (remove) { deleteProxySource(remove.dataset.proxySourceDelete, remove.dataset.kind); }
     });
@@ -7675,37 +8949,6 @@
       const target = event.target.closest('button');
       if (!target) return;
       try {
-        if (target.id === 'proxyTasksRefreshBtn') { const errors = await refreshProxyTasks(); if (state.proxyEditing?.kind === 'tasks') state.proxyEditing.taskErrors = errors; renderProxyTaskDrawer(); return; }
-        if (target.hasAttribute('data-task-cancel')) {
-          try {
-            const task = await api('tasks.cancel', { task_id: target.dataset.taskCancel });
-            toast('已请求取消任务：' + (task.progress || '等待执行中的工作退出'));
-            await refreshProxyTasks();
-            if (state.proxyEditing?.kind === 'tasks') renderProxyTaskDrawer();
-          } catch (error) { toast(error.message, 'error'); }
-          return;
-        }
-        if (target.hasAttribute('data-proxy-task-detail')) { const editor = state.proxyEditing; if (editor?.kind === 'tasks' && await loadProxyTaskDetail(editor, 'task', target.dataset.proxyTaskDetail, 1)) renderProxyTaskDrawer(); return; }
-        if (target.hasAttribute('data-proxy-change-detail')) { const editor = state.proxyEditing; if (editor?.kind === 'tasks' && await loadProxyTaskDetail(editor, 'change', target.dataset.proxyChangeDetail, 1)) renderProxyTaskDrawer(); return; }
-        if (target.hasAttribute('data-proxy-change-retry') || target.hasAttribute('data-proxy-change-cancel')) {
-          const retry = target.hasAttribute('data-proxy-change-retry');
-          const result = await waitForTask(await api(retry ? 'proxy.changes.retry' : 'proxy.changes.cancel', { change_id: target.dataset.proxyChangeRetry || target.dataset.proxyChangeCancel }), retry ? '重试代理同步' : '取消未执行同步');
-          reportProxyResult(result, retry ? '重试同步' : '取消同步'); await refreshProxyTasks(); renderProxyTaskDrawer(); return;
-        }
-        if (target.hasAttribute('data-task-detail-page')) {
-          const editor = state.proxyEditing;
-          const page = Math.max(1, (editor.taskDetailPage || 1) + Number(target.dataset.taskDetailPage));
-          if (editor.taskDetail?.change_id && editor.taskDetail.page_size) {
-            if (!await loadProxyTaskDetail(editor, 'change', editor.taskDetail.change_id, page)) return;
-          }
-          editor.taskDetailPage = page; renderProxyTaskDrawer(); return;
-        }
-        if (target.hasAttribute('data-cleanup-page')) { state.resinCleanupPage = Math.max(1, state.resinCleanupPage + Number(target.dataset.cleanupPage)); await refreshProxyTasks(); renderProxyTaskDrawer(); return; }
-        if (target.hasAttribute('data-cleanup-retry') || target.hasAttribute('data-cleanup-pause')) {
-          const retry = target.hasAttribute('data-cleanup-retry');
-          const result = await waitForTask(await api(retry ? 'resin.cleanup.retry' : 'resin.cleanup.pause', retry ? { id: target.dataset.cleanupRetry } : { id: target.dataset.cleanupPause, paused: target.dataset.paused === 'true' }), retry ? '重试 Resin 清理' : '更新清理暂停状态');
-          reportProxyResult(result, retry ? '重试清理' : '更新清理状态'); await refreshProxyTasks(); renderProxyTaskDrawer(); return;
-        }
         if (target.hasAttribute('data-proxy-node-add')) {
           const list = document.getElementById('proxyNodeRows');
           const editor = state.proxyEditing;
@@ -7859,7 +9102,7 @@
       setProxyAutoBindSettingsOpen(document.getElementById('proxyAutoBindSettings').hidden);
     });
     document.getElementById('proxyAutoBindCloseBtn').addEventListener('click', () => setProxyAutoBindSettingsOpen(false));
-    document.getElementById('proxyTasksBtn').addEventListener('click', openProxyTasks);
+    document.getElementById('proxyTasksBtn').addEventListener('click', () => openTaskCenter());
     document.getElementById('proxyAutoBindForm').addEventListener('submit', (event) => {
       event.preventDefault();
       saveProxyAutoBind(event.submitter || document.querySelector('#proxyAutoBindForm button[type="submit"]'));
@@ -7964,6 +9207,7 @@
       const accountDrawer = document.getElementById('accountDrawer');
       if (!proxyDrawer.hidden) { if (event.key === 'Escape') closeProxyDrawer(); else trapDialogFocus(event, proxyDrawer); }
       else if (!accountDrawer.hidden) { if (event.key === 'Escape') closeDrawer(); else trapDialogFocus(event, accountDrawer); }
+      else if (document.getElementById('taskDetailCard').classList.contains('mobile-open') && event.key === 'Escape') { event.preventDefault(); closeTaskCenterDetail(true); }
       else if (!document.getElementById('proxyAutoBindSettings').hidden && event.key === 'Escape') { event.preventDefault(); setProxyAutoBindSettingsOpen(false); }
     });
     function applyLocationHash() {
@@ -7975,7 +9219,17 @@
         openProxyResinEditor(existing || null).catch((error) => toast(error.message, 'error'));
         return;
       }
-      if (hash.startsWith('settings/')) { setTab('settings', false); return; }
+      if (hash === 'tasks' || hash.startsWith('tasks/')) {
+        const encodedTaskID = hash.startsWith('tasks/') ? hash.slice('tasks/'.length) : '';
+        setTab('tasks', false);
+        if (encodedTaskID) {
+          let taskID = encodedTaskID;
+          try { taskID = decodeURIComponent(encodedTaskID); } catch (_) {}
+          selectTaskCenterTask(taskID, false);
+        }
+        return;
+      }
+      if (hash.startsWith('settings/')) { setTab('settings', false); openSettings(hash.slice('settings/'.length)); return; }
       setTab(hash, false);
     }
     window.addEventListener('hashchange', applyLocationHash);
@@ -7984,11 +9238,13 @@
     window.addEventListener('beforeunload', (event) => {
       if (state.proxyEditing?.dirty || Array.from(formDrafts.values()).some((draft) => draft.dirty)) { event.preventDefault(); event.returnValue = ''; }
     });
-    window.setInterval(async () => {
-      if (state.proxyEditing?.kind !== 'tasks' || document.hidden) return;
-      const errors = await refreshProxyTasks();
-      if (state.proxyEditing?.kind === 'tasks') { state.proxyEditing.taskErrors = errors; renderProxyTaskDrawer(); }
-    }, 3000);
+
+    window.setInterval(() => {
+      if (state.activeTab !== 'tasks' || document.hidden) return;
+      const counts = state.taskCenter?.counts || {};
+      const queuesRunning = (state.taskCenter?.resident_queues || []).some((queue) => queue.status === 'running' || Number(queue.running || 0) > 0 || Number(queue.waiting || 0) > 0);
+      if (Number(counts.active || 0) > 0 || Number(counts.running_items || 0) > 0 || queuesRunning) refreshTaskCenter(true);
+    }, 5000);
     applyLocationHash();
     refreshAll(true);
   </script>

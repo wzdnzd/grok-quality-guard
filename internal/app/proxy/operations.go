@@ -817,6 +817,7 @@ func (s *Service) runProxyChange(ctx context.Context, id string) (map[string]any
 	errRun := tasks.RunBoundedQueue(ctx, proxyIndices(len(indices)), min(256, len(indices)), s.proxyWorkerCount(), func(jobCtx context.Context, position int) {
 		if s.env.ProxyStore().ProxyChangeStatus(id) == "canceled" {
 			results[position].Status = "canceled"
+			tasks.ReportItem(jobCtx, results[position])
 			return
 		}
 		item := change.Items[indices[position]]
@@ -877,6 +878,7 @@ func (s *Service) runProxyChange(ctx context.Context, id string) (map[string]any
 			}
 		}
 		results[position] = result
+		tasks.ReportItem(jobCtx, result)
 	})
 	var final proxy.SourceChange
 	errFinish := s.env.ProxyStore().Update(func(state *State) error {
@@ -988,6 +990,7 @@ func (s *Service) proxyApplyNodeToAccounts(ctx context.Context, node proxy.Node,
 			result.Error = redact.SanitizeError(err)
 		}
 		results[i] = result
+		tasks.ReportItem(jobCtx, result)
 	})
 	return results
 }
@@ -1001,6 +1004,7 @@ func (s *Service) proxyApplyTemplateToAccounts(ctx context.Context, template pro
 		rendered, err := compiled.RenderWithReader(nil, nil)
 		if err != nil {
 			results[i] = failedProxyResult(ids[i], "failed", err)
+			tasks.ReportItem(jobCtx, results[i])
 			return
 		}
 		result, err := s.proxyReplaceManagedEndpoint(jobCtx, ids[i], proxy.SourceTemplate, template.ID, template.Revision, rendered.Endpoint, rendered.Values, "proxy_template_apply")
@@ -1008,6 +1012,7 @@ func (s *Service) proxyApplyTemplateToAccounts(ctx context.Context, template pro
 			result.Error = redact.SanitizeError(err)
 		}
 		results[i] = result
+		tasks.ReportItem(jobCtx, result)
 	})
 	return results
 }

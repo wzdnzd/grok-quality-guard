@@ -388,10 +388,17 @@ func (s *Store) Load(defaultPolicy config.Policy, revision string) error {
 	if len(state.Policy.ModelPrefixes) == 0 && state.Policy.EventsLimit == 0 {
 		state.Policy = defaultPolicy
 		state.PolicyYAMLRevision = revision
-	} else if normalized, errNormalize := config.NormalizePolicy(state.Policy); errNormalize != nil {
-		return fmt.Errorf("state policy invalid: %w", errNormalize)
 	} else {
-		state.Policy = normalized
+		// States written before task history existed must adopt the new default
+		// instead of inheriting bool's zero value and silently disabling history.
+		if !rawPolicyHasTaskHistory(raw) {
+			state.Policy.TaskHistory = config.DefaultTaskHistoryConfig()
+		}
+		if normalized, errNormalize := config.NormalizePolicy(state.Policy); errNormalize != nil {
+			return fmt.Errorf("state policy invalid: %w", errNormalize)
+		} else {
+			state.Policy = normalized
+		}
 	}
 	if state.PolicyYAMLRevision == "" {
 		state.PolicyYAMLRevision = revision
@@ -426,6 +433,17 @@ func (s *Store) Load(defaultPolicy config.Policy, revision string) error {
 		}
 	}
 	return nil
+}
+
+func rawPolicyHasTaskHistory(raw []byte) bool {
+	var envelope struct {
+		Policy map[string]json.RawMessage `json:"policy"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil {
+		return false
+	}
+	_, ok := envelope.Policy["task_history"]
+	return ok
 }
 
 func decodeStrictJSON(data []byte, target any) error {

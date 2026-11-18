@@ -16,10 +16,18 @@ import (
 )
 
 const (
-	defaultEventsLimit        = 1000
-	defaultProbeQueueSize     = 10000
-	maxProbeQueueSize         = 1000000
-	defaultProbeUnknownJitter = 30 * time.Second
+	defaultEventsLimit              = 1000
+	defaultProbeQueueSize           = 10000
+	maxProbeQueueSize               = 1000000
+	defaultProbeUnknownJitter       = 30 * time.Second
+	defaultTaskHistoryRetentionDays = 3
+	defaultTaskHistoryMaxRecords    = 500
+	defaultTaskHistoryMaxBytes      = int64(128 << 20)
+	defaultTaskHistoryMaxItems      = 10000
+	maxTaskHistoryRetentionDays     = 365
+	maxTaskHistoryMaxRecords        = 10000
+	maxTaskHistoryMaxBytes          = int64(4 << 30)
+	maxTaskHistoryMaxItems          = 100000
 )
 
 // Duration accepts YAML and JSON duration strings while keeping a stable text form
@@ -123,6 +131,24 @@ type RoutingConfig struct {
 	SessionAffinityMaxSize int      `yaml:"session_affinity_max_entries" json:"session_affinity_max_entries"`
 }
 
+type TaskHistoryConfig struct {
+	Enabled         bool  `yaml:"enabled" json:"enabled"`
+	RetentionDays   int   `yaml:"retention_days" json:"retention_days"`
+	MaxRecords      int   `yaml:"max_records" json:"max_records"`
+	MaxBytes        int64 `yaml:"max_bytes" json:"max_bytes"`
+	MaxItemsPerTask int   `yaml:"max_items_per_task" json:"max_items_per_task"`
+}
+
+func DefaultTaskHistoryConfig() TaskHistoryConfig {
+	return TaskHistoryConfig{
+		Enabled:         true,
+		RetentionDays:   defaultTaskHistoryRetentionDays,
+		MaxRecords:      defaultTaskHistoryMaxRecords,
+		MaxBytes:        defaultTaskHistoryMaxBytes,
+		MaxItemsPerTask: defaultTaskHistoryMaxItems,
+	}
+}
+
 type Config struct {
 	Enabled          bool          `yaml:"enabled" json:"enabled"`
 	Priority         int           `yaml:"priority" json:"priority"`
@@ -134,9 +160,10 @@ type Config struct {
 	Quality          QualityConfig `yaml:"quality" json:"quality"`
 	Probe            ProbeConfig   `yaml:"probe" json:"probe"`
 
-	Proxy       ProxyConfig `yaml:"proxy" json:"proxy"`
-	StateFile   string      `yaml:"state_file" json:"state_file"`
-	EventsLimit int         `yaml:"events_limit" json:"events_limit"`
+	Proxy       ProxyConfig       `yaml:"proxy" json:"proxy"`
+	TaskHistory TaskHistoryConfig `yaml:"task_history" json:"task_history"`
+	StateFile   string            `yaml:"state_file" json:"state_file"`
+	EventsLimit int               `yaml:"events_limit" json:"events_limit"`
 	// Store is injected by CLIProxyAPI under plugins.configs.<plugin-id> when a
 	// plugin is installed from the plugin store. It is host-owned metadata, not
 	// plugin policy, but it must pass the strict decoder during registration.
@@ -153,8 +180,9 @@ type Policy struct {
 	Quality          QualityConfig `json:"quality"`
 	Probe            ProbeConfig   `json:"probe"`
 
-	ProxyAutoRotateAfterQualityFail bool `json:"proxy_auto_rotate_after_quality_failure"`
-	EventsLimit                     int  `json:"events_limit"`
+	ProxyAutoRotateAfterQualityFail bool              `json:"proxy_auto_rotate_after_quality_failure"`
+	TaskHistory                     TaskHistoryConfig `json:"task_history"`
+	EventsLimit                     int               `json:"events_limit"`
 }
 
 func DefaultRoutingConfig() RoutingConfig {
@@ -223,6 +251,7 @@ func DefaultConfig() Config {
 		Quality:          DefaultQualityConfig(),
 		Probe:            DefaultProbeConfig(),
 		Proxy:            DefaultProxyConfig(),
+		TaskHistory:      DefaultTaskHistoryConfig(),
 
 		EventsLimit: defaultEventsLimit,
 	}
@@ -266,6 +295,9 @@ func normalizeConfig(cfg *Config) error {
 	if cfg.EventsLimit <= 0 {
 		cfg.EventsLimit = defaultEventsLimit
 	}
+	if errTaskHistory := normalizeTaskHistory(&cfg.TaskHistory); errTaskHistory != nil {
+		return errTaskHistory
+	}
 	if errRouting := normalizeRouting(&cfg.Routing); errRouting != nil {
 		return errRouting
 	}
@@ -293,6 +325,38 @@ func (q *QualityConfig) UnmarshalJSON(data []byte) error {
 		return errUnmarshal
 	}
 	*q = QualityConfig(decoded)
+	return nil
+}
+
+func normalizeTaskHistory(history *TaskHistoryConfig) error {
+	if history == nil {
+		return errors.New("task_history is nil")
+	}
+	defaults := DefaultTaskHistoryConfig()
+	if history.RetentionDays <= 0 {
+		history.RetentionDays = defaults.RetentionDays
+	}
+	if history.MaxRecords <= 0 {
+		history.MaxRecords = defaults.MaxRecords
+	}
+	if history.MaxBytes <= 0 {
+		history.MaxBytes = defaults.MaxBytes
+	}
+	if history.MaxItemsPerTask <= 0 {
+		history.MaxItemsPerTask = defaults.MaxItemsPerTask
+	}
+	if history.RetentionDays > maxTaskHistoryRetentionDays {
+		return fmt.Errorf("task_history.retention_days must be <= %d", maxTaskHistoryRetentionDays)
+	}
+	if history.MaxRecords > maxTaskHistoryMaxRecords {
+		return fmt.Errorf("task_history.max_records must be <= %d", maxTaskHistoryMaxRecords)
+	}
+	if history.MaxBytes > maxTaskHistoryMaxBytes {
+		return fmt.Errorf("task_history.max_bytes must be <= %d", maxTaskHistoryMaxBytes)
+	}
+	if history.MaxItemsPerTask > maxTaskHistoryMaxItems {
+		return fmt.Errorf("task_history.max_items_per_task must be <= %d", maxTaskHistoryMaxItems)
+	}
 	return nil
 }
 
@@ -465,6 +529,7 @@ func PolicyFromConfig(cfg Config) Policy {
 		Probe:            cfg.Probe,
 
 		ProxyAutoRotateAfterQualityFail: cfg.Proxy.AutoRotateAfterQualityFailure,
+		TaskHistory:                     cfg.TaskHistory,
 		EventsLimit:                     cfg.EventsLimit,
 	}
 }
@@ -482,6 +547,7 @@ func ApplyPolicy(cfg *Config, policy Policy) error {
 	cfg.Probe = policy.Probe
 
 	cfg.Proxy.AutoRotateAfterQualityFailure = policy.ProxyAutoRotateAfterQualityFail
+	cfg.TaskHistory = policy.TaskHistory
 	cfg.EventsLimit = policy.EventsLimit
 	return normalizeConfig(cfg)
 }
@@ -497,6 +563,7 @@ func normalizePolicy(policy Policy) (Policy, error) {
 	cfg.Probe = policy.Probe
 
 	cfg.Proxy.AutoRotateAfterQualityFailure = policy.ProxyAutoRotateAfterQualityFail
+	cfg.TaskHistory = policy.TaskHistory
 	cfg.EventsLimit = policy.EventsLimit
 	if errNormalize := normalizeConfig(&cfg); errNormalize != nil {
 		return Policy{}, errNormalize

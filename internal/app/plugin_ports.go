@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -150,6 +151,14 @@ func (p *Plugin) TaskByID(taskID string) (tasks.Task, bool) { return p.taskByID(
 func (p *Plugin) CancelTask(taskID string) (tasks.Task, error) { return p.cancelTask(taskID) }
 
 func (p *Plugin) ListTasks(limit int) []tasks.Task { return p.listTasks(limit) }
+
+func (p *Plugin) TaskCenter(filter tasks.TaskCenterFilter) (tasks.TaskCenterResult, error) {
+	return p.taskCenter(filter)
+}
+
+func (p *Plugin) TaskDetail(taskID string, page, pageSize int, status string) (tasks.TaskDetail, error) {
+	return p.taskDetail(taskID, page, pageSize, status)
+}
 
 func (p *Plugin) AccountProxyURL(ctx context.Context, account model.Account, allowFallback bool) string {
 	proxyURL := strings.TrimSpace(account.ProxyURL)
@@ -358,7 +367,11 @@ func (p *Plugin) SetPolicy(policy appconfig.Policy) {
 	p.cfg.Quality = policy.Quality
 	p.cfg.Probe = policy.Probe
 	p.cfg.Proxy.AutoRotateAfterQualityFailure = policy.ProxyAutoRotateAfterQualityFail
+	p.cfg.TaskHistory = policy.TaskHistory
 	p.cfg.EventsLimit = policy.EventsLimit
+	if p.store != nil {
+		_ = p.taskMgr.ConfigureHistory(filepath.Dir(p.store.Path()), tasks.HistoryConfig{Enabled: policy.TaskHistory.Enabled, RetentionDays: policy.TaskHistory.RetentionDays, MaxRecords: policy.TaskHistory.MaxRecords, MaxBytes: policy.TaskHistory.MaxBytes, MaxItemsPerTask: policy.TaskHistory.MaxItemsPerTask})
+	}
 }
 
 func (p *Plugin) WakeProbeWaiters()   { p.probeSvc.WakeWaiters() }
@@ -404,6 +417,20 @@ func (p *Plugin) cancelTask(taskID string) (tasks.Task, error) {
 		return tasks.Task{}, tasks.ErrTaskNotFound
 	}
 	return p.taskMgr.CancelTask(taskID)
+}
+
+func (p *Plugin) taskCenter(filter tasks.TaskCenterFilter) (tasks.TaskCenterResult, error) {
+	if p == nil || p.taskMgr == nil {
+		return tasks.TaskCenterResult{}, nil
+	}
+	return p.taskMgr.ListCenter(filter)
+}
+
+func (p *Plugin) taskDetail(taskID string, page, pageSize int, status string) (tasks.TaskDetail, error) {
+	if p == nil || p.taskMgr == nil {
+		return tasks.TaskDetail{}, tasks.ErrTaskNotFound
+	}
+	return p.taskMgr.TaskDetail(taskID, page, pageSize, status)
 }
 
 func (p *Plugin) listTasks(limit int) []tasks.Task {

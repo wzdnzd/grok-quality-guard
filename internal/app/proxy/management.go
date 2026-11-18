@@ -585,6 +585,7 @@ func (s *Service) actionProxySourcesTestSelected(_ context.Context, params map[s
 				}
 			}
 			items[index] = item
+			tasks.ReportItem(jobCtx, item)
 		})
 		return proxySourceBatchResult(items), err
 	})
@@ -616,6 +617,7 @@ func (s *Service) actionProxySourcesDeleteSelected(_ context.Context, params map
 				item.Endpoint, _ = result["proxy"].(string)
 			}
 			items[index] = item
+			tasks.ReportItem(jobCtx, item)
 		})
 		return proxySourceBatchResult(items), err
 	})
@@ -666,6 +668,7 @@ func (s *Service) actionProxyBatch(action string, params map[string]any) (any, i
 				result.Error = redact.SanitizeError(err)
 			}
 			results[i] = result
+			tasks.ReportItem(jobCtx, result)
 		})
 		return proxyBatchResult(results), err
 	})

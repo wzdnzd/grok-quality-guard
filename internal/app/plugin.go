@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -158,6 +159,7 @@ func (p *Plugin) Configure(raw []byte) error {
 		p.mu.Unlock()
 		return errApply
 	}
+	_ = p.taskMgr.ConfigureHistory(filepath.Dir(activePath), tasks.HistoryConfig{Enabled: p.cfg.TaskHistory.Enabled, RetentionDays: p.cfg.TaskHistory.RetentionDays, MaxRecords: p.cfg.TaskHistory.MaxRecords, MaxBytes: p.cfg.TaskHistory.MaxBytes, MaxItemsPerTask: p.cfg.TaskHistory.MaxItemsPerTask})
 	if p.requestCtx == nil || p.requestCtx.Err() != nil {
 		p.requestCtx, p.requestCancel = context.WithCancel(context.Background())
 	}
@@ -203,6 +205,7 @@ func (p *Plugin) UpdateStatePath(value string) (string, error) {
 		return "", errPointer
 	}
 	p.cfg.StateFile = target
+	_ = p.taskMgr.ConfigureHistory(filepath.Dir(target), tasks.HistoryConfig{Enabled: p.cfg.TaskHistory.Enabled, RetentionDays: p.cfg.TaskHistory.RetentionDays, MaxRecords: p.cfg.TaskHistory.MaxRecords, MaxBytes: p.cfg.TaskHistory.MaxBytes, MaxItemsPerTask: p.cfg.TaskHistory.MaxItemsPerTask})
 	return target, nil
 }
 

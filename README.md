@@ -16,8 +16,10 @@ Grok Quality Guard 观测 Grok / xAI auth 的真实响应质量，识别 HTTP 20
 - 账号状态机：`unknown`、`healthy`、`suspect`、`degraded`、`cooling`、`quota_exhausted`、`credential_invalid`、`disabled_by_guard`、`externally_disabled`
 - 首次确认异常可配置为只观察或临时冷却，冷却到期通过固定 prompt 恢复探测
 - 通用代理节点、模板与 Resin 来源统一管理；支持 `http`、`https`、`socks5`、`socks5h`、标准 URL / 地址在前 / `host:port@user:pass` 多格式批量导入、均衡绑定、轮换和清除
-- 内嵌中文化管理页，按概览、账号质量、代理管理、事件日志和设置分 Tab；代理管理内部按“账号绑定 / 代理来源”组织，节点、模板与 Resin 共享同一绑定视图
+- 内嵌中文化管理页，按“概览 / 账号 / 代理管理 / 任务中心 / 事件日志 / 设置”分 Tab；账号、代理和质量交叉验证等异步批量任务统一从任务中心查看与管理，事件日志只承担审计
 - 账号详情展示最近尝试与脱敏质量判定依据，明确区分非质量错误和上一次真实质量结论
+- 任务中心展示任务进度、总数、完成/处理中/等待/成功/失败/跳过数量、逐项结果和历史任务；历史详情按需加载
+- 历史任务默认保留 3 天，可配置保留天数、记录数、归档磁盘上限和单任务明细上限
 - auth、proxy URL、Admin Token、xAI token 全程脱敏
 
 ## 质量判定要点
@@ -175,7 +177,7 @@ internal/
     redact/                     日志和错误脱敏
     routing/                    候选选择、会话粘性与选择索引
     state/                      持久化状态、代理 journal 与路径切换
-    tasks/                      后台任务队列
+    tasks/                      任务中心、异步任务管理与历史存储
   test/                         通过公开 ABI/管理接口驱动的跨包测试
   config/                       配置解码、默认值、校验与策略映射
   model/                        Grok 模型版本与 reasoning 能力识别
@@ -269,6 +271,13 @@ plugins:
           retry_initial: "1m"
           retry_max: "1h"
 
+      task_history:
+        enabled: true
+        retention_days: 3
+        max_records: 500
+        max_bytes: 134217728
+        max_items_per_task: 10000
+
       state_file: "/CLIProxyAPI/plugins/data/grok-quality-guard/state.json"
       events_limit: 1000
 ```
@@ -301,6 +310,34 @@ plugins:
 - 任一健康样本会清零 `soft_strikes`、`error_strikes`、`thinking_strikes`，与旧插件的连续计数语义一致
 
 主动探测调度会先过滤出当前到期的非健康账号，再放入有界队列。`probe.queue_size` 默认 `10000`，最大 `1000000`；`probe.concurrency` 控制探测以及批量账号操作实际使用的 worker 数。`probe.unknown_jitter` 为 `unknown` 账号的首次探测增加稳定抖动，避免大量账号在同一时刻到期。
+
+### 任务中心与历史记录
+
+`任务中心` 是账号、代理、Resin 清理和质量交叉验证等异步批量任务的统一入口。任务列表显示状态、进度、总数、已完成、正在处理、等待、成功、失败、跳过和最近更新时间；打开任务后显示脱敏逐项结果、任务来源和时间信息。代理管理页只保留当前操作入口，不再重复维护另一套任务列表。
+
+历史任务保存在状态文件同目录：
+
+```text
+<state-file-dir>/task-center/
+  index.jsonl                      紧凑任务索引
+  active/<task-id>.json            进行中任务元数据
+  active/<task-id>.items.jsonl     进行中逐项明细
+  archive/YYYY-MM/<task-id>.json.gz
+```
+
+管理页只在进入任务中心时读取索引；历史明细仅在用户打开具体任务时按页解压读取。插件启动时不扫描全部历史，只恢复上次未完成的活动文件并标记为已中断。
+
+| 配置 | 默认值 | 范围 | 说明 |
+| --- | ---: | ---: | --- |
+| `task_history.enabled` | `true` | 布尔 | 关闭后只显示当前进行中的任务，不再保留新完成记录 |
+| `task_history.retention_days` | `3` | `1..365` | 从任务完成时间开始计算 |
+| `task_history.max_records` | `500` | `1..10000` | 超出后优先清理最旧记录 |
+| `task_history.max_bytes` | `134217728` | `1..4294967296` | 已完成任务归档的压缩磁盘占用上限，单位字节 |
+| `task_history.max_items_per_task` | `10000` | `1..100000` | 超出后保留任务汇总，逐项明细标记为已截断 |
+
+常驻队列只在确实处于运行或仍有可操作工作时展示：自动绑定仅在启用或仍有队列工作时显示；代理健康检查仅在自动绑定启用且 `require_healthy=true` 时显示；代理同步仅在存在待处理、失败、部分完成或运行中记录时显示；Resin 清理仅在存在待清理租约或 Resin 来源仍有账号绑定时显示。
+
+事件日志继续记录质量判定、自动处置和代理审计事件，不用于展示实时任务进度。
 
 ### 透明保护
 
@@ -452,8 +489,11 @@ curl -X POST \
 | `policy.reset` | 重置为 YAML 初始值 |
 | `state_file.update` | 写入并切换状态文件路径；目标文件必须不存在 |
 | `events.list` | 查看质量事件日志 |
-| `tasks.get` | 查询异步任务状态、结果和错误 |
-| `tasks.list` | 列出最近异步任务 |
+| `tasks.center.list` | 按类型、状态、关键词和分页查询任务中心 |
+| `tasks.center.get` | 按页懒加载任务逐项明细；历史任务从归档读取 |
+| `tasks.center.cancel` | 请求取消等待中或执行中的任务 |
+| `tasks.get` | 兼容旧客户端的任务状态查询；历史任务会恢复完整结果 |
+| `tasks.list` | 列出当前内存中的异步任务 |
 
 主动探测、通用代理批量绑定/清除/轮换、模板回溯和 Resin 租约清理都是长耗时操作，会立即返回 `202 Accepted` 与 `task_id`，不会占住管理请求超时。调用方应轮询：
 
@@ -461,7 +501,7 @@ curl -X POST \
 {"action":"tasks.get","params":{"task_id":"<task_id>"}}
 ```
 
-任务状态为 `queued`、`running`、`succeeded` 或 `failed`。失败时 `error` 包含脱敏后的原因，`error_status` 保留可用的上游 HTTP 状态。内嵌管理页已经自动轮询并展示进度。
+任务状态为 `queued`、`running`、`succeeded`、`failed`、`cancelled` 或 `interrupted`。失败时 `error` 包含脱敏后的原因，`error_status` 保留可用的上游 HTTP 状态。内嵌管理页通过 `tasks.center.*` 按需加载并以 `tasks.get` 兼容等待方轮询。
 
 API 只接受 POST，并由 CPA management 层完成认证。插件不要求自定义 Header 或请求体 UI 标记，避免管理网关剥离 Header 时页面请求失败。普通列表、绑定响应和任务响应中的 email、proxy URL、token 与密码均脱敏；节点和模板编辑器通过 `proxy.sources.get` 的 `edit_fields:true` 显式回显完整 URL。账号列表同时提供 `auth_id_display` 供展示，操作 API 使用稳定的 `auth_id` 作为标识。`proxy_url` 可能内嵌 Proxy Token，因此普通列表只显示 `scheme://host`。
 
@@ -476,7 +516,7 @@ plugins/data/grok-quality-guard/state.json
 <temp>/grok-quality-guard/state.json
 ```
 
-Docker 部署必须把第一项所在目录挂载为宿主持久卷，否则容器重建后策略、账号状态、事件、代理来源配置、Resin 连接凭据和清理快照仍会丢失：
+Docker 部署必须把第一项所在目录挂载为宿主持久卷，否则容器重建后策略、账号状态、事件、代理来源配置、任务中心历史、Resin 连接凭据和清理快照仍会丢失：
 
 ```yaml
 services:

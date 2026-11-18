@@ -30,6 +30,15 @@ func (s *Service) actionPolicyUpdate(params map[string]any) (any, int, error) {
 	if errUnmarshal := json.Unmarshal(encoded, &policy); errUnmarshal != nil {
 		return nil, http.StatusBadRequest, errUnmarshal
 	}
+	// Older management clients send a policy without the newer task_history
+	// object. Preserve the current setting rather than interpreting the missing
+	// field as enabled=false and silently disabling history.
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(encoded, &fields) == nil {
+		if _, present := fields["task_history"]; !present {
+			policy.TaskHistory = s.env.Policy().TaskHistory
+		}
+	}
 	normalized, errNormalize := normalizePolicy(policy)
 	if errNormalize != nil {
 		return nil, http.StatusBadRequest, errNormalize

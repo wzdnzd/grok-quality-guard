@@ -1646,7 +1646,8 @@ API 模式保存时必须同时验证：
 
 1. `admin_url` 是带 host 的合法 `http` 或 `https` URL，且不包含 userinfo、query 或 fragment。
 2. 使用 Admin Token 调用 `GET /api/v1/system/info`，验证 Admin API 可达且 Token 有效。
-3. 使用同一 Admin Token 调用 `GET /api/v1/platforms?keyword={platform}`，按平台名称精确解析 `platform_id`，并以 API 返回的 `name` 作为后续代理模板使用的规范平台名。
+3. 使用同一 Admin Token 调用 `GET /api/v1/platforms?keyword={platform}`，按平台名称精确解析 `platform_id`，并以 API 返回的
+ame` 作为后续代理模板使用的规范平台名。
 4. 按账号格式渲染验证账号 `grok-validation`，对代理主机执行 SOCKS5 RFC1929 用户名/密码认证，验证 Proxy Token 被接受。
 5. 任一步失败都返回明确错误，且不得写入 state。
 
@@ -1743,7 +1744,7 @@ socks5h://Default.grok-alice-old1:proxy-secret@resin:2260
 
 ### 9.8 清除与批量操作
 
-代理管理页的账号绑定子视图是账号与代理生命周期的操作面，适合承载账号列表、脱敏代理、勾选、批量绑定和批量清除。账号质量判定仍保留在 `账号质量` Tab；连接凭据保留在代理来源编辑器。
+代理管理页的账号绑定子视图是账号与代理生命周期的操作面，适合承载账号列表、脱敏代理、勾选、批量绑定和批量清除。账号状态与质量判定保留在 `账号` Tab；连接凭据保留在代理来源编辑器。
 
 批量绑定通过 `proxy.bind_unbound` 或 `proxy.bindings.bind` 完成。已绑定账号保持原租约，非插件管理的外部代理不会被覆盖。
 
@@ -1790,7 +1791,9 @@ Action API 注册路径：
 /v0/management/plugins/grok-quality-guard/api
 ```
 
-合法性依据：`internal/pluginhost/management.go` 中的 `normalizeResourceRoute` 会把 `ResourceRoute.Path` 挂到 `/v0/resource/plugins/<pluginID>/` 下，仅拒绝空白、`:`、`*` 和 `..`；`normalizeManagementRoute` 会把 action 路由挂到 `/v0/management/` 下，仅拒绝空白、`:` 和 `*`。因此上述注册路径合法，且 `grok-quality-guard` 在每个完整 URL 中只出现一次。
+合法性依据：`internal/pluginhost/management.go` 中的
+ormalizeResourceRoute` 会把 `ResourceRoute.Path` 挂到 `/v0/resource/plugins/<pluginID>/` 下，仅拒绝空白、`:`、`*` 和 `..`；
+ormalizeManagementRoute` 会把 action 路由挂到 `/v0/management/` 下，仅拒绝空白、`:` 和 `*`。因此上述注册路径合法，且 `grok-quality-guard` 在每个完整 URL 中只出现一次。
 
 旧路径 `/plugin/grok/quality-guard`、`/v0/management/plugin/grok/quality-guard/api` 不作为兼容别名。本次文档和后续实现统一使用：
 
@@ -1802,8 +1805,9 @@ Action API 注册路径：
 页面采用与 CPA Management Center 一致的中性色视觉体系，自动跟随宿主页面的明暗主题，所有界面文字使用中文，并按任务频率拆分 Tab：
 
 - `概览`：守护状态、检测模式、账号总数、需关注账号、最近 24h 自动检测统计、质量分布、最近事件、当前策略摘要和代理摘要
-- `账号质量`：搜索、状态筛选和分页、脱敏账号信息、最近尝试、真实思考证据、TPS/TTFT/output/reasoning/encrypted 指标、代理绑定、冷却和探测退避；详情抽屉提供脱敏判定依据，以及主动探测、冷却、恢复、禁用、绑定和轮换
+- `账号`：搜索、状态筛选和分页、脱敏账号信息、最近尝试、真实思考证据、TPS/TTFT/output/reasoning/encrypted 指标、代理绑定、冷却和探测退避；详情抽屉提供脱敏判定依据，以及主动探测、冷却、恢复、禁用、绑定和轮换
 - `代理管理`：内部按 `账号绑定` 和 `代理来源` 两个任务子视图组织。账号绑定子视图展示每个 Grok 账号、脱敏代理、代理账号和轮换代数，支持搜索、状态筛选、分页、单账号绑定/轮换/清除，以及批量绑定/清除。代理来源子视图统一展示节点、模板和 Resin，新增类型下拉同时包含三种来源。
+- `任务中心`：统一展示账号、代理、Resin 清理和质量交叉验证等异步任务，包含进度、总数、处理中、等待、成功、失败、跳过、来源、时间和逐项结果；常驻队列只显示实际启用或仍有工作的队列。历史任务列表从紧凑索引按页读取，逐项结果仅在打开任务时按需解压加载。`#tasks/<task-id>` 可直接打开任务详情
 - `事件日志`：按关键词和事件类型筛选并分页展示时间、auth ID、分类、动作、结果和脱敏详情
 - `设置`：低频配置集中在 `守护策略`；运行模式、层内选择策略、Preferred Last-Success、Session Affinity、最大尝试次数、候选耗尽行为和探测调度都在此编辑
 
@@ -1860,7 +1864,7 @@ Content-Type: application/json
 }
 ```
 
-状态码：200 成功、202 已接受异步任务、400 参数错误或 Resin 验证失败、403 动作不允许、404 auth/事件不存在、409 状态冲突、429 操作过于频繁、500 插件内部错误、502 Resin Admin API/代理不可达、503 CPA host 回调或上游不可用。异步任务的最终失败通过 `tasks.get` 的 `error` 和 `error_status` 返回。
+状态码：200 成功、202 已接受异步任务、400 参数错误或 Resin 验证失败、403 动作不允许、404 auth/事件不存在、409 状态冲突、429 操作过于频繁、500 插件内部错误、502 Resin Admin API/代理不可达、503 CPA host 回调或上游不可用。异步任务的最终失败通过 `tasks.get` 的 `error` 和 `error_status` 返回。任务状态包括 `queued`、`running`、`succeeded`、`failed`、`cancelled` 和重启后恢复的 `interrupted`。
 
 ### 10.4 Action 列表
 
@@ -1896,7 +1900,10 @@ Content-Type: application/json
 | `policy.reset` | 无 | 重置为 YAML 默认值 |
 | `state_file.update` | `state_file` | 写入并切换状态文件路径；目标文件必须不存在 |
 | `events.list` | `limit`、`cursor`、`auth_id` | 事件列表 |
-| `tasks.get` | `task_id` | 查询异步任务状态、结果和错误 |
+| `tasks.center.list` | `page`、`page_size`、`category`、`status`、`query` | 查询任务中心的任务索引和常驻队列 |
+| `tasks.center.get` | `task_id`、`page`、`page_size`、`item_status` | 按页读取逐项结果；历史任务从归档懒加载 |
+| `tasks.center.cancel` | `task_id` | 请求取消等待中或执行中的任务 |
+| `tasks.get` | `task_id` | 兼容旧客户端的任务状态查询；历史任务会恢复完整结果 |
 | `tasks.list` | `limit` | 列出最近异步任务 |
 
 不存在 `resin.config.*`、`resin.bind`、`resin.bind_unbound`、`resin.rotate` 或 `resin.clear`。Resin 的配置、绑定、清除和轮换统一使用上述 `proxy.*` action；只保留 `resin.cleanup.*` 处理已排队远端租约。
@@ -1991,6 +1998,13 @@ plugins:
           retry_initial: "1m"
           retry_max: "1h"
 
+      task_history:
+        enabled: true
+        retention_days: 3
+        max_records: 500
+        max_bytes: 134217728
+        max_items_per_task: 10000
+
       state_file: "/CLIProxyAPI/plugins/data/grok-quality-guard/state.json"
       events_limit: 1000
 ```
@@ -2007,7 +2021,7 @@ YAML 决定以下部署级字段：
 - `priority`
 - 首次启动时的 `passive_guard`、`transparent_guard`、`auto_action`、`model_prefixes`
 - `routing`、`quality`、`probe`
-- `proxy.auto_rotate_after_quality_failure`、`proxy.auto_bind.*`
+- `proxy.auto_rotate_after_quality_failure`、`proxy.auto_bind.*`、`task_history.*`
 - `state_file`、`events_limit`
 
 `state_file` 是状态文件的启动引导路径。管理页可以通过 `state_file.update` 写入并切换状态文件路径，并在引导路径旁写入 `<state_file>.location` 指针；指针存在时，插件重启后使用其指向的实际状态文件。修改 YAML 的 `state_file` 会切换到新的引导位置。
@@ -2022,6 +2036,7 @@ YAML 决定以下部署级字段：
 - `quality`
 - `probe`
 - `proxy.auto_rotate_after_quality_failure`
+- `task_history`
 - `events_limit`
 
 `policy.reset` 使用当前 YAML 值重新初始化运行时策略。`plugin.reconfigure` 不得静默覆盖用户在管理页保存的策略。
@@ -2068,7 +2083,7 @@ plugins/data/grok-quality-guard/state.json
 
 Docker 部署必须将 `/CLIProxyAPI/plugins/data/grok-quality-guard` 挂载为宿主持久卷，否则容器重建后 state 会丢失。也允许通过 `state_file` 显式覆盖；显式路径不可写时不会静默替换。管理页可编辑实际状态文件路径；切换时先完整写入目标文件，再更新引导路径旁的 `<state_file>.location` 指针。目标文件已存在时拒绝覆盖。目录权限 `0700`，文件权限 `0600`。
 
-插件运行时只允许修改 auth JSON 的原生字段 `disabled` 和 `proxy_url`。禁用所有权、冷却原因、strike、代理 binding 和 Resin 清理任务只保存在 state。
+插件运行时只允许修改 auth JSON 的原生字段 `disabled` 和 `proxy_url`。禁用所有权、冷却原因、strike、代理 binding 和 Resin 清理任务只保存在 state。任务中心历史不写入 state：它位于状态文件同目录的 `task-center/index.jsonl`、`active/` 和 `archive/YYYY-MM/`；索引只在进入任务中心时读取，逐项明细只在打开任务时按页解压，插件启动时只扫描 `active/` 恢复未完成任务并标记为 `interrupted`。
 
 ### 12.2 Schema
 

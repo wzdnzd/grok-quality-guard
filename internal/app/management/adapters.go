@@ -78,8 +78,15 @@ func (s *Service) hasActiveTask(kind, authID string) bool { return s.env.HasActi
 func (s *Service) taskByID(taskID string) (Task, bool)    { return s.env.TaskByID(taskID) }
 func (s *Service) cancelTask(taskID string) (Task, error) { return s.env.CancelTask(taskID) }
 func (s *Service) listTasks(limit int) []Task             { return s.env.ListTasks(limit) }
-func (s *Service) probeQueueSize() int                    { return s.env.ProbeQueueSize() }
-func (s *Service) probeConcurrency() int                  { return s.env.ProbeConcurrency() }
+func (s *Service) taskCenter(filter tasks.TaskCenterFilter) (tasks.TaskCenterResult, error) {
+	return s.env.TaskCenter(filter)
+}
+
+func (s *Service) taskDetail(taskID string, page, pageSize int, status string) (tasks.TaskDetail, error) {
+	return s.env.TaskDetail(taskID, page, pageSize, status)
+}
+func (s *Service) probeQueueSize() int   { return s.env.ProbeQueueSize() }
+func (s *Service) probeConcurrency() int { return s.env.ProbeConcurrency() }
 func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, callbackID string) error {
 	return s.env.ProbeAccount(ctx, authID, force, callbackID)
 }

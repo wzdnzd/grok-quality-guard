@@ -108,6 +108,27 @@ func TestProbeQueueConfigDefaultsAndBounds(t *testing.T) {
 		t.Fatal("expected oversized probe queue error")
 	}
 }
+
+func TestTaskHistoryConfigDefaultsAndBounds(t *testing.T) {
+	cfg, errDecode := Decode([]byte("task_history:\n  enabled: false\n"))
+	if errDecode != nil {
+		t.Fatalf("Decode() error = %v", errDecode)
+	}
+	if cfg.TaskHistory.Enabled || cfg.TaskHistory.RetentionDays != 3 || cfg.TaskHistory.MaxRecords != 500 || cfg.TaskHistory.MaxBytes != 128<<20 || cfg.TaskHistory.MaxItemsPerTask != 10000 {
+		t.Fatalf("unexpected task history config: %#v", cfg.TaskHistory)
+	}
+	for _, raw := range []string{
+		"task_history:\n  retention_days: 366\n",
+		"task_history:\n  max_records: 10001\n",
+		"task_history:\n  max_bytes: 4294967297\n",
+		"task_history:\n  max_items_per_task: 100001\n",
+	} {
+		if _, errDecode := Decode([]byte(raw)); errDecode == nil {
+			t.Fatalf("expected task history bounds error for %q", raw)
+		}
+	}
+}
+
 func TestDecodeConfigRoutingDefaults(t *testing.T) {
 	cfg, errDecode := Decode(nil)
 	if errDecode != nil {

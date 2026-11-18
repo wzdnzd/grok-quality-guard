@@ -30,7 +30,8 @@ class Element {
     this.classList = {
       add: (...values) => values.forEach((value) => this.classes.add(value)),
       remove: (...values) => values.forEach((value) => this.classes.delete(value)),
-      toggle: (value, enabled) => enabled ? this.classes.add(value) : this.classes.delete(value)
+      toggle: (value, enabled) => enabled ? this.classes.add(value) : this.classes.delete(value),
+      contains: (value) => this.classes.has(value)
     };
   }
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
@@ -99,11 +100,12 @@ function harness() {
       return null;
     }
   };
+  const historyCalls = [];
   const context = vm.createContext({
     document,
     window: {
       location: { hash: '#overview' },
-      history: { replaceState() {} },
+      history: { replaceState(_state, _title, hash) { historyCalls.push(hash); } },
       addEventListener() {},
       clearTimeout() {},
       setInterval() {},
@@ -114,7 +116,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, collectPolicy, populatePolicyForm, applyLocationHash };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -150,7 +152,7 @@ function harness() {
     groups.set(group.index, card);
     return card;
   }
-  return { dashboard: context.dashboard, get, context, mock, placeholder, groupCard, document };
+  return { dashboard: context.dashboard, get, context, mock, placeholder, groupCard, document, historyCalls };
 }
 
 const plain = (value) => JSON.parse(JSON.stringify(value));
@@ -555,46 +557,40 @@ test('Invalid CSV import keeps every existing relation and the import draft', as
   assert.match(group.error, /导入未应用/);
 });
 
-test('Change details request their next page instead of expanding a million items', async () => {
+test('Proxy sync details request their next page instead of expanding a million items', async () => {
   const { dashboard: ui, get, mock } = harness();
   const requests = [];
-  ui.state.proxyEditing = { kind: 'tasks', taskDetailPage: 1, taskDetail: { change_id: 'change', page: 1, page_size: 20, total: 1_000_000, counts: { total: 1_000_000 }, items: [] } };
   mock('api', async (action, params) => {
     requests.push({ action, params });
     return { change_id: 'change', page: params.page, page_size: 20, total: 1_000_000, counts: { total: 1_000_000, pending: 1_000_000 }, items: Array.from({ length: 20 }, (_, index) => ({ auth_id: 'auth-' + (20 + index), status: 'pending' })) };
   });
-  const next = new Element();
-  next.dataset.taskDetailPage = '1';
-  next.ancestors = new Map([['button', next]]);
-  await get('proxySourceEditor').emit('click', { target: next });
+  ui.state.taskCenterSelectedQueue = { id: 'proxy_changes', label: '代理同步队列', status: 'running', total: 1_000_000, completed: 0, running: 0, waiting: 1_000_000, succeeded: 0, failed: 0, skipped: 0 };
+  await ui.openTaskCenterChange('change', 2);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].action, 'proxy.changes.get');
   assert.equal(requests[0].params.page, 2);
   assert.equal(requests[0].params.page_size, 20);
-  assert.equal((get('proxySourceEditor').innerHTML.match(/<td>auth-/g) || []).length, 20);
-  assert.match(get('proxySourceEditor').innerHTML, /第 2 \/ 50000 页/);
+  assert.equal((get('taskDetailBody').innerHTML.match(/<td class="mono">auth-/g) || []).length, 20);
+  assert.match(get('taskDetailBody').innerHTML, /第 2 \/ 50000 页/);
 });
 
-test('Cleanup polling and paging retain bounded twenty-item responses', async () => {
+test('Cleanup queue pages retain bounded twenty-item responses', async () => {
   const { dashboard: ui, get, mock } = harness();
   const requests = [];
-  ui.state.proxyEditing = { kind: 'tasks' };
   mock('api', async (action, params) => {
     requests.push({ action, params });
-    if (action !== 'resin.cleanup.list') return { items: [] };
-    return { total: 1_000_000, page: params.page, page_size: 20, items: Array.from({ length: 20 }, (_, index) => ({ id: 'cleanup-' + index, auth_id: 'cleanup-auth-' + index, account: 'preview-' + index, status: 'pending', attempts: 0 })) };
+    return { total: 1_000_000, page: params.page, page_size: 20, items: Array.from({ length: 20 }, (_, index) => ({ id: 'cleanup-' + index, auth_id: 'auth-' + index, account: 'preview-' + index, status: 'pending', attempts: 0 })) };
   });
-  const next = new Element();
-  next.dataset.cleanupPage = '1';
-  next.ancestors = new Map([['button', next]]);
-  await get('proxySourceEditor').emit('click', { target: next });
-  const cleanup = requests.filter((request) => request.action === 'resin.cleanup.list');
-  assert.equal(cleanup.length, 1);
-  assert.equal(cleanup[0].params.page, 2);
-  assert.equal(cleanup[0].params.page_size, 20);
-  assert.equal((get('proxySourceEditor').innerHTML.match(/data-cleanup-retry=/g) || []).length, 20);
+  const queue = { id: 'resin_cleanup', label: 'Resin 租约清理', status: 'running', total: 1_000_000, completed: 0, running: 0, waiting: 1_000_000, succeeded: 0, failed: 0, skipped: 0 };
+  ui.state.taskCenterSelectedQueue = queue;
+  await ui.loadTaskQueueDetail(queue, 2);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].action, 'resin.cleanup.list');
+  assert.equal(requests[0].params.page, 2);
+  assert.equal(requests[0].params.page_size, 20);
+  assert.equal((get('taskDetailBody').innerHTML.match(/data-task-cleanup-retry=/g) || []).length, 20);
+  assert.match(get('taskDetailBody').innerHTML, /第 2 \/ 50000 页/);
 });
-
 test('ID-only full selection stops after one complete response', async () => {
   const { dashboard: ui, mock } = harness();
   let requests = 0;
@@ -979,22 +975,22 @@ test('Proxy source versions explain endpoint and generation semantics', () => {
   assert.match(row, /r：生成配置版本/);
 });
 
-test('A late task-detail refresh cannot restore an older selected page', async () => {
+test('A late task-center detail response cannot replace a newer selection', async () => {
   const { dashboard: ui, mock } = harness();
   const old = deferred(), fresh = deferred();
   let requests = 0;
   mock('api', () => (++requests === 1 ? old.promise : fresh.promise));
-  const editor = { kind: 'tasks' };
-  ui.state.proxyEditing = editor;
-  const first = ui.loadProxyTaskDetail(editor, 'change', 'change', 1);
-  const second = ui.loadProxyTaskDetail(editor, 'change', 'change', 2);
-  fresh.resolve({ change_id: 'change', page: 2, page_size: 20, total: 100, items: [] });
-  assert.equal(await second, true);
-  old.resolve({ change_id: 'change', page: 1, page_size: 20, total: 100, items: [] });
-  assert.equal(await first, false);
-  assert.equal(editor.taskDetailPage, 2);
+  ui.state.taskCenterSelectedID = 'task-1';
+  const first = ui.loadTaskCenterDetail('task-1', 1, 'all', false);
+  ui.state.taskCenterSelectedID = 'task-2';
+  const second = ui.loadTaskCenterDetail('task-2', 1, 'all', false);
+  fresh.resolve({ task: { task_id: 'task-2', status: 'succeeded' }, items: [], total: 0, item_total: 0, page: 1, page_size: 20, source: 'history' });
+  await second;
+  assert.equal(ui.state.taskCenterDetail.task.task_id, 'task-2');
+  old.resolve({ task: { task_id: 'task-1', status: 'succeeded' }, items: [], total: 0, item_total: 0, page: 1, page_size: 20, source: 'history' });
+  await first;
+  assert.equal(ui.state.taskCenterDetail.task.task_id, 'task-2');
 });
-
 test('Checkbox controls reserve a label line and retry fields share one row', () => {
   assert.match(html, /\.field>\.check-row:first-child\s*\{\s*margin-top: 20px;/);
   assert.match(html, /\.settings-group \.retry-grid\s*\{\s*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
@@ -1003,17 +999,26 @@ test('Checkbox controls reserve a label line and retry fields share one row', ()
   assert.match(html, /退避等待的最长时间/);
 });
 
+test('Overview cards pair into equal-height rows', () => {
+  assert.doesNotMatch(html, /<div class="overview-grid">\s*<div class="stack">/);
+  assert.match(html, /<div class="overview-grid">\s*<section class="card overview-card" aria-labelledby="qualityTitle">[\s\S]*?aria-labelledby="policySummaryTitle"[\s\S]*?aria-labelledby="recentTitle"[\s\S]*?aria-labelledby="resinSummaryTitle"/);
+  assert.match(html, /\.overview-grid\s*\{[\s\S]*?align-items:\s*stretch/);
+  assert.match(html, /\.overview-card\s*\{[\s\S]*?display: flex;[\s\S]*?flex-direction: column/);
+  assert.match(html, /\.overview-card > \.card-body,\s*\.overview-card > \.recent-list\s*\{\s*flex: 1 1 auto;/);
+});
+
 test('Policy settings use a compact grouped grid with responsive density', () => {
   assert.match(html, /<form id="policyForm" class="settings-layout policy-settings-form">/);
   assert.match(html, /<div class="policy-settings-grid">/);
-  for (const group of ['mode', 'quality', 'routing', 'probe']) {
+  for (const group of ['mode', 'task-history', 'routing', 'quality', 'probe']) {
     assert.match(html, new RegExp('class="policy-group policy-group-' + group + '"'));
   }
   const modeStart = html.indexOf('class="policy-group policy-group-mode"');
+  const taskHistoryStart = html.indexOf('class="policy-group policy-group-task-history"');
   const routingStart = html.indexOf('class="policy-group policy-group-routing"');
   const qualityStart = html.indexOf('class="policy-group policy-group-quality"');
   const probeStart = html.indexOf('class="policy-group policy-group-probe"');
-  assert.ok(modeStart < routingStart && routingStart < qualityStart && qualityStart < probeStart);
+  assert.ok(modeStart < routingStart && routingStart < taskHistoryStart && taskHistoryStart < qualityStart && qualityStart < probeStart);
   assert.match(html, /\.policy-settings-grid\s*\{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
   assert.match(html, /\.policy-group-quality \.field-grid,\s*\.policy-group-probe \.field-grid\s*\{\s*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
   assert.match(html, /\.policy-group-quality \.check-card\s*\{\s*grid-column: span 2;/);
@@ -1144,6 +1149,157 @@ test('Proxy bind event shows binding details instead of an upstream error', () =
   assert.doesNotMatch(rendered, /其他上游错误/);
 });
 
+test('Resident queue detail is paged and proxy sync actions use the task center', async () => {
+  const { dashboard: ui, get } = harness();
+  assert.doesNotMatch(html, /function openProxyTasks/);
+  assert.doesNotMatch(html, /代理任务与同步结果/);
+  assert.match(html, /async function openProxyChangeDetails[\s\S]*openTaskCenter\(\)/);
+  ui.state.taskCenterSelectedQueue = { id: 'resin_cleanup', label: 'Resin 租约清理', status: 'failed', total: 45, completed: 0, running: 0, waiting: 30, failed: 15, succeeded: 0, skipped: 0 };
+  ui.state.taskCenterQueueDetail = {
+    loading: false,
+    mode: 'list',
+    data: { items: [{ id: 'cleanup-1', auth_id: 'auth-1', status: 'retry_wait', last_error: 'upstream timeout' }], total: 45, page: 2, page_size: 20 }
+  };
+  await ui.renderTaskQueueDetail();
+  const body = get('taskDetailBody').innerHTML;
+  assert.match(body, /第 2 \/ 3 页 · 共：45 项/);
+  assert.match(body, /data-task-queue-page="-1"/);
+  assert.match(body, /auth-1/);
+});
+test('Task center is the unified six-tab entry and supports task deep links', async () => {
+  const { dashboard: ui, context, get, historyCalls, mock } = harness();
+  assert.match(html, /data-tab="overview">概览<\/button>[\s\S]*data-tab="accounts">账号<\/button>[\s\S]*data-tab="resin">代理管理<\/button>[\s\S]*data-tab="tasks">任务中心<\/button>[\s\S]*data-tab="events">事件日志<\/button>[\s\S]*data-tab="settings">设置<\/button>/);
+  assert.doesNotMatch(html, /data-tab="accounts">账号质量<\/button>/);
+  assert.match(html, /\.tabs\s*\{\s*width: 100%;\s*margin-bottom: 18px;/);
+  mock('api', async (action) => {
+    if (action === 'tasks.center.get') return { task: { task_id: 'task 1', kind: 'accounts.probe_selected', category: 'account', label: '批量检测账号', status: 'succeeded', total: 1, completed: 1, succeeded: 1 }, items: [], total: 0, item_total: 0, page: 1, page_size: 20, source: 'history' };
+    return {};
+  });
+  context.window.location.hash = '#tasks';
+  ui.applyLocationHash();
+  assert.equal(ui.state.activeTab, 'tasks');
+  context.window.location.hash = '#tasks/task%201';
+  ui.applyLocationHash();
+  assert.equal(ui.state.taskCenterSelectedID, 'task 1');
+  assert.equal(get('taskDetailCard').classList.contains('mobile-open'), true);
+  ui.selectTaskCenterTask('task-2', true);
+  assert.equal(historyCalls.at(-1), '#tasks/task-2');
+  await Promise.resolve();
+  await Promise.resolve();
+});
+
+test('Task center keeps filters and refresh on one row with equal-height cards', () => {
+  assert.match(html, /<div class="toolbar task-toolbar">/);
+  assert.match(html, /id="taskStatusFilter"[\s\S]*id="taskRefreshBtn"/);
+  assert.equal((html.match(/\.task-toolbar\s*\{/g) || []).length, 1);
+  assert.match(html, /\.task-toolbar\s*\{[\s\S]*?flex-wrap:\s*nowrap/);
+  assert.match(html, /\.task-toolbar \.toolbar-right\s*\{[\s\S]*?margin-left:\s*auto/);
+  assert.match(html, /\.task-center-grid\s*\{[\s\S]*?align-items:\s*stretch/);
+  assert.match(html, /\.task-list-card,\s*\.task-detail-card\s*\{[\s\S]*?align-self:\s*stretch/);
+});
+
+test('Task center refresh keeps filters and page size in the list request', async () => {
+  const { dashboard: ui, get, mock } = harness();
+  let request = null;
+  mock('api', async (action, params) => {
+    assert.equal(action, 'tasks.center.list');
+    request = params;
+    return {
+      items: [{ task_id: 'task-1', kind: 'accounts.probe_selected', category: 'account', label: '批量检测账号', status: 'running', total: 12, completed: 7, running: 2, waiting: 3, succeeded: 5, failed: 2, auth_count: 4, created_at: '2026-11-18T08:00:00Z' }],
+      total: 51, page: 2, page_size: 50,
+      counts: { active: 1, running_items: 2, failed_items: 2 },
+      history: { enabled: true, retention_days: 3, max_records: 500, record_count: 7, archive_bytes: 2048, max_bytes: 134217728 },
+      resident_queues: []
+    };
+  });
+  ui.state.taskCenterPage = 2;
+  ui.state.taskCenterPageSize = 50;
+  ui.state.taskCenterCategory = 'account';
+  ui.state.taskCenterStatus = 'active';
+  ui.state.taskCenterQuery = 'probe';
+  await ui.refreshTaskCenter(true);
+  assert.deepEqual(plain(request), { page: 2, page_size: 50, category: 'account', status: 'active', query: 'probe' });
+  assert.equal(ui.state.taskCenter.total, 51);
+  assert.match(get('taskRows').innerHTML, /批量检测账号/);
+  assert.match(get('taskPager').innerHTML, /50<\/option>/);
+  assert.match(get('taskPager').innerHTML, /第 2 \/ 2 页/);
+});
+
+test('Task detail exposes progress, queue counts, metadata and lazy item paging', async () => {
+  const { dashboard: ui, get, mock } = harness();
+  let request = null;
+  mock('api', async (action, params) => {
+    assert.equal(action, 'tasks.center.get');
+    request = params;
+    return {
+      task: {
+        task_id: 'task-1', kind: 'accounts.probe_selected', category: 'account', label: '批量检测账号', status: 'running',
+        total: 12, completed: 7, running: 2, waiting: 3, succeeded: 5, failed: 2, skipped: 0,
+        item_count: 12, items_stored: 10, items_truncated: true, auth_ids: ['auth-1', 'auth-2'], auth_count: 4,
+        current_stage: '正在检测账号', created_at: '2026-11-18T08:00:00Z', started_at: '2026-11-18T08:00:01Z', updated_at: '2026-11-18T08:00:20Z', duration_ms: 19000
+      },
+      items: [{ auth_id: 'auth-2', status: 'failed', error: 'upstream failed' }],
+      total: 2, item_total: 10, page: 2, page_size: 1, items_truncated: true, source: 'history'
+    };
+  });
+  ui.state.taskCenterSelectedID = 'task-1';
+  await ui.loadTaskCenterDetail('task-1', 2, 'failed', false);
+  assert.deepEqual(plain(request), { task_id: 'task-1', page: 2, page_size: 20, item_status: 'failed' });
+  const body = get('taskDetailBody').innerHTML;
+  assert.match(body, /任务总数/);
+  assert.match(body, /已完成/);
+  assert.match(body, /正在处理/);
+  assert.match(body, /等待中/);
+  assert.match(body, /历史归档/);
+  assert.match(body, /upstream failed/);
+  assert.match(body, /已截断/);
+  assert.match(html, /skipped: '已跳过'/);
+  assert.match(html, /probed: '已检测'/);
+});
+
+test('Task history settings explain defaults and convert MiB to bytes', () => {
+  const { dashboard: ui, get } = harness();
+  assert.match(html, /id="p_task_history_enabled"/);
+  assert.match(html, /id="p_task_history_retention_days"[\s\S]*默认：3 天/);
+  assert.match(html, /id="p_task_history_max_records"[\s\S]*默认：500 条/);
+  assert.match(html, /id="p_task_history_max_bytes_mib"[\s\S]*默认：128 MiB/);
+  assert.match(html, /id="p_task_history_max_items"[\s\S]*默认：10000 条/);
+  ui.state.policy = { task_history: { enabled: true, retention_days: 3, max_records: 500, max_bytes: 64 * 1048576, max_items_per_task: 10000 } };
+  ui.populatePolicyForm();
+  assert.equal(Number(get('p_task_history_max_bytes_mib').value), 64);
+  assert.equal(Number(get('p_task_history_retention_days').value), 3);
+  get('p_task_history_max_bytes_mib').value = '96';
+  get('p_task_history_retention_days').value = '7';
+  get('p_task_history_max_records').value = '750';
+  get('p_task_history_max_items').value = '20000';
+  const policy = ui.collectPolicy();
+  assert.equal(policy.task_history.max_bytes, 96 * 1048576);
+  assert.equal(policy.task_history.retention_days, 7);
+  assert.equal(policy.task_history.max_records, 750);
+  assert.equal(policy.task_history.max_items_per_task, 20000);
+});
+
+test('Resident queues render only the returned enabled queues and detail can close', async () => {
+  const { dashboard: ui, get, historyCalls } = harness();
+  ui.renderResidentQueues([], { enabled: false, retention_days: 3, record_count: 0, archive_bytes: 0, max_bytes: 134217728 });
+  assert.match(get('taskHistorySummary').textContent, /历史记录已关闭/);
+  assert.match(get('residentQueues').innerHTML, /当前没有启用中的常驻队列/);
+  ui.state.taskCenter = {
+    items: [], total: 0, page: 1, page_size: 20, counts: {},
+    history: { enabled: true, retention_days: 3, record_count: 0, archive_bytes: 0, max_bytes: 134217728 },
+    resident_queues: [{ id: 'auto_bind', label: '自动绑定队列', category: 'proxy', status: 'running', description: '扫描未绑定账号', total: 8, completed: 5, running: 1, waiting: 2, succeeded: 5, failed: 0 }]
+  };
+  ui.renderTaskCenter();
+  assert.match(get('residentQueues').innerHTML, /自动绑定队列/);
+  assert.match(get('residentQueues').innerHTML, /查看队列/);
+  ui.selectTaskCenterQueue('auto_bind', true);
+  assert.match(get('taskDetailBody').innerHTML, /打开自动绑定设置/);
+  assert.equal(get('taskDetailCard').classList.contains('mobile-open'), true);
+  ui.closeTaskCenterDetail(true);
+  assert.equal(get('taskDetailCard').classList.contains('mobile-open'), false);
+  assert.equal(historyCalls.at(-1), '#tasks');
+  await Promise.resolve();
+});
 for (const { name, run } of cases) {
   await run();
   console.log('PASS ' + name);
