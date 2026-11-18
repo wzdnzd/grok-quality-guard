@@ -299,6 +299,24 @@ func (e Endpoint) MaskedCredentialURL() string {
 	return string(e.Protocol) + "://" + userinfo + net.JoinHostPort(e.Host, strconv.Itoa(e.Port))
 }
 
+// MaskedPasswordURL keeps the complete proxy URL shape for previews while
+// replacing only the password. The generated username remains visible so the
+// user can verify template output; the credential is never returned.
+func (e Endpoint) MaskedPasswordURL() string {
+	if normalized, err := e.Normalize(); err == nil {
+		e = normalized
+	}
+	userinfo := ""
+	if e.HasUser {
+		userinfo = url.User(e.Username).String()
+		if e.HasPassword {
+			userinfo += ":******"
+		}
+		userinfo += "@"
+	}
+	return string(e.Protocol) + "://" + userinfo + net.JoinHostPort(e.Host, strconv.Itoa(e.Port))
+}
+
 func maskProxyUsername(value string) string {
 	value = strings.TrimSpace(value)
 	runes := []rune(value)

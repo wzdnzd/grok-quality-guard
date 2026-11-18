@@ -393,13 +393,14 @@ Dashboard 将输入解析成可编辑值标签，同时显示分隔符与实际�
   "samples": [
     {
       "masked_url": "socks5h://proxy.example.com:1080",
+      "display_url": "socks5h://us-nyc:******@proxy.example.com:1080",
       "values": {"country": "us", "state": "CA", "session": "n3k8b6z1a4q7"}
     }
   ]
 }
 ~~~
 
-样例使用独立预览身份，不能计入绑定、配额或触发远端租约删除。
+样例使用独立预览身份，不能计入绑定、配额或触发远端租约删除。`display_url` 保持标准代理 URL 结构并展示生成的用户名，只将密码替换为 `******`；`masked_url` 继续用于仅展示协议、主机和端口的列表场景。
 
 普通来源默认只要求配置有效；网络检测可按需执行。`require_healthy=true` 的自动绑定策略需要对应来源当前版本、仍新鲜的检测成功结果，unknown 不算健康。模板样本网络成功只能代表该样本，不能承诺所有地理组合均可联网。
 
@@ -969,6 +970,8 @@ proxy:
 ### 13.1 节点创建与元数据编辑
 
 新增节点先完成结构验证。名称、enabled、priority、max_bindings 等变化立即保存，不修改 auth。
+
+Dashboard 添加节点页提供 `+ 增加一行` 追加条目，可一次提交多个名称与 URL，提交按钮按行数显示保存节点或保存 N 个节点。节点行将名称与代理 URL 同排展示，名称列使用紧凑宽度，URL 列占据剩余空间；长值在失焦时省略，聚焦后可横向滚动，并保留完整悬浮提示；enabled、priority、max_bindings 作为本次共享设置，经批量导入接口逐项报告 created、duplicate、invalid 和 skipped。编辑器帮助统一为标题后的 info 图标，tooltip 约束在抽屉边界内，提示文案不以标点结尾。
 
 端点配置变化必须创建同步任务；API 不提供 `propagate=false` 绕过。无活跃绑定时可直接提交新版本。
 

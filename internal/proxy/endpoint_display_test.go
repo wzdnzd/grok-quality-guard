@@ -28,3 +28,30 @@ func TestTemplateURLForRevealKeepsPatternAndEncodesPassword(t *testing.T) {
 		t.Fatalf("reveal URL = %q", got)
 	}
 }
+
+func TestPreviewDisplayKeepsFullProxyShape(t *testing.T) {
+	endpoint, err := ParseEndpoint("socks5h://user%40name:secret@[2001:db8::1]:1080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := endpoint.MaskedPasswordURL(), "socks5h://user%40name:******@[2001:db8::1]:1080"; got != want {
+		t.Fatalf("masked preview URL = %q, want %q", got, want)
+	}
+
+	template, err := ParseTemplateURL("socks5h://user-{name}:secret@proxy.example:1080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.Name = "preview"
+	template.Placeholders = []Placeholder{{Name: "name", Kind: PlaceholderEnum, Enum: &EnumSpec{Separator: ",", Input: "alpha"}}}
+	report := ValidateTemplate(template)
+	if !report.Valid || len(report.Samples) != 3 {
+		t.Fatalf("unexpected validation report: %#v", report)
+	}
+	if got, want := report.Samples[0].DisplayURL, "socks5h://user-alpha:******@proxy.example:1080"; got != want {
+		t.Fatalf("preview display URL = %q, want %q", got, want)
+	}
+	if got, want := report.Samples[0].MaskedURL, "socks5h://proxy.example:1080"; got != want {
+		t.Fatalf("preview masked origin = %q, want %q", got, want)
+	}
+}

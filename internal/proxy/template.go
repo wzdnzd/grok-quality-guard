@@ -105,6 +105,7 @@ type RenderedProxy struct {
 
 type TemplateSample struct {
 	MaskedURL  string            `json:"masked_url"`
+	DisplayURL string            `json:"display_url,omitempty"`
 	Values     map[string]string `json:"values,omitempty"`
 	VariantKey string            `json:"variant_key,omitempty"`
 }

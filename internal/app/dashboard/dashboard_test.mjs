@@ -114,7 +114,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -296,8 +296,9 @@ test('A stale condition preview cannot overwrite newer inputs or validation stat
   response.resolve({ valid: true, samples: [{ masked_url: 'socks5h://proxy.example:1080', values: { vendor: 'A' } }] });
   await preview;
   assert.equal(get('proxyTemplatePreviewResults').innerHTML, 'new condition state');
-  mock('api', async () => ({ valid: true, samples: [{ masked_url: 'socks5h://proxy.example:1080', values: { vendor: 'B', profile: '<unsafe>' } }] }));
+  mock('api', async () => ({ valid: true, samples: [{ display_url: 'socks5h://preview-b:******@proxy.example:1080', masked_url: 'socks5h://proxy.example:1080', values: { vendor: 'B', profile: '<unsafe>' } }] }));
   await ui.previewProxyTemplate(editor, null, {}, new Element());
+  assert.match(get('proxyTemplatePreviewResults').innerHTML, /socks5h:\/\/preview-b:\*\*\*\*\*\*@proxy\.example:1080/);
   assert.match(get('proxyTemplatePreviewResults').innerHTML, /vendor/);
   assert.match(get('proxyTemplatePreviewResults').innerHTML, /&lt;unsafe&gt;/);
 });
@@ -314,7 +315,7 @@ test('Proxy URL is the sole password source for node and template editors', () =
 
   const source = ui.collectProxyTemplateEditor(null, {});
   assert.equal(Object.hasOwn(source, 'password_update'), false);
-  assert.match(html, /node\.edit_url \|\| ''/);
+  assert.match(html, /value\.edit_url \|\| value\.url/);
   assert.match(html, /template\.edit_url \|\| ''/);
   assert.doesNotMatch(html, /proxyPasswordFields|readProxyPasswordUpdate|_password_action/);
 });
@@ -860,14 +861,52 @@ test('Resin rows use the unified edit, delete, and single-line type presentation
 });
 
 test('Proxy delete confirms stay concise and avoid trailing full stops', () => {
-  assert.match(html, /将删除此代理并清理受管理代理；失败项保留并报告/);
-  assert.match(html, /将删除 ' \+ ids\.length \+ ' 个代理并清理受管理代理；失败项保留并报告/);
+  assert.match(html, /将删除此代理并清理受管理代理，失败项保留并报告/);
+  assert.match(html, /将删除 ' \+ ids\.length \+ ' 个代理并清理受管理代理，失败项保留并报告/);
   assert.doesNotMatch(html, /成功项不会回滚。|成功项不会回滚'/);
 });
 
 test('Proxy UI uses unified naming and avoids Chinese full stops', () => {
   assert.doesNotMatch(html, /代理来源|个来源|来源名称|全部来源|添加来源|指定来源|来源范围/);
   assert.doesNotMatch(html, /。/);
+  assert.doesNotMatch(html, /；/);
+});
+
+test('Proxy help copy is concise, consistent, and stays inside the drawer', () => {
+  const { dashboard: ui } = harness();
+  assert.equal(ui.cleanHelpCopy('说明；'), '说明');
+  assert.equal(ui.cleanHelpCopy('说明，'), '说明');
+  assert.equal(ui.cleanHelpCopy('说明？'), '说明');
+  assert.equal(ui.cleanHelpCopy('说明：'), '说明');
+  assert.equal(ui.cleanHelpCopy('说明！'), '说明');
+  assert.equal(ui.cleanHelpCopy('说明.'), '说明');
+  assert.equal(ui.cleanHelpCopy('说明…'), '说明');
+  const row = ui.proxyNodeRowHTML(0, { name: '非常长的节点名称', edit_url: 'http://user:pass@long-proxy-host.example:8080/very/long/path' }, true);
+  assert.match(row, /data-proxy-node-name/);
+  assert.match(row, /data-proxy-node-url/);
+  assert.match(row, /data-proxy-node-remove/);
+  assert.match(row, /class="field proxy-node-name-field"/);
+  assert.match(row, /class="field proxy-node-url-field"/);
+  assert.match(row, /inputmode="url"/);
+  assert.match(row, /title="非常长的节点名称"/);
+  assert.match(row, /title="http:\/\/user:pass@long-proxy-host\.example:8080\/very\/long\/path"/);
+  assert.doesNotMatch(row, /field full/);
+  assert.match(html, /data-proxy-node-add/);
+  assert.match(html, /editing \? '编辑代理节点' : '添加代理节点'/);
+  assert.match(html, /增加一行/);
+  assert.doesNotMatch(html, /\+ '添加节点<\/button>'/);
+  assert.match(html, /data-proxy-node-submit-label>保存节点<\/span>/);
+  assert.match(html, /submitLabel\.textContent = rows\.length > 1/);
+  assert.match(html, /proxy\.sources\.import_nodes', \{ nodes: nodes \}/);
+  assert.match(html, /#proxySourceDrawer \.drawer-body \{[\s\S]*?overflow-x: hidden/);
+  assert.match(html, /tip\.closest\?\.\('#proxySourceDrawer \.drawer'\)/);
+  assert.match(html, /\.help-tooltip \{[\s\S]*?position: fixed/);
+  assert.match(html, /\.help-tooltip \{[\s\S]*?overflow-wrap: anywhere/);
+  assert.match(html, /grid-template-columns: minmax\(150px, 220px\) minmax\(0, 1fr\)/);
+  assert.match(html, /\.proxy-node-row-fields input \{[\s\S]*?text-overflow: ellipsis/);
+  assert.match(html, /event\.target\.title = event\.target\.value/);
+  assert.match(html, /const availableWidth = Math\.max\(0, maxRight - minLeft\)/);
+  assert.match(html, /#proxySourceDrawer \.hint,[\s\S]*?font-weight: 500/);
 });
 
 test('Proxy source select-all loads every filtered source across pages', async () => {

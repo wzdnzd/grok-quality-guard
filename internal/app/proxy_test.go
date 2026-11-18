@@ -559,6 +559,16 @@ func TestProxyTemplatePreviewSupportsEditingWithoutRetypingURL(t *testing.T) {
 	if !ok || result["valid"] != true {
 		t.Fatalf("unexpected preview result: %#v", value)
 	}
+	samples, ok := result["samples"].([]proxy.TemplateSample)
+	if !ok || len(samples) != 2 {
+		t.Fatalf("unexpected preview samples: %#v", result["samples"])
+	}
+	if !strings.Contains(samples[0].DisplayURL, ":******@proxy.example:8080") {
+		t.Fatalf("preview display URL lost proxy shape: %q", samples[0].DisplayURL)
+	}
+	if strings.Contains(samples[0].MaskedURL, "user-") || strings.Contains(samples[0].MaskedURL, "******") {
+		t.Fatalf("masked origin unexpectedly includes credentials: %q", samples[0].MaskedURL)
+	}
 }
 
 func TestProxyImportAcceptsMultipleNodeStrings(t *testing.T) {
@@ -573,6 +583,39 @@ func TestProxyImportAcceptsMultipleNodeStrings(t *testing.T) {
 	result, ok := value.(map[string]any)
 	if !ok || result["created"] != 2 {
 		t.Fatalf("unexpected import result: %#v", value)
+	}
+}
+
+func TestProxyImportAcceptsNamedNodeObjects(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	value, status, errImport := plugin.actionProxyImportNodes(map[string]any{
+		"nodes": []any{
+			map[string]any{"name": "edge-a", "url": "http://u:p@one.example:8080", "enabled": true, "priority": -7, "max_bindings": 2},
+			map[string]any{"name": "edge-b", "url": "socks5h://u:p@two.example:1080", "enabled": false, "priority": 4, "max_bindings": 0},
+		},
+	})
+	if errImport != nil || status != 200 {
+		t.Fatalf("import failed: status=%d err=%v", status, errImport)
+	}
+	result, ok := value.(map[string]any)
+	if !ok || result["created"] != 2 {
+		t.Fatalf("unexpected import result: %#v", value)
+	}
+	state := plugin.stateStore().Snapshot()
+	if len(state.Proxy.Nodes) != 2 {
+		t.Fatalf("unexpected nodes: %#v", state.Proxy.Nodes)
+	}
+	byName := make(map[string]proxy.Node, len(state.Proxy.Nodes))
+	for _, node := range state.Proxy.Nodes {
+		byName[node.Name] = node
+	}
+	first, second := byName["edge-a"], byName["edge-b"]
+	if first.Priority != -7 || first.MaxBindings != 2 || !first.Enabled {
+		t.Fatalf("unexpected first node: %#v", first)
+	}
+	if second.Priority != 4 || second.MaxBindings != 0 || second.Enabled {
+		t.Fatalf("unexpected second node: %#v", second)
 	}
 }
 

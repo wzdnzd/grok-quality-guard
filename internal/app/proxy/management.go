@@ -212,7 +212,12 @@ func (s *Service) actionProxySourcePreview(params map[string]any) (any, int, err
 			if errRender != nil {
 				return proxyValidationFailure(errRender), 200, nil
 			}
-			samples = append(samples, proxy.TemplateSample{MaskedURL: rendered.MaskedURL, Values: rendered.Values, VariantKey: rendered.VariantKey})
+			samples = append(samples, proxy.TemplateSample{
+				MaskedURL:  rendered.MaskedURL,
+				DisplayURL: rendered.Endpoint.MaskedPasswordURL(),
+				Values:     rendered.Values,
+				VariantKey: rendered.VariantKey,
+			})
 		}
 		return map[string]any{"valid": true, "samples": samples, "validation": proxy.ValidateTemplate(template), "source": s.resinSourceView(template, config, 0)}, 200, nil
 	}
@@ -249,7 +254,12 @@ func (s *Service) actionProxySourcePreview(params map[string]any) (any, int, err
 		if err != nil {
 			return proxyValidationFailure(err), 200, nil
 		}
-		samples = append(samples, proxy.TemplateSample{MaskedURL: rendered.Endpoint.MaskedURL(), Values: rendered.Values, VariantKey: rendered.VariantKey})
+		samples = append(samples, proxy.TemplateSample{
+			MaskedURL:  rendered.Endpoint.MaskedURL(),
+			DisplayURL: rendered.Endpoint.MaskedPasswordURL(),
+			Values:     rendered.Values,
+			VariantKey: rendered.VariantKey,
+		})
 	}
 	return map[string]any{"valid": true, "samples": samples, "validation": proxy.ValidateTemplate(t), "source": proxyTemplateView(t, 0)}, 200, nil
 }

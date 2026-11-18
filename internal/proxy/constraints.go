@@ -705,7 +705,12 @@ func (c *CompiledTemplate) Preview(count int) []TemplateSample {
 		if err != nil {
 			break
 		}
-		samples = append(samples, TemplateSample{MaskedURL: rendered.MaskedURL, Values: rendered.Values, VariantKey: rendered.VariantKey})
+		samples = append(samples, TemplateSample{
+			MaskedURL:  rendered.MaskedURL,
+			DisplayURL: rendered.Endpoint.MaskedPasswordURL(),
+			Values:     rendered.Values,
+			VariantKey: rendered.VariantKey,
+		})
 	}
 	return samples
 }

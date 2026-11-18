@@ -1417,6 +1417,7 @@
       font-size: 10px;
       text-align: center;
     }
+
     .field .check-row,
     .check-row {
       display: flex;
@@ -1915,6 +1916,7 @@
     .drawer-status-row .btn {
       margin-left: auto;
     }
+
     .detail-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2305,6 +2307,7 @@
     }
 
     @media (max-width: 680px) {
+
       .auto-bind-form .settings-group .field-grid,
       .auto-bind-form .settings-group .retry-grid,
       .policy-group-quality .field-grid,
@@ -2418,12 +2421,15 @@
         scroll-behavior: auto !important;
       }
     }
+
     .proxy-subpanel {
       display: none;
     }
+
     .proxy-subpanel.active {
       display: block;
     }
+
     .proxy-template-variable {
       border: 1px solid var(--line);
       border-radius: 10px;
@@ -2431,6 +2437,7 @@
       background: var(--surface);
       overflow: hidden;
     }
+
     .proxy-template-variable>summary {
       display: flex;
       align-items: center;
@@ -2440,9 +2447,11 @@
       list-style: none;
       user-select: none;
     }
+
     .proxy-template-variable>summary::-webkit-details-marker {
       display: none;
     }
+
     .proxy-template-variable>summary::before {
       content: "";
       width: 6px;
@@ -2452,35 +2461,43 @@
       transform: rotate(-45deg);
       transition: transform .16s;
     }
+
     .proxy-template-variable[open]>summary::before {
       transform: rotate(45deg);
     }
+
     .proxy-variable-name {
       font-family: var(--mono);
       font-size: 12px;
       font-weight: 650;
     }
+
     .proxy-variable-kind {
       margin-left: auto;
       color: var(--muted);
       font-size: 10px;
     }
+
     .proxy-variable-body {
       padding: 12px;
       border-top: 1px solid var(--line);
     }
+
     .proxy-variable-body .field {
       gap: 7px;
     }
+
     .proxy-variable-body .field>label:not(.check-row) {
       display: flex;
       flex-direction: column;
       gap: 7px;
     }
+
     .proxy-generation-grid {
       grid-template-columns: repeat(3, minmax(0, 1fr));
       column-gap: 10px;
     }
+
     .proxy-group-editor {
       border: 1px solid var(--line);
       border-radius: 10px;
@@ -2488,24 +2505,642 @@
       margin-top: 10px;
       background: var(--surface);
     }
+
     .proxy-group-editor textarea,
     .proxy-template-variable textarea {
       min-height: 72px;
       resize: vertical;
     }
-    .proxy-path-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-    .proxy-path-fields .field { min-width: 0; }
-    .proxy-group-view { margin-top: 12px; }
-    .proxy-value-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-    .proxy-path { overflow-wrap: anywhere; margin: 8px 0; color: var(--muted); font-size: 12px; }
-    .proxy-field-error { color: var(--bad); font-size: 12px; overflow-wrap: anywhere; }
-    [aria-invalid="true"] { border-color: var(--bad); }
-    .proxy-task-results { margin-top: 10px; }
-    .proxy-task-results td { overflow-wrap: anywhere; }
-    #confirmOptions { margin: 0 20px 14px; }
-    #confirmOptions:empty { display: none; }
-    .draft-note { color: var(--muted); font-size: 12px; }
-    @media (max-width: 767px) { .proxy-path-fields, .proxy-generation-grid { grid-template-columns: minmax(0, 1fr); } }
+
+    .proxy-path-fields {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .proxy-path-fields .field {
+      min-width: 0;
+    }
+
+    .proxy-group-view {
+      margin-top: 12px;
+    }
+
+    .proxy-value-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .proxy-path {
+      overflow-wrap: anywhere;
+      margin: 8px 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .proxy-field-error {
+      color: var(--bad);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    [aria-invalid="true"] {
+      border-color: var(--bad);
+    }
+
+    .proxy-task-results {
+      margin-top: 10px;
+    }
+
+    .proxy-task-results td {
+      overflow-wrap: anywhere;
+    }
+
+    #confirmOptions {
+      margin: 0 20px 14px;
+    }
+
+    #confirmOptions:empty {
+      display: none;
+    }
+
+    .draft-note {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 767px) {
+
+      .proxy-path-fields,
+      .proxy-generation-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+  </style>
+  <style>
+    /* Proxy source editor refinements */
+    :root {
+      --mono: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
+      --editor-shadow: 0 18px 44px rgba(15, 23, 42, .12);
+    }
+
+    :root[data-theme="dark"] {
+      --editor-shadow: 0 18px 44px rgba(0, 0, 0, .44);
+    }
+
+    #proxySourceDrawer .drawer {
+      width: min(800px, 100%);
+      box-shadow: var(--editor-shadow);
+    }
+
+    #proxySourceDrawer .drawer-head {
+      padding: 20px 22px 16px;
+      background: var(--surface);
+    }
+
+    #proxySourceDrawer .drawer-head>div {
+      min-width: 0;
+    }
+
+    #proxySourceDrawer .drawer-head h2 {
+      font-size: 17px;
+      letter-spacing: -.015em;
+    }
+
+    #proxySourceDrawer .drawer-head p {
+      max-width: 660px;
+      font-size: 11px;
+      line-height: 1.55;
+    }
+
+    .drawer-meta {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+      color: var(--subtle);
+      font-size: 10px;
+      line-height: 1.45;
+    }
+
+    .drawer-meta[hidden] {
+      display: none !important;
+    }
+
+    .meta-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface-muted);
+      color: var(--text);
+      font-weight: 550;
+    }
+
+    .meta-chip .icon {
+      width: 11px;
+      height: 11px;
+      color: var(--muted);
+    }
+
+    #proxySourceDrawer .drawer-body {
+      padding: 18px 22px 24px;
+      overflow-x: hidden;
+      scrollbar-gutter: stable;
+    }
+
+    #proxySourceDrawer .drawer-form {
+      gap: 16px;
+    }
+
+    #proxySourceDrawer .drawer-form .card {
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: none;
+      overflow: visible;
+    }
+
+    #proxySourceDrawer .form-section {
+      padding: 18px;
+    }
+
+    #proxySourceDrawer .form-section>.section-title {
+      margin-bottom: 15px;
+      font-size: 13px;
+      letter-spacing: -.005em;
+    }
+
+    #proxySourceDrawer .section-count {
+      margin-left: 2px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: var(--surface-muted);
+      color: var(--muted);
+      font-size: 9.5px;
+      line-height: 1.5;
+    }
+
+    #proxySourceDrawer .field-grid {
+      gap: 14px 16px;
+    }
+
+    #proxySourceDrawer .field {
+      gap: 6px;
+    }
+
+    #proxySourceDrawer .field-label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 16px;
+    }
+
+    #proxySourceDrawer .field-label>label,
+    #proxySourceDrawer .field-label-text {
+      color: var(--text);
+      font-size: 11.5px;
+      font-weight: 600;
+      line-height: 16px;
+    }
+
+    #proxySourceDrawer .field input,
+    #proxySourceDrawer .field select,
+    #proxySourceDrawer .field textarea {
+      min-height: 36px;
+      padding: 7px 10px;
+      border-radius: 8px;
+      background: var(--bg);
+      font-size: 12px;
+      transition: border-color .16s, background .16s, box-shadow .16s, opacity .16s;
+    }
+
+    #proxySourceDrawer .field input:hover:not(:disabled),
+    #proxySourceDrawer .field select:hover:not(:disabled),
+    #proxySourceDrawer .field textarea:hover:not(:disabled) {
+      border-color: color-mix(in srgb, var(--line-strong) 62%, var(--text));
+    }
+
+    #proxySourceDrawer .field input:focus,
+    #proxySourceDrawer .field select:focus,
+    #proxySourceDrawer .field textarea:focus {
+      border-color: var(--focus);
+      background: var(--surface);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 11%, transparent);
+    }
+
+    #proxySourceDrawer .field input:disabled,
+    #proxySourceDrawer .field select:disabled,
+    #proxySourceDrawer .field textarea:disabled {
+      background: var(--surface-muted);
+      color: var(--muted);
+      opacity: .62;
+    }
+
+    #proxySourceDrawer .field.is-disabled>.field-label {
+      opacity: .58;
+    }
+
+    #proxySourceDrawer .check-row {
+      min-height: 36px;
+      padding: 0 10px;
+      background: var(--bg);
+      cursor: default;
+    }
+
+    #proxySourceDrawer .check-choice {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 0;
+      min-height: 34px;
+      cursor: pointer;
+    }
+
+    #proxySourceDrawer .check-row input[type="checkbox"] {
+      width: 15px;
+      height: 15px;
+      min-height: 0;
+      margin: 0;
+      padding: 0;
+    }
+
+    #proxySourceDrawer .check-row .help-tip {
+      margin-left: auto;
+    }
+
+    .help-tip {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 15px;
+      height: 15px;
+      flex: 0 0 15px;
+      border-radius: 50%;
+      color: var(--subtle);
+      cursor: help;
+      vertical-align: middle;
+    }
+
+    .help-tip:hover,
+    .help-tip:focus-visible {
+      background: var(--surface-muted);
+      color: var(--text);
+    }
+
+    .help-tip:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 1px;
+    }
+
+    .help-tip .icon {
+      width: 13px;
+      height: 13px;
+      stroke-width: 2;
+    }
+
+    .help-tooltip {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 120;
+      box-sizing: border-box;
+      display: none;
+      width: max-content;
+      max-width: min(320px, calc(100vw - 24px));
+      padding: 8px 10px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--muted);
+      box-shadow: 0 14px 34px rgba(0, 0, 0, .2);
+      font-size: 10.5px;
+      font-weight: 500;
+      line-height: 1.55;
+      text-align: left;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      pointer-events: none;
+    }
+
+    .help-tooltip.is-open {
+      display: block;
+    }
+
+    #proxySourceDrawer .hint,
+    #proxySourceDrawer .help-tooltip,
+    #proxySourceDrawer .proxy-preview-summary,
+    #proxySourceDrawer .proxy-empty-note,
+    #proxySourceDrawer .proxy-preview-empty {
+      color: var(--muted);
+      font-size: 10.5px;
+      font-weight: 500;
+      line-height: 1.55;
+    }
+
+    #proxySourceDrawer .status-line {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    #proxySourceDrawer .proxy-node-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    #proxySourceDrawer .proxy-node-row {
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--bg);
+    }
+
+    #proxySourceDrawer .proxy-node-row-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 24px;
+      margin-bottom: 10px;
+    }
+
+    #proxySourceDrawer .proxy-node-row-index {
+      color: var(--subtle);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .04em;
+    }
+
+    #proxySourceDrawer .proxy-node-row-index b {
+      margin-left: 3px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-weight: 600;
+    }
+
+    #proxySourceDrawer .proxy-node-row-remove {
+      width: 26px;
+      min-width: 26px;
+      height: 26px;
+      min-height: 26px;
+      padding: 0;
+    }
+
+    #proxySourceDrawer .proxy-node-row-remove[hidden] {
+      display: none;
+    }
+
+    #proxySourceDrawer .proxy-node-row-fields {
+      display: grid;
+      grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+      gap: 12px 14px;
+    }
+
+    #proxySourceDrawer .proxy-node-row-fields .field {
+      min-width: 0;
+    }
+
+    #proxySourceDrawer .proxy-node-row-fields input {
+      width: 100%;
+      min-width: 0;
+      text-overflow: ellipsis;
+    }
+
+    #proxySourceDrawer .proxy-node-row-fields input:focus {
+      text-overflow: clip;
+    }
+
+    #proxySourceDrawer .section-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 15px;
+    }
+
+    #proxySourceDrawer .section-heading .section-title {
+      min-width: 0;
+      margin-bottom: 0;
+    }
+
+    #proxySourceDrawer .section-heading .btn {
+      flex: 0 0 auto;
+    }
+
+    #proxySourceDrawer [data-proxy-node-add] {
+      border-style: dashed;
+      background: var(--bg);
+      color: var(--muted);
+    }
+
+    #proxySourceDrawer [data-proxy-node-add]:hover {
+      border-color: var(--line-strong);
+      background: var(--surface-muted);
+      color: var(--text);
+    }
+
+    #proxySourceDrawer .proxy-template-variable {
+      margin-top: 12px;
+      border-radius: 9px;
+      background: var(--bg);
+      overflow: visible;
+    }
+
+    #proxySourceDrawer .proxy-template-variable>summary {
+      min-height: 40px;
+      padding: 9px 11px;
+    }
+
+    #proxySourceDrawer .proxy-template-variable>summary:hover {
+      background: var(--surface-muted);
+    }
+
+    #proxySourceDrawer .proxy-variable-name {
+      font-size: 11.5px;
+    }
+
+    #proxySourceDrawer .proxy-variable-kind {
+      margin-left: 0;
+      padding: 1px 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface-muted);
+      color: var(--muted);
+      font-size: 9.5px;
+      line-height: 1.5;
+    }
+
+    #proxySourceDrawer .proxy-variable-help {
+      margin-left: auto;
+    }
+
+    #proxySourceDrawer .proxy-variable-body {
+      padding: 14px;
+      background: var(--surface);
+    }
+
+    #proxySourceDrawer .proxy-generation-grid {
+      gap: 12px 14px;
+    }
+
+    #proxySourceDrawer .proxy-group-editor {
+      background: var(--bg);
+    }
+
+    #proxySourceDrawer .proxy-group-editor .hint,
+    #proxySourceDrawer .proxy-variable-body .hint {
+      color: var(--muted);
+    }
+
+    .proxy-preview-summary {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin: 14px 0 8px;
+      color: var(--muted);
+      font-size: 10.5px;
+    }
+
+    .proxy-preview-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .proxy-preview-card {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--bg);
+    }
+
+    .proxy-preview-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 7px 10px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-muted);
+    }
+
+    .proxy-preview-index {
+      color: var(--subtle);
+      font-size: 9.5px;
+      font-weight: 650;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .proxy-preview-badge {
+      padding: 1px 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 9.5px;
+      line-height: 1.5;
+    }
+
+    .proxy-preview-url {
+      padding: 11px 12px 8px;
+      color: var(--text);
+      font-size: 11.5px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .proxy-preview-values {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      padding: 0 12px 11px;
+    }
+
+    .proxy-preview-value {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 4px;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 10px;
+    }
+
+    .proxy-preview-value b {
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 9.5px;
+      font-weight: 600;
+    }
+
+    .proxy-preview-empty,
+    .proxy-empty-note {
+      padding: 13px 14px;
+      border: 1px dashed var(--line-strong);
+      border-radius: 9px;
+      color: var(--subtle);
+      font-size: 10.5px;
+      text-align: center;
+    }
+
+    #proxySourceDrawer .drawer-form>.form-actions {
+      margin-top: 0;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--surface);
+    }
+
+    #proxySourceDrawer .drawer-form>.form-actions .btn {
+      min-height: 34px;
+      padding-left: 12px;
+      padding-right: 12px;
+    }
+
+    #proxySourceDrawer .drawer-form>.form-actions .status-line {
+      max-width: 48%;
+      text-align: right;
+    }
+
+    @media (max-width: 680px) {
+      #proxySourceDrawer .proxy-node-row-fields {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      #proxySourceDrawer .section-heading {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      #proxySourceDrawer .drawer-head {
+        padding: 16px;
+      }
+
+      #proxySourceDrawer .drawer-body {
+        padding: 14px;
+      }
+
+      #proxySourceDrawer .form-section {
+        padding: 15px;
+      }
+
+      #proxySourceDrawer .drawer-form>.form-actions .status-line {
+        max-width: none;
+        text-align: left;
+      }
+    }
   </style>
 </head>
 
@@ -2606,6 +3241,10 @@
     <symbol id="i-link" viewBox="0 0 24 24">
       <path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" />
       <path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.1-1.1" />
+    </symbol>
+    <symbol id="i-info" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5M12 8h.01" />
     </symbol>
   </svg>
   <div class="page">
@@ -2732,10 +3371,12 @@
                 <option value="externally_disabled">外部禁用</option>
                 <option value="unknown">待检测</option>
               </select>
-              <button class="btn btn-xs" type="button" id="accountProbeAllBtn" title="检测当前已勾选账号" disabled><svg class="icon">
+              <button class="btn btn-xs" type="button" id="accountProbeAllBtn" title="检测当前已勾选账号" disabled><svg
+                  class="icon">
                   <use href="#i-play"></use>
                 </svg>检测所选</button>
-              <button class="btn btn-xs" type="button" id="accountRestoreAllBtn" title="恢复当前已勾选账号" disabled><svg class="icon">
+              <button class="btn btn-xs" type="button" id="accountRestoreAllBtn" title="恢复当前已勾选账号" disabled><svg
+                  class="icon">
                   <use href="#i-check"></use>
                 </svg>恢复所选</button>
             </div>
@@ -2769,7 +3410,7 @@
                   <th>状态</th>
                   <th>最近判定 / 禁用原因</th>
                   <th>质量指标</th>
-                  <th title="代理类型与名称">代理来源</th>
+                  <th title="代理类型与名称">代理</th>
                   <th title="冷却截止与探测退避">冷却 / 探测</th>
                   <th style="text-align:right">操作</th>
                 </tr>
@@ -2787,166 +3428,286 @@
       </section>
       <section class="tab-panel" id="panel-resin" role="tabpanel" aria-labelledby="tab-resin">
         <nav class="tabs settings-tabs" role="tablist" aria-label="代理管理任务">
-          <button class="tab-button active" id="proxy-tab-bindings" type="button" role="tab" aria-selected="true" aria-controls="proxy-subpanel-bindings" data-proxy-subtab="bindings">账号绑定</button>
-          <button class="tab-button" id="proxy-tab-sources" type="button" role="tab" aria-selected="false" aria-controls="proxy-subpanel-sources" data-proxy-subtab="sources">代理</button>
+          <button class="tab-button active" id="proxy-tab-bindings" type="button" role="tab" aria-selected="true"
+            aria-controls="proxy-subpanel-bindings" data-proxy-subtab="bindings">账号绑定</button>
+          <button class="tab-button" id="proxy-tab-sources" type="button" role="tab" aria-selected="false"
+            aria-controls="proxy-subpanel-sources" data-proxy-subtab="sources">代理</button>
         </nav>
         <div class="notice" id="proxyAutoBindBar">
-          <svg class="icon"><use href="#i-activity"></use></svg>
+          <svg class="icon">
+            <use href="#i-activity"></use>
+          </svg>
           <span id="proxyAutoBindText" role="status" aria-live="polite">自动绑定：加载中</span>
           <span class="notice-actions">
             <button class="btn btn-xs" type="button" id="proxyAutoBindRunBtn">立即扫描</button>
-            <button class="btn btn-xs btn-ghost" type="button" id="proxyAutoBindToggleSettingsBtn" aria-expanded="false" aria-controls="proxyAutoBindSettings">设置</button>
+            <button class="btn btn-xs btn-ghost" type="button" id="proxyAutoBindToggleSettingsBtn" aria-expanded="false"
+              aria-controls="proxyAutoBindSettings">设置</button>
             <button class="btn btn-xs btn-ghost" type="button" id="proxyTasksBtn">任务详情</button>
           </span>
         </div>
         <section class="card" id="proxyAutoBindSettings" aria-labelledby="proxyAutoBindSettingsTitle" hidden>
-          <div class="card-header compact"><div><h2 id="proxyAutoBindSettingsTitle"><svg class="icon"><use href="#i-sliders"></use></svg>自动绑定设置</h2><p>仅处理代理 URL 为空的 Grok/xAI 账号，其他账号会跳过</p></div><div class="card-actions"><span class="badge" id="proxyAutoBindStateBadge">未开启</span><button class="btn btn-xs btn-ghost" type="button" id="proxyAutoBindCloseBtn">收起</button></div></div>
-                    <form id="proxyAutoBindForm" class="card-body auto-bind-form">
+          <div class="card-header compact">
+            <div>
+              <h2 id="proxyAutoBindSettingsTitle"><svg class="icon">
+                  <use href="#i-sliders"></use>
+                </svg>自动绑定设置</h2>
+              <p>仅处理代理 URL 为空的 Grok/xAI 账号，其他账号会跳过</p>
+            </div>
+            <div class="card-actions"><span class="badge" id="proxyAutoBindStateBadge">未开启</span><button
+                class="btn btn-xs btn-ghost" type="button" id="proxyAutoBindCloseBtn">收起</button></div>
+          </div>
+          <form id="proxyAutoBindForm" class="card-body auto-bind-form">
             <section class="settings-group auto-bind-group-switches">
               <h3 class="section-title">运行开关</h3>
               <div class="field-grid">
-                <div class="field"><label class="check-row"><input id="pab_enabled" type="checkbox"><span>启用自动绑定</span></label><span class="hint">仅扫描未绑定账号</span></div>
-                <div class="field"><label class="check-row"><input id="pab_auto_rotate" type="checkbox"><span>质量异常后自动轮换代理</span></label><span class="hint">仅对插件管理的代理生效</span></div>
+                <div class="field"><label class="check-row"><input id="pab_enabled"
+                      type="checkbox"><span>启用自动绑定</span></label><span class="hint">仅扫描未绑定账号</span></div>
+                <div class="field"><label class="check-row"><input id="pab_auto_rotate"
+                      type="checkbox"><span>质量异常后自动轮换代理</span></label><span class="hint">仅对插件管理的代理生效</span></div>
               </div>
             </section>
             <section class="settings-group auto-bind-group-source">
               <h3 class="section-title">绑定代理</h3>
               <div class="field-grid">
-                <div class="field"><label for="pab_source_scope">代理范围</label><select id="pab_source_scope"><option value="all">全部代理</option><option value="nodes">仅节点</option><option value="templates">仅模板</option><option value="resin">仅 Resin</option></select><span class="hint">仅在这些代理中选择</span></div>
-                <div class="field"><label for="pab_source_ids">限定代理 ID</label><input id="pab_source_ids" type="text" placeholder="留空不限制，多个 ID 用逗号分隔"><span class="hint">保存时校验代理</span></div>
+                <div class="field"><label for="pab_source_scope">代理范围</label><select id="pab_source_scope">
+                    <option value="all">全部代理</option>
+                    <option value="nodes">仅节点</option>
+                    <option value="templates">仅模板</option>
+                    <option value="resin">仅 Resin</option>
+                  </select><span class="hint">仅在这些代理中选择</span></div>
+                <div class="field"><label for="pab_source_ids">限定代理 ID</label><input id="pab_source_ids" type="text"
+                    placeholder="留空不限制，多个 ID 用逗号分隔"><span class="hint">保存时校验代理</span></div>
               </div>
             </section>
             <section class="settings-group auto-bind-group-scan">
               <h3 class="section-title">扫描与并发</h3>
               <div class="field-grid">
-                <div class="field"><label for="pab_concurrency">并发</label><input id="pab_concurrency" type="number" min="1" max="32"><span class="hint">同时处理的账号数</span></div>
-                <div class="field"><label for="pab_queue_size">队列容量</label><input id="pab_queue_size" type="number" min="1" max="1000000"><span class="hint">等待处理的账号上限</span></div>
-                <div class="field"><label for="pab_max_per_cycle">单轮最多发现</label><input id="pab_max_per_cycle" type="number" min="1"><span class="hint">每轮最多处理数量</span></div>
-                <div class="field"><label for="pab_scan_interval">扫描间隔</label><input id="pab_scan_interval" type="text" placeholder="30s"><span class="hint">例如 30s 或 5m</span></div>
+                <div class="field"><label for="pab_concurrency">并发</label><input id="pab_concurrency" type="number"
+                    min="1" max="32"><span class="hint">同时处理的账号数</span></div>
+                <div class="field"><label for="pab_queue_size">队列容量</label><input id="pab_queue_size" type="number"
+                    min="1" max="1000000"><span class="hint">等待处理的账号上限</span></div>
+                <div class="field"><label for="pab_max_per_cycle">单轮最多发现</label><input id="pab_max_per_cycle"
+                    type="number" min="1"><span class="hint">每轮最多处理数量</span></div>
+                <div class="field"><label for="pab_scan_interval">扫描间隔</label><input id="pab_scan_interval" type="text"
+                    placeholder="30s"><span class="hint">例如 30s 或 5m</span></div>
               </div>
             </section>
             <section class="settings-group auto-bind-group-health">
               <h3 class="section-title">健康与账号范围</h3>
               <div class="field-grid">
-                <div class="field"><label for="pab_health_max_age">健康最大年龄</label><input id="pab_health_max_age" type="text" placeholder="10m"><span class="hint">健康记录超过此时长后失效</span></div>
-                <div class="field"><label class="check-row"><input id="pab_require_healthy" type="checkbox"><span>仅使用健康代理</span></label><span class="hint">仅选择健康且未过期的代理</span></div>
-                <div class="field"><label class="check-row"><input id="pab_include_guard_disabled" type="checkbox"><span>纳入插件隔离账号</span></label><span class="hint">包括冷却或隔离中的账号</span></div>
-                <div class="field"><label class="check-row"><input id="pab_include_externally_disabled" type="checkbox"><span>纳入外部禁用账号</span></label><span class="hint">包括 CPA 外部禁用的账号</span></div>
+                <div class="field"><label for="pab_health_max_age">健康最大年龄</label><input id="pab_health_max_age"
+                    type="text" placeholder="10m"><span class="hint">健康记录超过此时长后失效</span></div>
+                <div class="field"><label class="check-row"><input id="pab_require_healthy"
+                      type="checkbox"><span>仅使用健康代理</span></label><span class="hint">仅选择健康且未过期的代理</span></div>
+                <div class="field"><label class="check-row"><input id="pab_include_guard_disabled"
+                      type="checkbox"><span>纳入插件隔离账号</span></label><span class="hint">包括冷却或隔离中的账号</span></div>
+                <div class="field"><label class="check-row"><input id="pab_include_externally_disabled"
+                      type="checkbox"><span>纳入外部禁用账号</span></label><span class="hint">包括 CPA 外部禁用的账号</span></div>
               </div>
             </section>
             <section class="settings-group auto-bind-group-recovery">
               <h3 class="section-title">恢复与退避</h3>
               <div class="field-grid retry-grid">
-                <div class="field"><label for="pab_manual_clear_policy">手动清除后</label><select id="pab_manual_clear_policy"><option value="rebind">允许自动重新绑定</option><option value="pause">暂停这些账号</option></select><span class="hint">清除后是否重新加入自动绑定</span></div>
-                <div class="field"><label for="pab_retry_initial">首次失败退避</label><input id="pab_retry_initial" type="text" placeholder="1m"><span class="hint">首次失败后的等待时长</span></div>
-                <div class="field"><label for="pab_retry_max">最大失败退避</label><input id="pab_retry_max" type="text" placeholder="1h"><span class="hint">退避等待的最长时间</span></div>
+                <div class="field"><label for="pab_manual_clear_policy">手动清除后</label><select
+                    id="pab_manual_clear_policy">
+                    <option value="rebind">允许自动重新绑定</option>
+                    <option value="pause">暂停这些账号</option>
+                  </select><span class="hint">清除后是否重新加入自动绑定</span></div>
+                <div class="field"><label for="pab_retry_initial">首次失败退避</label><input id="pab_retry_initial"
+                    type="text" placeholder="1m"><span class="hint">首次失败后的等待时长</span></div>
+                <div class="field"><label for="pab_retry_max">最大失败退避</label><input id="pab_retry_max" type="text"
+                    placeholder="1h"><span class="hint">退避等待的最长时间</span></div>
               </div>
             </section>
-            <div class="form-actions"><button class="btn btn-primary" type="submit" id="proxyAutoBindSaveBtn"><svg class="icon"><use href="#i-check"></use></svg>保存设置</button><span class="status-line" id="proxyAutoBindStatus" role="status" aria-live="polite"></span></div>
+            <div class="form-actions"><button class="btn btn-primary" type="submit" id="proxyAutoBindSaveBtn"><svg
+                  class="icon">
+                  <use href="#i-check"></use>
+                </svg>保存设置</button><span class="status-line" id="proxyAutoBindStatus" role="status"
+                aria-live="polite"></span></div>
           </form>
         </section>
-        <div class="proxy-subpanel active" id="proxy-subpanel-bindings" role="tabpanel" aria-labelledby="proxy-tab-bindings">
-        <datalist id="proxySourceChoices"></datalist>
-        <div class="notice" id="resinNotice" hidden>
-          <svg class="icon">
-            <use href="#i-alert"></use>
-          </svg>
-          <span id="resinNoticeText"></span>
-        </div>
-        <div class="metric-grid" id="resinMetrics"></div>
-        <section class="card proxy-lease-card" aria-labelledby="leaseTitle">
-          <div class="card-header proxy-lease-header">
-            <div>
-              <h2 id="leaseTitle"><svg class="icon">
-                  <use href="#i-database"></use>
-                </svg>账号代理</h2>
-              <p>节点、模板与代理服务统一绑定；默认显示脱敏端点，点击眼睛查看完整端点</p>
-            </div>
-            <div class="card-actions">
-              <span class="badge" id="resinConfigState">未配置</span>
-              <button class="btn btn-xs" type="button" id="bindUnboundBtn"><svg class="icon">
-                  <use href="#i-link"></use>
-                </svg>绑定未绑定</button>
-              <button class="btn btn-xs" type="button" id="bindSelectedBtn" disabled><svg class="icon">
-                  <use href="#i-link"></use>
-                </svg>绑定所选</button>
-              <button class="btn btn-xs btn-danger" type="button" id="clearSelectedBtn" title="清除已选账号的代理，包括外部配置" disabled><svg class="icon">
-                  <use href="#i-x"></use>
-                </svg>清除所选</button>
-              <button class="btn btn-xs btn-ghost" type="button" id="pauseSelectedAutoBindBtn" disabled>暂停自动绑定</button>
-              <button class="btn btn-xs btn-ghost" type="button" id="resumeSelectedAutoBindBtn" disabled>恢复自动绑定</button>
-            </div>
-          </div>
-          <div class="toolbar">
-            <div class="toolbar-left">
-              <label class="search"><svg class="icon">
-                  <use href="#i-search"></use>
-                </svg><input id="leaseSearch" type="search" placeholder="搜索账号、代理地址或代理名称" autocomplete="off"></label>
-              <select class="control" id="leaseFilter" aria-label="筛选代理状态">
-                <option value="all">全部代理</option>
-                <option value="bound">已绑定</option>
-                <option value="unbound">未绑定</option>
-                <option value="drifted">与记录不一致</option>
-                <option value="reconcile_required">待核对</option>
-                <option value="external">外部配置</option>
-                <option value="unknown">读取失败</option>
-                <option value="paused">自动绑定已暂停</option>
-              </select>
-              <input class="control" id="leaseSourceFilter" type="search" list="proxySourceChoices" aria-label="筛选绑定代理" placeholder="代理 ID · 可搜索">
-            </div>
-            <div class="toolbar-right">
-              <span class="selection-note" id="leaseSelectionCount">已选：0 个账号</span>
-              <button class="btn btn-xs btn-ghost" type="button" id="selectFilteredBtn" title="选择当前搜索和筛选结果中的所有账号"
-                hidden>全选当前筛选</button>
-              <button class="btn btn-xs btn-ghost" type="button" id="selectAllAccountsBtn" title="忽略当前搜索和筛选，选择全部账号"
-                hidden>全选所有账号</button>
-              <button class="btn btn-xs btn-ghost" type="button" id="clearLeaseSelectionBtn" hidden>清空已选</button>
-              <span class="muted" id="leaseCount"></span>
-              <button class="btn btn-xs" type="button" id="leaseRefreshBtn"><svg class="icon">
-                  <use href="#i-refresh"></use>
-                </svg>刷新</button>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table class="proxy-lease-table">
-              <thead>
-                <tr>
-                  <th class="select-cell"><input id="leaseSelectAll" type="checkbox" aria-label="选择本页全部账号"
-                      title="选择本页全部账号"></th>
-                  <th>账号</th>
-                  <th>代理</th>
-                  <th>端点</th>
-                  <th>模板版本</th>
-                  <th>状态</th>
-                  <th class="actions-cell">操作</th>
-                </tr>
-              </thead>
-              <tbody id="leaseRows"></tbody>
-            </table>
-          </div>
-          <div class="pagination" id="leasesPager" hidden></div>
-          <p class="status-line" id="proxyBindingStatus" role="status" aria-live="polite"></p>
-          <div class="empty" id="leaseEmpty" hidden><svg class="icon">
-              <use href="#i-database"></use>
+        <div class="proxy-subpanel active" id="proxy-subpanel-bindings" role="tabpanel"
+          aria-labelledby="proxy-tab-bindings">
+          <datalist id="proxySourceChoices"></datalist>
+          <div class="notice" id="resinNotice" hidden>
+            <svg class="icon">
+              <use href="#i-alert"></use>
             </svg>
-            <div>没有匹配的代理数据</div>
+            <span id="resinNoticeText"></span>
           </div>
-        </section>
+          <div class="metric-grid" id="resinMetrics"></div>
+          <section class="card proxy-lease-card" aria-labelledby="leaseTitle">
+            <div class="card-header proxy-lease-header">
+              <div>
+                <h2 id="leaseTitle"><svg class="icon">
+                    <use href="#i-database"></use>
+                  </svg>账号代理</h2>
+                <p>节点、模板与代理服务统一绑定，默认显示脱敏端点，点击眼睛查看完整端点</p>
+              </div>
+              <div class="card-actions">
+                <span class="badge" id="resinConfigState">未配置</span>
+                <button class="btn btn-xs" type="button" id="bindUnboundBtn"><svg class="icon">
+                    <use href="#i-link"></use>
+                  </svg>绑定未绑定</button>
+                <button class="btn btn-xs" type="button" id="bindSelectedBtn" disabled><svg class="icon">
+                    <use href="#i-link"></use>
+                  </svg>绑定所选</button>
+                <button class="btn btn-xs btn-danger" type="button" id="clearSelectedBtn" title="清除已选账号的代理，包括外部配置"
+                  disabled><svg class="icon">
+                    <use href="#i-x"></use>
+                  </svg>清除所选</button>
+                <button class="btn btn-xs btn-ghost" type="button" id="pauseSelectedAutoBindBtn"
+                  disabled>暂停自动绑定</button>
+                <button class="btn btn-xs btn-ghost" type="button" id="resumeSelectedAutoBindBtn"
+                  disabled>恢复自动绑定</button>
+              </div>
+            </div>
+            <div class="toolbar">
+              <div class="toolbar-left">
+                <label class="search"><svg class="icon">
+                    <use href="#i-search"></use>
+                  </svg><input id="leaseSearch" type="search" placeholder="搜索账号、代理地址或代理名称" autocomplete="off"></label>
+                <select class="control" id="leaseFilter" aria-label="筛选代理状态">
+                  <option value="all">全部代理</option>
+                  <option value="bound">已绑定</option>
+                  <option value="unbound">未绑定</option>
+                  <option value="drifted">与记录不一致</option>
+                  <option value="reconcile_required">待核对</option>
+                  <option value="external">外部配置</option>
+                  <option value="unknown">读取失败</option>
+                  <option value="paused">自动绑定已暂停</option>
+                </select>
+                <input class="control" id="leaseSourceFilter" type="search" list="proxySourceChoices"
+                  aria-label="筛选绑定代理" placeholder="代理 ID · 可搜索">
+              </div>
+              <div class="toolbar-right">
+                <span class="selection-note" id="leaseSelectionCount">已选：0 个账号</span>
+                <button class="btn btn-xs btn-ghost" type="button" id="selectFilteredBtn" title="选择当前搜索和筛选结果中的所有账号"
+                  hidden>全选当前筛选</button>
+                <button class="btn btn-xs btn-ghost" type="button" id="selectAllAccountsBtn" title="忽略当前搜索和筛选，选择全部账号"
+                  hidden>全选所有账号</button>
+                <button class="btn btn-xs btn-ghost" type="button" id="clearLeaseSelectionBtn" hidden>清空已选</button>
+                <span class="muted" id="leaseCount"></span>
+                <button class="btn btn-xs" type="button" id="leaseRefreshBtn"><svg class="icon">
+                    <use href="#i-refresh"></use>
+                  </svg>刷新</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="proxy-lease-table">
+                <thead>
+                  <tr>
+                    <th class="select-cell"><input id="leaseSelectAll" type="checkbox" aria-label="选择本页全部账号"
+                        title="选择本页全部账号"></th>
+                    <th>账号</th>
+                    <th>代理</th>
+                    <th>端点</th>
+                    <th>模板版本</th>
+                    <th>状态</th>
+                    <th class="actions-cell">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="leaseRows"></tbody>
+              </table>
+            </div>
+            <div class="pagination" id="leasesPager" hidden></div>
+            <p class="status-line" id="proxyBindingStatus" role="status" aria-live="polite"></p>
+            <div class="empty" id="leaseEmpty" hidden><svg class="icon">
+                <use href="#i-database"></use>
+              </svg>
+              <div>没有匹配的代理数据</div>
+            </div>
+          </section>
         </div>
         <div class="proxy-subpanel" id="proxy-subpanel-sources" role="tabpanel" aria-labelledby="proxy-tab-sources">
           <section class="card" aria-labelledby="proxySourcesTitle">
             <div class="card-header">
-              <div><h2 id="proxySourcesTitle"><svg class="icon"><use href="#i-database"></use></svg>代理</h2><p>节点、模板与代理服务统一参与绑定；启用状态与网络连通性分列显示，列表筛选只影响当前列表</p></div>
+              <div>
+                <h2 id="proxySourcesTitle"><svg class="icon">
+                    <use href="#i-database"></use>
+                  </svg>代理</h2>
+                <p>节点、模板与代理服务统一参与绑定，启用状态与网络连通性分列显示，列表筛选只影响当前列表</p>
+              </div>
               <div class="card-actions">
-                <label class="inline-control source-filter-group" for="proxySourceFilter"><span>列表筛选</span><select class="control" id="proxySourceFilter" aria-label="筛选代理类型" title="筛选当前代理列表"><option value="all">全部代理</option><option value="node">节点</option><option value="template">模板</option><option value="resin">Resin</option></select></label>
-                <div class="inline-control source-filter-group add-source-control"><span>新增类型</span><select class="control" id="proxyAddSourceKind" aria-label="新增代理类型" title="选择要添加的代理类型"><option value="node">节点</option><option value="template">模板</option><option value="resin">Resin</option></select><button class="btn btn-xs" type="button" id="proxyAddSourceBtn"><svg class="icon"><use href="#i-plus"></use></svg>添加代理</button></div>
-                <button class="btn btn-xs btn-ghost" type="button" id="proxyImportNodesBtn"><svg class="icon"><use href="#i-link"></use></svg>批量导入节点</button>
+                <label class="inline-control source-filter-group" for="proxySourceFilter"><span>列表筛选</span><select
+                    class="control" id="proxySourceFilter" aria-label="筛选代理类型" title="筛选当前代理列表">
+                    <option value="all">全部代理</option>
+                    <option value="node">节点</option>
+                    <option value="template">模板</option>
+                    <option value="resin">Resin</option>
+                  </select></label>
+                <div class="inline-control source-filter-group add-source-control"><span>新增类型</span><select
+                    class="control" id="proxyAddSourceKind" aria-label="新增代理类型" title="选择要添加的代理类型">
+                    <option value="node">节点</option>
+                    <option value="template">模板</option>
+                    <option value="resin">Resin</option>
+                  </select><button class="btn btn-xs" type="button" id="proxyAddSourceBtn"><svg class="icon">
+                      <use href="#i-plus"></use>
+                    </svg>添加代理</button></div>
+                <button class="btn btn-xs btn-ghost" type="button" id="proxyImportNodesBtn"><svg class="icon">
+                    <use href="#i-link"></use>
+                  </svg>批量导入节点</button>
               </div>
             </div>
-            <div class="toolbar"><div class="toolbar-left"><label class="search"><svg class="icon"><use href="#i-search"></use></svg><input id="proxySourceSearch" type="search" placeholder="搜索名称、类型或脱敏端点" autocomplete="off"></label><label class="inline-control source-filter-group" for="proxySourceEnabledFilter"><span>启用</span><select class="control" id="proxySourceEnabledFilter" aria-label="按启用状态筛选代理"><option value="all">全部</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select></label><label class="inline-control source-filter-group" for="proxySourceHealthFilter"><span>连通性</span><select class="control" id="proxySourceHealthFilter" aria-label="按网络连通性筛选代理"><option value="all">全部</option><option value="healthy">可连通</option><option value="unhealthy">不可达</option><option value="unknown">未检测</option></select></label><span class="muted" id="proxySourceSummary"></span></div><div class="toolbar-right"><span class="selection-note" id="proxySourceSelectionCount">已选：0 个代理</span><button class="btn btn-xs btn-ghost" type="button" id="proxySourceSelectFilteredBtn" title="选择当前搜索和筛选结果中的所有代理" hidden>全选当前筛选</button><button class="btn btn-xs btn-ghost" type="button" id="proxySourceSelectAllBtn" title="忽略当前搜索和筛选，选择全部代理" hidden>全选所有代理</button><button class="btn btn-xs" type="button" id="proxySourceTestSelectedBtn" title="检测已选代理的网络连通性" disabled><svg class="icon"><use href="#i-play"></use></svg>检测所选</button><button class="btn btn-xs btn-danger" type="button" id="proxySourceDeleteSelectedBtn" title="清理绑定并删除已选代理" disabled><svg class="icon"><use href="#i-x"></use></svg>删除所选</button><button class="btn btn-xs btn-ghost" type="button" id="proxySourceClearSelectionBtn" hidden>清空已选</button><button class="btn btn-xs" type="button" id="proxySourceRefreshBtn"><svg class="icon"><use href="#i-refresh"></use></svg>刷新</button></div></div>
-            <div class="table-wrap"><table class="proxy-source-table"><thead><tr><th class="select-cell"><input id="proxySourceSelectAll" type="checkbox" aria-label="选择本页全部代理" title="选择本页全部代理"></th><th>名称</th><th>类型</th><th>端点</th><th>启用状态</th><th title="仅表示最近一次网络隧道检测结果，不代表账号质量或授权可用性">网络连通性</th><th title="最近一次网络连通性检测时间">检测时间</th><th>绑定数</th><th title="v = 标准端点内容版本；r = 生成配置版本">版本</th><th class="actions-cell">操作</th></tr></thead><tbody id="proxySourceRows"></tbody></table></div>
+            <div class="toolbar">
+              <div class="toolbar-left"><label class="search"><svg class="icon">
+                    <use href="#i-search"></use>
+                  </svg><input id="proxySourceSearch" type="search" placeholder="搜索名称、类型或脱敏端点"
+                    autocomplete="off"></label><label class="inline-control source-filter-group"
+                  for="proxySourceEnabledFilter"><span>启用</span><select class="control" id="proxySourceEnabledFilter"
+                    aria-label="按启用状态筛选代理">
+                    <option value="all">全部</option>
+                    <option value="enabled">已启用</option>
+                    <option value="disabled">已停用</option>
+                  </select></label><label class="inline-control source-filter-group"
+                  for="proxySourceHealthFilter"><span>连通性</span><select class="control" id="proxySourceHealthFilter"
+                    aria-label="按网络连通性筛选代理">
+                    <option value="all">全部</option>
+                    <option value="healthy">可连通</option>
+                    <option value="unhealthy">不可达</option>
+                    <option value="unknown">未检测</option>
+                  </select></label><span class="muted" id="proxySourceSummary"></span></div>
+              <div class="toolbar-right"><span class="selection-note" id="proxySourceSelectionCount">已选：0
+                  个代理</span><button class="btn btn-xs btn-ghost" type="button" id="proxySourceSelectFilteredBtn"
+                  title="选择当前搜索和筛选结果中的所有代理" hidden>全选当前筛选</button><button class="btn btn-xs btn-ghost" type="button"
+                  id="proxySourceSelectAllBtn" title="忽略当前搜索和筛选，选择全部代理" hidden>全选所有代理</button><button class="btn btn-xs"
+                  type="button" id="proxySourceTestSelectedBtn" title="检测已选代理的网络连通性" disabled><svg class="icon">
+                    <use href="#i-play"></use>
+                  </svg>检测所选</button><button class="btn btn-xs btn-danger" type="button"
+                  id="proxySourceDeleteSelectedBtn" title="清理绑定并删除已选代理" disabled><svg class="icon">
+                    <use href="#i-x"></use>
+                  </svg>删除所选</button><button class="btn btn-xs btn-ghost" type="button"
+                  id="proxySourceClearSelectionBtn" hidden>清空已选</button><button class="btn btn-xs" type="button"
+                  id="proxySourceRefreshBtn"><svg class="icon">
+                    <use href="#i-refresh"></use>
+                  </svg>刷新</button></div>
+            </div>
+            <div class="table-wrap">
+              <table class="proxy-source-table">
+                <thead>
+                  <tr>
+                    <th class="select-cell"><input id="proxySourceSelectAll" type="checkbox" aria-label="选择本页全部代理"
+                        title="选择本页全部代理"></th>
+                    <th>名称</th>
+                    <th>类型</th>
+                    <th>端点</th>
+                    <th>启用状态</th>
+                    <th title="仅表示最近一次网络隧道检测结果，不代表账号质量或授权可用性">网络连通性</th>
+                    <th title="最近一次网络连通性检测时间">检测时间</th>
+                    <th>绑定数</th>
+                    <th title="v = 标准端点内容版本，r = 生成配置版本">版本</th>
+                    <th class="actions-cell">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="proxySourceRows"></tbody>
+              </table>
+            </div>
             <div class="pagination" id="proxySourcesPager" hidden></div>
-            <div class="empty" id="proxySourcesEmpty" hidden><svg class="icon"><use href="#i-database"></use></svg><div>暂无代理</div></div>
+            <div class="empty" id="proxySourcesEmpty" hidden><svg class="icon">
+                <use href="#i-database"></use>
+              </svg>
+              <div>暂无代理</div>
+            </div>
           </section>
         </div>
       </section>
@@ -2993,145 +3754,150 @@
           <form id="policyForm" class="settings-layout policy-settings-form">
             <div class="policy-settings-grid">
               <section class="policy-group policy-group-mode">
-                  <h3 class="section-title"><svg class="icon">
-                      <use href="#i-shield"></use>
-                    </svg>运行模式与处置</h3>
-                  <div class="field-grid">
-                    <label class="check-card"><input id="p_passive" type="checkbox"><span class="check-copy"><span
-                          class="check-title">被动观测</span><span class="check-desc">分析真实请求的响应和流式
-                          Chunk，不改变路由</span></span></label>
-                    <label class="check-card"><input id="p_transparent" type="checkbox"><span class="check-copy"><span
-                          class="check-title">透明保护</span><span class="check-desc">拦截所有 Grok/xAI OAuth 请求，在首个客户端可见 Chunk
-                          前完成质量门；不可安全重放的请求只执行一次</span></span></label>
-                    <div class="field"><label for="p_auto_action">自动处置</label><select id="p_auto_action">
-                        <option value="cooldown_only">冷却</option>
-                        <option value="observe">仅观察</option>
-                        <option value="cooldown_then_disable">冷却后永久禁用</option>
-                      </select><span class="hint">默认只观察，不写入 OAuth 文件</span></div>
-                    <div class="field"><label for="p_model_prefixes">模型前缀</label><input id="p_model_prefixes"
-                        type="text" autocomplete="off" placeholder="grok-"><span class="hint">用于识别不含 grok 的自定义模型别名；标准
-                        grok-* 名称会自动识别</span></div>
-                    <div class="field"><label for="p_events_limit">事件保留上限</label><input id="p_events_limit"
-                        type="number" min="1" max="10000"><span class="hint">超过上限时裁剪最旧事件</span></div>
-                    <div class="field full"><label for="p_state_file">状态文件路径</label><input id="p_state_file" type="text"
-                        autocomplete="off" spellcheck="false"
-                        placeholder="/CLIProxyAPI/plugins/data/grok-quality-guard/state.json"><span class="hint">YAML 的
-                        state_file 是启动引导路径；此处保存时会把当前状态写入新路径并切换；目标文件必须尚不存在，且目录需为持久卷</span></div>
-                  </div>
-                </section>
-                <section class="policy-group policy-group-routing">
-                  <h3 class="section-title"><svg class="icon">
-                      <use href="#i-link"></use>
-                    </svg>透明鉴权选择与会话亲和</h3>
-                  <div class="field-grid">
-                    <div class="field"><label for="p_selection_strategy">层内选择策略</label><select id="p_selection_strategy">
-                        <option value="round_robin">轮询分配</option>
-                        <option value="random">随机分配</option>
-                        <option value="fill_first">顺序优先</option>
-                      </select><span class="hint">仅在同一个质量/优先级层内生效</span></div>
-                    <div class="field"><label for="p_session_affinity_ttl">会话亲和 TTL</label><input id="p_session_affinity_ttl"
-                        type="text" placeholder="1h"><span class="hint">成功请求后刷新</span></div>
-                    <label class="check-card"><input id="p_prefer_last_success" type="checkbox"><span
-                        class="check-copy"><span class="check-title">优先复用上次成功账号</span><span class="check-desc">仅在该账号健康且空闲时优先使用；并发时自动分散</span></span></label>
-                    <label class="check-card"><input id="p_session_affinity" type="checkbox"><span
-                        class="check-copy"><span class="check-title">启用会话亲和</span><span class="check-desc">同一会话在账号正常时尽量固定到同一 auth</span></span></label>
-                    <div class="field"><label for="p_session_affinity_max_entries">会话绑定上限</label><input
-                        id="p_session_affinity_max_entries" type="number" min="1" max="100000"></div>
-                  </div>
-                </section>
-                <section class="policy-group policy-group-quality">
-                  <h3 class="section-title"><svg class="icon">
-                      <use href="#i-gauge"></use>
-                    </svg>质量阈值与思考证据</h3>
-                  <div class="field-grid">
-                    <div class="field"><label for="p_soft_tps">软 TPS 阈值</label><input id="p_soft_tps" type="number"
-                        min="1" step="0.1"><span class="hint">达到后标记为可疑</span></div>
-                    <div class="field"><label for="p_hard_tps">硬 TPS 阈值</label><input id="p_hard_tps" type="number"
-                        min="1" step="0.1"><span class="hint">必须大于软阈值</span></div>
-                    <div class="field"><label for="p_consecutive_soft">连续软阈值次数</label><input id="p_consecutive_soft"
-                        type="number" min="1"><span class="hint">达到次数后才进入处置或交叉验证</span></div>
-                    <div class="field"><label for="p_consecutive_errors">连续错误次数</label><input id="p_consecutive_errors"
-                        type="number" min="1"><span class="hint">探测或代理错误累计达到次数后处置</span></div>
-                    <div class="field"><label for="p_consecutive_missing_thinking">连续缺少思考次数</label><input
-                        id="p_consecutive_missing_thinking" type="number" min="1"><span
-                        class="hint">连续检测到缺少真实思考的响应达到该次数后触发处置或交叉验证；默认：1</span></div>
-                    <div class="field"><label for="p_strike_decay_after">缺思考惩罚标记降级时间窗口</label><input
-                        id="p_strike_decay_after" type="number" min="0"><span class="hint">单位：小时，默认：48；0 表示关闭自动降级</span></div>
-                    <div class="field"><label for="p_strike_decay_min_healthy">自动降级连续健康样本</label><input
-                        id="p_strike_decay_min_healthy" type="number" min="0"><span class="hint">窗口内至少积累的连续健康观测/探测次数，默认：10</span></div>
-                    <div class="field"><label for="p_min_generation_ms">最小生成窗口</label><input id="p_min_generation_ms"
-                        type="number" min="1"><span class="hint">单位：毫秒</span></div>
-                    <label class="check-card"><input id="p_thinking_guard" type="checkbox"><span
-                        class="check-copy"><span class="check-title">启用缺少思考检测</span><span class="check-desc">关闭后只保留 TPS
-                          与空流等质量检查</span></span></label>
-                    <label class="check-card"><input id="p_soft_cross_verify" type="checkbox"><span
-                        class="check-copy"><span class="check-title">软阈值交叉验证</span><span class="check-desc">连续软 TPS
-                          达到阈值后先异步主动探测，再决定是否处置</span></span></label>
-                    <label class="check-card"><input id="p_thinking_cross_verify" type="checkbox"><span
-                        class="check-copy"><span class="check-title">缺思考交叉验证</span><span
-                          class="check-desc">连续缺少思考达到阈值后先异步主动探测，再决定是否处置</span></span></label>
-                    <label class="check-card"><input id="p_fail_closed" type="checkbox"><span
-                        class="check-copy"><span class="check-title">短生成窗口严格判定</span><span class="check-desc">开启后，生成窗口过短且 TPS 达到软阈值时直接判为短窗口突发</span></span></label>
-                    <div class="field"><label for="p_min_passive_output">被动审计最小输出 Token</label><input
-                        id="p_min_passive_output" type="number" min="1"></div>
-                    <div class="field"><label for="p_min_encrypted_bytes">加密思考最小字节</label><input
-                        id="p_min_encrypted_bytes" type="number" min="1"></div>
-                    <div class="field"><label for="p_encrypted_per_token">每推理 Token 的密文字节</label><input
-                        id="p_encrypted_per_token" type="number" min="1"></div>
-                    <div class="field"><label for="p_missing_cooldown">缺少思考冷却</label><input id="p_missing_cooldown"
-                        type="text" placeholder="12h"></div>
-                    <div class="field"><label for="p_empty_cooldown">空流冷却</label><input id="p_empty_cooldown"
-                        type="text" placeholder="15m"></div>
-                  </div>
-                </section>
-                <section class="policy-group policy-group-probe">
-                  <h3 class="section-title"><svg class="icon">
-                      <use href="#i-eye"></use>
-                    </svg>透明流保护与主动探测</h3>
-                  <div class="field-grid">
-                    <div class="field"><label for="p_min_hold_output">缓冲最小输出 Token</label><input id="p_min_hold_output"
-                        type="number" min="1"></div>
-                    <div class="field"><label for="p_hold_timeout">缓冲超时</label><input id="p_hold_timeout" type="text"
-                        placeholder="30s"></div>
-                    <div class="field"><label for="p_hold_max_bytes">最大缓冲字节</label><input id="p_hold_max_bytes"
-                        type="number" min="1"></div>
-                    <div class="field"><label for="p_max_attempts">透明模式最大尝试次数</label><input id="p_max_attempts"
-                        type="number" min="1"></div>
-                    <div class="field"><label for="p_on_exhausted">候选耗尽行为</label><select id="p_on_exhausted">
-                        <option value="fail_closed">失败关闭</option>
-                        <option value="fail_open">失败放行</option>
-                      </select></div>
-                    <label class="check-card compact" title="健康账号不做周期探测"><input id="p_probe_recovery_only" type="checkbox"><span
-                        class="check-copy"><span class="check-title">仅恢复性探测</span></span></label>
-                    <div class="field"><label for="p_probe_model">探测模型</label><input id="p_probe_model" type="text"
-                        autocomplete="off" placeholder="grok-4.5"></div>
-                    <div class="field"><label for="p_probe_timeout">探测超时</label><input id="p_probe_timeout" type="text"
-                        placeholder="90s"></div>
-                    <div class="field"><label for="p_probe_max_output">探测最大输出 Token</label><input
-                        id="p_probe_max_output" type="number" min="1"></div>
-                    <div class="field"><label for="p_probe_concurrency">探测/批量并发</label><input id="p_probe_concurrency"
-                        type="number" min="1"></div>
-                    <div class="field"><label for="p_probe_queue_size">探测/批量队列容量</label><input id="p_probe_queue_size"
-                        type="number" min="1" max="1000000"></div>
-                    <div class="field"><label for="p_probe_unknown_delay">待检测延迟</label><input id="p_probe_unknown_delay"
-                        type="text" placeholder="30s"></div>
-                    <div class="field"><label for="p_probe_unknown_jitter">待检测抖动</label><input
-                        id="p_probe_unknown_jitter" type="text" placeholder="30s"></div>
-                    <div class="field"><label for="p_probe_suspect_backoff">可疑状态退避</label><input
-                        id="p_probe_suspect_backoff" type="text" placeholder="15m"></div>
-                    <div class="field"><label for="p_probe_max_backoff">最大退避</label><input id="p_probe_max_backoff"
-                        type="text" placeholder="1h"></div>
-                  </div>
-                </section>
-                <div class="form-actions policy-actions">
-                  <button class="btn btn-primary" type="submit"><svg class="icon">
-                      <use href="#i-check"></use>
-                    </svg>保存策略</button>
-                  <button class="btn" type="button" id="policyResetBtn"><svg class="icon">
-                      <use href="#i-rotate"></use>
-                    </svg>重置为 YAML 默认值</button>
-                  <span class="status-line" id="policyStatus">修改后保存生效，无需重启 CPA</span>
+                <h3 class="section-title"><svg class="icon">
+                    <use href="#i-shield"></use>
+                  </svg>运行模式与处置</h3>
+                <div class="field-grid">
+                  <label class="check-card"><input id="p_passive" type="checkbox"><span class="check-copy"><span
+                        class="check-title">被动观测</span><span class="check-desc">分析真实请求的响应和流式
+                        Chunk，不改变路由</span></span></label>
+                  <label class="check-card"><input id="p_transparent" type="checkbox"><span class="check-copy"><span
+                        class="check-title">透明保护</span><span class="check-desc">拦截所有 Grok/xAI OAuth 请求，在首个客户端可见 Chunk
+                        前完成质量门，不可安全重放的请求只执行一次</span></span></label>
+                  <div class="field"><label for="p_auto_action">自动处置</label><select id="p_auto_action">
+                      <option value="cooldown_only">冷却</option>
+                      <option value="observe">仅观察</option>
+                      <option value="cooldown_then_disable">冷却后永久禁用</option>
+                    </select><span class="hint">默认只观察，不写入 OAuth 文件</span></div>
+                  <div class="field"><label for="p_model_prefixes">模型前缀</label><input id="p_model_prefixes" type="text"
+                      autocomplete="off" placeholder="grok-"><span class="hint">用于识别不含 grok 的自定义模型别名，标准
+                      grok-* 名称会自动识别</span></div>
+                  <div class="field"><label for="p_events_limit">事件保留上限</label><input id="p_events_limit" type="number"
+                      min="1" max="10000"><span class="hint">超过上限时裁剪最旧事件</span></div>
+                  <div class="field full"><label for="p_state_file">状态文件路径</label><input id="p_state_file" type="text"
+                      autocomplete="off" spellcheck="false"
+                      placeholder="/CLIProxyAPI/plugins/data/grok-quality-guard/state.json"><span class="hint">YAML 的
+                      state_file 是启动引导路径，此处保存时会把当前状态写入新路径并切换，目标文件必须尚不存在，且目录需为持久卷</span></div>
                 </div>
+              </section>
+              <section class="policy-group policy-group-routing">
+                <h3 class="section-title"><svg class="icon">
+                    <use href="#i-link"></use>
+                  </svg>透明鉴权选择与会话亲和</h3>
+                <div class="field-grid">
+                  <div class="field"><label for="p_selection_strategy">层内选择策略</label><select id="p_selection_strategy">
+                      <option value="round_robin">轮询分配</option>
+                      <option value="random">随机分配</option>
+                      <option value="fill_first">顺序优先</option>
+                    </select><span class="hint">仅在同一个质量/优先级层内生效</span></div>
+                  <div class="field"><label for="p_session_affinity_ttl">会话亲和 TTL</label><input
+                      id="p_session_affinity_ttl" type="text" placeholder="1h"><span class="hint">成功请求后刷新</span></div>
+                  <label class="check-card"><input id="p_prefer_last_success" type="checkbox"><span
+                      class="check-copy"><span class="check-title">优先复用上次成功账号</span><span
+                        class="check-desc">仅在该账号健康且空闲时优先使用，并发时自动分散</span></span></label>
+                  <label class="check-card"><input id="p_session_affinity" type="checkbox"><span
+                      class="check-copy"><span class="check-title">启用会话亲和</span><span
+                        class="check-desc">同一会话在账号正常时尽量固定到同一 auth</span></span></label>
+                  <div class="field"><label for="p_session_affinity_max_entries">会话绑定上限</label><input
+                      id="p_session_affinity_max_entries" type="number" min="1" max="100000"></div>
+                </div>
+              </section>
+              <section class="policy-group policy-group-quality">
+                <h3 class="section-title"><svg class="icon">
+                    <use href="#i-gauge"></use>
+                  </svg>质量阈值与思考证据</h3>
+                <div class="field-grid">
+                  <div class="field"><label for="p_soft_tps">软 TPS 阈值</label><input id="p_soft_tps" type="number"
+                      min="1" step="0.1"><span class="hint">达到后标记为可疑</span></div>
+                  <div class="field"><label for="p_hard_tps">硬 TPS 阈值</label><input id="p_hard_tps" type="number"
+                      min="1" step="0.1"><span class="hint">必须大于软阈值</span></div>
+                  <div class="field"><label for="p_consecutive_soft">连续软阈值次数</label><input id="p_consecutive_soft"
+                      type="number" min="1"><span class="hint">达到次数后才进入处置或交叉验证</span></div>
+                  <div class="field"><label for="p_consecutive_errors">连续错误次数</label><input id="p_consecutive_errors"
+                      type="number" min="1"><span class="hint">探测或代理错误累计达到次数后处置</span></div>
+                  <div class="field"><label for="p_consecutive_missing_thinking">连续缺少思考次数</label><input
+                      id="p_consecutive_missing_thinking" type="number" min="1"><span
+                      class="hint">连续检测到缺少真实思考的响应达到该次数后触发处置或交叉验证，默认：1</span></div>
+                  <div class="field"><label for="p_strike_decay_after">缺思考惩罚标记降级时间窗口</label><input
+                      id="p_strike_decay_after" type="number" min="0"><span class="hint">单位：小时，默认：48，0 表示关闭自动降级</span>
+                  </div>
+                  <div class="field"><label for="p_strike_decay_min_healthy">自动降级连续健康样本</label><input
+                      id="p_strike_decay_min_healthy" type="number" min="0"><span
+                      class="hint">窗口内至少积累的连续健康观测/探测次数，默认：10</span></div>
+                  <div class="field"><label for="p_min_generation_ms">最小生成窗口</label><input id="p_min_generation_ms"
+                      type="number" min="1"><span class="hint">单位：毫秒</span></div>
+                  <label class="check-card"><input id="p_thinking_guard" type="checkbox"><span class="check-copy"><span
+                        class="check-title">启用缺少思考检测</span><span class="check-desc">关闭后只保留 TPS
+                        与空流等质量检查</span></span></label>
+                  <label class="check-card"><input id="p_soft_cross_verify" type="checkbox"><span
+                      class="check-copy"><span class="check-title">软阈值交叉验证</span><span class="check-desc">连续软 TPS
+                        达到阈值后先异步主动探测，再决定是否处置</span></span></label>
+                  <label class="check-card"><input id="p_thinking_cross_verify" type="checkbox"><span
+                      class="check-copy"><span class="check-title">缺思考交叉验证</span><span
+                        class="check-desc">连续缺少思考达到阈值后先异步主动探测，再决定是否处置</span></span></label>
+                  <label class="check-card"><input id="p_fail_closed" type="checkbox"><span class="check-copy"><span
+                        class="check-title">短生成窗口严格判定</span><span class="check-desc">开启后，生成窗口过短且 TPS
+                        达到软阈值时直接判为短窗口突发</span></span></label>
+                  <div class="field"><label for="p_min_passive_output">被动审计最小输出 Token</label><input
+                      id="p_min_passive_output" type="number" min="1"></div>
+                  <div class="field"><label for="p_min_encrypted_bytes">加密思考最小字节</label><input
+                      id="p_min_encrypted_bytes" type="number" min="1"></div>
+                  <div class="field"><label for="p_encrypted_per_token">每推理 Token 的密文字节</label><input
+                      id="p_encrypted_per_token" type="number" min="1"></div>
+                  <div class="field"><label for="p_missing_cooldown">缺少思考冷却</label><input id="p_missing_cooldown"
+                      type="text" placeholder="12h"></div>
+                  <div class="field"><label for="p_empty_cooldown">空流冷却</label><input id="p_empty_cooldown" type="text"
+                      placeholder="15m"></div>
+                </div>
+              </section>
+              <section class="policy-group policy-group-probe">
+                <h3 class="section-title"><svg class="icon">
+                    <use href="#i-eye"></use>
+                  </svg>透明流保护与主动探测</h3>
+                <div class="field-grid">
+                  <div class="field"><label for="p_min_hold_output">缓冲最小输出 Token</label><input id="p_min_hold_output"
+                      type="number" min="1"></div>
+                  <div class="field"><label for="p_hold_timeout">缓冲超时</label><input id="p_hold_timeout" type="text"
+                      placeholder="30s"></div>
+                  <div class="field"><label for="p_hold_max_bytes">最大缓冲字节</label><input id="p_hold_max_bytes"
+                      type="number" min="1"></div>
+                  <div class="field"><label for="p_max_attempts">透明模式最大尝试次数</label><input id="p_max_attempts"
+                      type="number" min="1"></div>
+                  <div class="field"><label for="p_on_exhausted">候选耗尽行为</label><select id="p_on_exhausted">
+                      <option value="fail_closed">失败关闭</option>
+                      <option value="fail_open">失败放行</option>
+                    </select></div>
+                  <label class="check-card compact" title="健康账号不做周期探测"><input id="p_probe_recovery_only"
+                      type="checkbox"><span class="check-copy"><span class="check-title">仅恢复性探测</span></span></label>
+                  <div class="field"><label for="p_probe_model">探测模型</label><input id="p_probe_model" type="text"
+                      autocomplete="off" placeholder="grok-4.5"></div>
+                  <div class="field"><label for="p_probe_timeout">探测超时</label><input id="p_probe_timeout" type="text"
+                      placeholder="90s"></div>
+                  <div class="field"><label for="p_probe_max_output">探测最大输出 Token</label><input id="p_probe_max_output"
+                      type="number" min="1"></div>
+                  <div class="field"><label for="p_probe_concurrency">探测/批量并发</label><input id="p_probe_concurrency"
+                      type="number" min="1"></div>
+                  <div class="field"><label for="p_probe_queue_size">探测/批量队列容量</label><input id="p_probe_queue_size"
+                      type="number" min="1" max="1000000"></div>
+                  <div class="field"><label for="p_probe_unknown_delay">待检测延迟</label><input id="p_probe_unknown_delay"
+                      type="text" placeholder="30s"></div>
+                  <div class="field"><label for="p_probe_unknown_jitter">待检测抖动</label><input id="p_probe_unknown_jitter"
+                      type="text" placeholder="30s"></div>
+                  <div class="field"><label for="p_probe_suspect_backoff">可疑状态退避</label><input
+                      id="p_probe_suspect_backoff" type="text" placeholder="15m"></div>
+                  <div class="field"><label for="p_probe_max_backoff">最大退避</label><input id="p_probe_max_backoff"
+                      type="text" placeholder="1h"></div>
+                </div>
+              </section>
+              <div class="form-actions policy-actions">
+                <button class="btn btn-primary" type="submit"><svg class="icon">
+                    <use href="#i-check"></use>
+                  </svg>保存策略</button>
+                <button class="btn" type="button" id="policyResetBtn"><svg class="icon">
+                    <use href="#i-rotate"></use>
+                  </svg>重置为 YAML 默认值</button>
+                <span class="status-line" id="policyStatus">修改后保存生效，无需重启 CPA</span>
+              </div>
             </div>
             <aside class="card sticky-card settings-summary-card">
               <div class="card-header compact">
@@ -3171,17 +3937,24 @@
       <div class="drawer-head">
         <div>
           <h2 id="proxySourceEditorTitle">代理</h2>
-          <p id="proxySourceEditorSubtitle">配置节点或模板；敏感凭据不会回填</p>
+          <p id="proxySourceEditorSubtitle">配置节点或模板，敏感凭据不会回填</p>
+          <div class="drawer-meta" id="proxySourceEditorMeta" hidden></div>
         </div>
-        <button class="btn btn-ghost icon-btn" type="button" id="proxySourceEditorClose" aria-label="关闭"><svg class="icon"><use href="#i-x"></use></svg></button>
+        <button class="btn btn-ghost icon-btn" type="button" id="proxySourceEditorClose" aria-label="关闭"><svg
+            class="icon">
+            <use href="#i-x"></use>
+          </svg></button>
       </div>
       <div class="drawer-body" id="proxySourceEditor"></div>
     </aside>
   </div>
   <div class="confirm-backdrop" id="confirmDialog" hidden>
-    <section class="confirm-card" id="confirmCard" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmDetail">
+    <section class="confirm-card" id="confirmCard" role="dialog" aria-modal="true" aria-labelledby="confirmTitle"
+      aria-describedby="confirmDetail">
       <div class="confirm-main">
-        <span class="confirm-icon" id="confirmIcon"><svg class="icon"><use id="confirmIconUse" href="#i-alert"></use></svg></span>
+        <span class="confirm-icon" id="confirmIcon"><svg class="icon">
+            <use id="confirmIconUse" href="#i-alert"></use>
+          </svg></span>
         <div>
           <h2 class="confirm-title" id="confirmTitle"></h2>
           <p class="confirm-detail" id="confirmDetail"></p>
@@ -3341,6 +4114,75 @@
     };
     const esc = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
     const icon = (name) => '<svg class="icon" aria-hidden="true"><use href="#i-' + name + '"></use></svg>';
+    function cleanHelpCopy(value) {
+      return String(value == null ? '' : value).trim().replace(/[\s,.\uFF0C\u3002\uFF1B;\u3001:\uFF1A!?\uFF01\uFF1F\u2026]+$/u, '');
+    }
+    const helpTip = (text, className) => {
+      const copy = cleanHelpCopy(text);
+      return copy ? '<span class="help-tip ' + esc(className || '') + '" tabindex="0" role="note" aria-label="' + esc(copy) + '">' + icon('info') + '<span class="help-tooltip" role="tooltip">' + esc(copy) + '</span></span>' : '';
+    };
+    let activeHelpTip = null;
+    function hideHelpTooltip(tip) {
+      const target = tip || activeHelpTip;
+      const tooltip = target?.querySelector?.('.help-tooltip');
+      if (tooltip) {
+        tooltip.classList.remove('is-open');
+        ['display', 'visibility', 'left', 'top'].forEach((name) => tooltip.style.removeProperty(name));
+      }
+      if (!tip || activeHelpTip === tip) activeHelpTip = null;
+    }
+    function showHelpTooltip(tip) {
+      const tooltip = tip?.querySelector?.('.help-tooltip');
+      if (!tooltip) return;
+      if (activeHelpTip && activeHelpTip !== tip) hideHelpTooltip(activeHelpTip);
+      activeHelpTip = tip;
+      tooltip.classList.add('is-open');
+      tooltip.style.visibility = 'hidden';
+      const anchor = tip.getBoundingClientRect();
+      const drawer = tip.closest?.('#proxySourceDrawer .drawer');
+      const drawerRect = drawer?.getBoundingClientRect?.();
+      const margin = 12;
+      const gap = 8;
+      const viewportWidth = Math.max(0, window.innerWidth || document.documentElement?.clientWidth || 0);
+      const viewportHeight = Math.max(0, window.innerHeight || document.documentElement?.clientHeight || 0);
+      const minLeft = Math.max(margin, (drawerRect?.left || 0) + margin);
+      const maxRight = Math.min(viewportWidth - margin, (drawerRect?.right || viewportWidth) - margin);
+      const availableWidth = Math.max(0, maxRight - minLeft);
+      tooltip.style.maxWidth = Math.min(320, availableWidth) + 'px';
+      const width = tooltip.offsetWidth || Math.min(320, availableWidth);
+      const height = tooltip.offsetHeight || 0;
+      let left = anchor.left + anchor.width / 2 - width / 2;
+      left = Math.max(minLeft, Math.min(left, Math.max(minLeft, maxRight - width)));
+      let top = anchor.bottom + gap;
+      if (viewportHeight && top + height > viewportHeight - margin) top = Math.max(margin, anchor.top - height - gap);
+      tooltip.style.left = Math.round(left) + 'px';
+      tooltip.style.top = Math.round(top) + 'px';
+      tooltip.style.visibility = 'visible';
+    }
+    function proxyFieldLabel(label, id, hint) {
+      const text = id ? '<label for="' + esc(id) + '">' + esc(label) + '</label>' : '<span class="field-label-text">' + esc(label) + '</span>';
+      return '<span class="field-label">' + text + helpTip(hint) + '</span>';
+    }
+    function setProxyEditorMeta(source, note) {
+      const meta = document.getElementById('proxySourceEditorMeta');
+      if (!meta) return;
+      if (!source) {
+        meta.hidden = true;
+        meta.innerHTML = '';
+        return;
+      }
+      meta.hidden = false;
+      const metaNote = cleanHelpCopy(note);
+      meta.innerHTML = '<span class="meta-chip">' + icon('link') + '已绑定 ' + Number(source.binding_count || 0) + '</span>' + (metaNote ? '<span>' + esc(metaNote) + '</span>' : '');
+    }
+    function proxyPreviewSamplesHTML(samples, intro) {
+      const items = Array.isArray(samples) ? samples : [];
+      if (!items.length) return '<p class="proxy-preview-empty">暂无预览样本</p>';
+      return '<div class="proxy-preview-summary">' + esc(intro || '验证通过') + '<span class="proxy-preview-badge">密码已脱敏</span></div><div class="proxy-preview-list">' + items.map((sample, index) => {
+        const values = Object.entries(sample.values || {});
+        return '<article class="proxy-preview-card"><div class="proxy-preview-card-head"><span class="proxy-preview-index">样本 ' + String(index + 1).padStart(2, '0') + '</span><span class="proxy-preview-badge">标准代理 URL</span></div><div class="proxy-preview-url mono">' + esc(sample.display_url || sample.masked_url || sample.endpoint || '-') + '</div>' + (values.length ? '<div class="proxy-preview-values">' + values.map(([name, value]) => '<span class="proxy-preview-value"><b>' + esc(name) + '</b>' + esc(value) + '</span>').join('') + '</div>' : '') + '</article>';
+      }).join('') + '</div>';
+    }
     const num = (value, digits) => new Intl.NumberFormat('zh-CN', { maximumFractionDigits: digits == null ? 0 : digits }).format(Number(value || 0));
     const stateLabel = (value) => STATE_LABELS[value] || (/[\u3400-\u9fff]/.test(String(value || '')) ? String(value) : '其他状态');
     const stateTone = (value) => STATE_TONES[value] || '';
@@ -3574,12 +4416,13 @@
       const next = (selector && container.querySelector(selector)) || container.querySelector('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
       if (next && !next.disabled) {
         next.focus({ preventScroll: true });
-        if (typeof next.setSelectionRange === 'function' && typeof selection[0] === 'number') { try { next.setSelectionRange(...selection); } catch (_) {} }
+        if (typeof next.setSelectionRange === 'function' && typeof selection[0] === 'number') { try { next.setSelectionRange(...selection); } catch (_) { } }
       }
     }
     function beginProxyEditor(kind, source) {
       document.getElementById('proxySourceEditor').proxyRenderHTML = undefined;
       state.proxyEditing = { kind: kind, source: source, dirty: false, revision: 0, sequence: ++state.proxyEditorSequence, groups: new Map(), nextGroupIndex: 0, assignments: {}, previousFocus: document.activeElement };
+      setProxyEditorMeta(null);
       return state.proxyEditing;
     }
     function friendlyApiMessage(message) {
@@ -3766,7 +4609,7 @@
       if ((state.activeTab === 'resin' ? state.leaseList : state.accountList) || state.refreshing) return;
       await refreshSection(null, '账号数据', async () => {
         await loadList(state.activeTab === 'resin' ? 'leases' : 'accounts');
-        try { await loadProxyData(); } catch (_) {}
+        try { await loadProxyData(); } catch (_) { }
         renderAccounts();
         renderResin();
         renderProxySources();
@@ -3989,7 +4832,7 @@
         summaryItem('连续阈值', esc('软：' + num(quality.consecutive_soft || 2) + ' · 错误：' + num(quality.consecutive_errors || 2) + ' · 缺思考：' + num(quality.consecutive_missing_thinking || 1))),
         summaryItem('自动处置', esc(autoActionLabel(policy.auto_action))),
         summaryItem('缺少思考冷却', esc(quality.missing_thinking_cooldown || '-')),
-    summaryItem('惩罚标记降级', esc(String(quality.strike_decay_after ?? 48) + 'h / ' + String(quality.strike_decay_min_healthy ?? 10) + ' 次健康')),
+        summaryItem('惩罚标记降级', esc(String(quality.strike_decay_after ?? 48) + 'h / ' + String(quality.strike_decay_min_healthy ?? 10) + ' 次健康')),
         summaryItem('检测与验证', esc('思考检测：' + (quality.thinking_guard !== false ? '开启' : '关闭') + ' · 交叉验证：' + ((quality.soft_cross_verify || quality.thinking_cross_verify) ? '部分开启' : '关闭'))),
         summaryItem('探测模型', esc(policy.probe && policy.probe.model || '-')),
         summaryItem('任务并发与队列', esc('并发：' + num(policy.probe && policy.probe.concurrency || 1) + ' · 队列：' + num(policy.probe && policy.probe.queue_size || 10000))),
@@ -4102,7 +4945,7 @@
       if (account.proxy_status === 'reconcile_required') return 'reconcile_required';
       if (account.proxy_managed || account.proxy_status === 'bound') return 'bound';
       return 'unbound';
-    }    function leaseFilteredList() {
+    } function leaseFilteredList() {
       return state.leases;
     }
     function selectedLeaseAccounts() {
@@ -4165,7 +5008,7 @@
       } else if (!available) {
         notice.hidden = false;
         notice.className = 'notice warn';
-        document.getElementById('resinNoticeText').textContent = '当前没有可用于新绑定的代理；已有代理路由保持不变';
+        document.getElementById('resinNoticeText').textContent = '当前没有可用于新绑定的代理，已有代理路由保持不变';
       } else {
         notice.hidden = true;
       }
@@ -4177,7 +5020,7 @@
       renderPager('leases', result);
       syncLeaseSelectionUI();
       renderProxyAutoBind();
-    }    function leaseRow(account) {
+    } function leaseRow(account) {
       const authID = esc(account.auth_id);
       const status = leaseStatus(account);
       const selected = state.leaseSelection.has(account.auth_id);
@@ -4336,7 +5179,7 @@
         '<td>' + badge(proxySourceLabel(source.kind), source.kind === 'resin' ? 'info' : '') + '</td>' +
         '<td>' + endpoint + '</td>' +
         '<td>' + proxySourceEnabledState(source) + '</td><td>' + proxySourceConnectivity(source) + '</td><td class="nowrap">' + proxySourceCheckedAt(source) + '</td><td class="mono">' + esc(source.binding_count || 0) + '</td>' +
-        '<td class="mono" title="v：标准端点内容版本，仅 schema://用户名:密码@主机:端口 变化时增加；r：生成配置版本，模板生成内容变化时增加">v' + esc(source.config_version || 1) + ' / r' + esc(source.revision || 1) + '</td>' +
+        '<td class="mono" title="v：标准端点内容版本，仅 schema://用户名:密码@主机:端口 变化时增加，r：生成配置版本，模板生成内容变化时增加">v' + esc(source.config_version || 1) + ' / r' + esc(source.revision || 1) + '</td>' +
         '<td class="actions-cell"><div class="actions">' + actions.join('') + '</div></td></tr>';
     }
     function renderProxySources() {
@@ -4491,7 +5334,7 @@
       const statusEl = document.getElementById('proxyAutoBindText');
       statusEl.textContent = statusText;
       statusEl.title = scanDetails;
-      statusEl.setAttribute('aria-label', statusText + '；' + scanDetails);
+      statusEl.setAttribute('aria-label', statusText + '，' + scanDetails);
       const badgeEl = document.getElementById('proxyAutoBindStateBadge');
       badgeEl.textContent = enabled ? '已开启' : '未开启';
       badgeEl.className = 'badge ' + (enabled ? 'good' : '');
@@ -4581,10 +5424,10 @@
       const { count, succeeded, skipped, failed, pending, completedMode } = proxyResultCounts(value);
       let message = label || '代理操作';
       if (value.saved) message += '：配置已保存';
-      if (count || failed || skipped) message += completedMode ? '；完成：' + succeeded + ' · 失败：' + failed : '；成功：' + succeeded + ' · 跳过：' + skipped + ' · 失败：' + failed;
+      if (count || failed || skipped) message += completedMode ? '，完成：' + succeeded + ' · 失败：' + failed : '，成功：' + succeeded + ' · 跳过：' + skipped + ' · 失败：' + failed;
       else message += value.saved ? '' : '已完成';
       if (pending) message += ' · 待同步：' + pending;
-      if (value.change_id) message += '；可在任务详情查看同步进度';
+      if (value.change_id) message += '，可在任务详情查看同步进度';
       return { message: message, failed: failed };
     }
     function reportProxyResult(result, label) {
@@ -4635,7 +5478,7 @@
       if (!document.getElementById('proxySourceDrawer').hidden && !await closeProxyDrawer()) return;
       beginProxyEditor('tasks', null);
       document.getElementById('proxySourceEditorTitle').textContent = '代理任务与同步结果';
-      document.getElementById('proxySourceEditorSubtitle').textContent = '配置保存与逐账号同步分别展示；重试只处理失败项';
+      document.getElementById('proxySourceEditorSubtitle').textContent = '配置保存与逐账号同步分别展示，重试只处理失败项';
       openProxyDrawer();
       const errors = await refreshProxyTasks();
       if (state.proxyEditing?.kind !== 'tasks') return;
@@ -4707,8 +5550,8 @@
           const latest = await api('proxy.sources.get', { source_id: source.id });
           if (state.proxyEditing !== editor) return;
           const view = latest.view || latest.source || latest || {};
-          status.textContent += '；服务器版本 v' + (view.config_version || '-') + '，当前草稿 v' + (source.config_version || '-') + '；已保留输入，请核对后重新打开编辑器';
-        } catch (_) {}
+          status.textContent += '，服务器版本 v' + (view.config_version || '-') + '，当前草稿 v' + (source.config_version || '-') + '，已保留输入，请核对后重新打开编辑器';
+        } catch (_) { }
       }
       toast(error.message, 'error');
     }
@@ -4740,10 +5583,12 @@
     }
     async function closeProxyDrawer(force) {
       const editor = state.proxyEditing;
-      if (force !== true && editor && editor.dirty && !await confirmAction({ title: '关闭未保存的编辑', detail: '当前草稿仍有修改；关闭后将放弃这些输入', confirmLabel: '放弃并关闭', tone: 'danger' })) return false;
+      if (force !== true && editor && editor.dirty && !await confirmAction({ title: '关闭未保存的编辑', detail: '当前草稿仍有修改，关闭后将放弃这些输入', confirmLabel: '放弃并关闭', tone: 'danger' })) return false;
       if (editor?.importTimer) window.clearTimeout(editor.importTimer);
+      hideHelpTooltip();
       document.getElementById('proxySourceDrawer').hidden = true;
       document.getElementById('proxySourceEditor').innerHTML = '';
+      setProxyEditorMeta(null);
       if (document.getElementById('accountDrawer').hidden) document.body.classList.remove('drawer-open');
       state.proxyEditing = null;
       state.proxyPreviewSequence += 1;
@@ -4756,10 +5601,38 @@
         (settings.placeholder ? ' placeholder="' + esc(settings.placeholder) + '"' : '') +
         (settings.min != null ? ' min="' + esc(settings.min) + '"' : '') +
         (settings.max != null ? ' max="' + esc(settings.max) + '"' : '');
-      return '<div class="field' + (settings.full ? ' full' : '') + '"><label for="' + esc(id) + '">' + esc(label) + '</label><input' + attrs + ' value="' + esc(value == null ? '' : value) + '">' + (settings.hint ? '<span class="hint">' + esc(settings.hint) + '</span>' : '') + '</div>';
+      return '<div class="field' + (settings.full ? ' full' : '') + '">' + proxyFieldLabel(label, id, settings.hint) + '<input' + attrs + ' value="' + esc(value == null ? '' : value) + '"></div>';
     }
     function proxyEditorCheck(label, id, checked, hint) {
-      return '<div class="field"><label class="check-row"><input id="' + esc(id) + '" type="checkbox" ' + (checked ? 'checked' : '') + '><span>' + esc(label) + '</span></label>' + (hint ? '<span class="hint">' + esc(hint) + '</span>' : '') + '</div>';
+      return '<div class="field"><div class="check-row"><label class="check-choice" for="' + esc(id) + '"><input id="' + esc(id) + '" type="checkbox" ' + (checked ? 'checked' : '') + '><span>' + esc(label) + '</span></label>' + helpTip(hint) + '</div></div>';
+    }
+    function proxyNodeRowHTML(index, node, removable) {
+      const value = node || {};
+      const suffix = index ? '_' + index : '';
+      const nameID = 'pnode_name' + suffix;
+      const urlID = 'pnode_url' + suffix;
+      return '<div class="proxy-node-row" data-proxy-node-row>' +
+        '<div class="proxy-node-row-head"><span class="proxy-node-row-index">节点<b data-proxy-node-index>' + String(index + 1).padStart(2, '0') + '</b></span>' +
+        (removable ? '<button class="btn btn-ghost icon-btn proxy-node-row-remove" type="button" data-proxy-node-remove aria-label="移除此节点">' + icon('x') + '</button>' : '') +
+        '</div><div class="proxy-node-row-fields">' +
+        '<div class="field proxy-node-name-field">' + proxyFieldLabel('名称', nameID) + '<input id="' + nameID + '" data-proxy-node-name type="text" value="' + esc(value.name || '') + '" title="' + esc(value.name || '') + '" placeholder="可选，留空时自动命名"></div>' +
+        '<div class="field proxy-node-url-field">' + proxyFieldLabel('代理 URL', urlID) + '<input id="' + urlID + '" data-proxy-node-url type="text" inputmode="url" value="' + esc(value.edit_url || value.url || '') + '" title="' + esc(value.edit_url || value.url || '') + '" placeholder="http://user:pass@proxy.example:8080" autocomplete="off" spellcheck="false"></div>' +
+        '</div></div>';
+    }
+    function syncProxyNodeRows() {
+      const list = document.getElementById('proxyNodeRows');
+      if (!list) return;
+      const rows = Array.from(list.querySelectorAll('[data-proxy-node-row]'));
+      rows.forEach((row, index) => {
+        const number = row.querySelector('[data-proxy-node-index]');
+        if (number) number.textContent = String(index + 1).padStart(2, '0');
+        const remove = row.querySelector('[data-proxy-node-remove]');
+        if (remove) remove.hidden = rows.length === 1;
+      });
+      const count = document.getElementById('proxyNodeRowCount');
+      if (count) count.textContent = rows.length + ' 个节点';
+      const submitLabel = list.closest('form')?.querySelector('[data-proxy-node-submit-label]');
+      if (submitLabel) submitLabel.textContent = rows.length > 1 ? ('保存 ' + rows.length + ' 个节点') : '保存节点';
     }
     async function openProxyNodeEditor(source) {
       if (!document.getElementById('proxySourceDrawer').hidden && !await closeProxyDrawer()) return;
@@ -4771,54 +5644,120 @@
       if (state.proxyEditing !== editor) return;
       if (detail) source = Object.assign({}, source, detail.view || detail.source || detail);
       const node = detail?.node || (detail?.kind === 'node' ? detail : {});
-      const title = source ? '编辑节点' : '添加节点';
-      document.getElementById('proxySourceEditorTitle').textContent = title;
-      document.getElementById('proxySourceEditorSubtitle').textContent = source ? '已回显当前 URL；密码随 URL 修改，相同标准 URL 只能存在一个节点' : '支持 HTTP、HTTPS、SOCKS5 代理；密码从 URL 解析，相同标准 URL 只能存在一个节点';
-      document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyNodeEditorForm" class="drawer-form"><section class="card"><div class="form-section"><h3 class="section-title">连接信息</h3><div class="field-grid">' +
-        proxyEditorField('名称', 'pnode_name', node.name || '', { placeholder: '例如 主代理', hint: '用于识别节点' }) +
-        proxyEditorCheck('启用节点', 'pnode_enabled', source ? Boolean(source.enabled) : true, '关闭后不再参与新绑定') +
-        proxyEditorField('代理 URL', 'pnode_url', node.edit_url || '', { full: true, placeholder: 'http://user:pass@proxy.example:8080', hint: '密码直接从 URL 解析：URL 含密码即为有密码，不含即为无密码；相同标准 URL 不能重复添加，名称也不能与其他代理重复' }) +
+      const editing = Boolean(source);
+      editor.nextNodeRow = 1;
+      document.getElementById('proxySourceEditorTitle').textContent = editing ? '编辑代理节点' : '添加代理节点';
+      document.getElementById('proxySourceEditorSubtitle').textContent = editing ? '更新连接参数与绑定策略' : '填写连接信息，可连续添加多个节点';
+      setProxyEditorMeta(source, '保存后同步已绑定账号');
+      const addButton = editing ? '' : '<button class="btn btn-xs" type="button" data-proxy-node-add>' + icon('plus') + '增加一行</button>';
+      const listHelp = editing ? '支持 HTTP、HTTPS、SOCKS5、SOCKS5H' : '填写完整代理 URL，可一次添加多个节点';
+      const settingsHelp = editing ? '仅作用于当前节点' : '统一应用于本次添加的全部节点';
+      document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyNodeEditorForm" class="drawer-form"><section class="card"><div class="form-section">' +
+        '<div class="section-heading"><h3 class="section-title">' + (editing ? '连接信息' : '节点列表') + helpTip(listHelp) + '<span class="section-count" id="proxyNodeRowCount">1 个节点</span></h3>' + addButton + '</div>' +
+        '<div class="proxy-node-list" id="proxyNodeRows">' + proxyNodeRowHTML(0, node, !editing) + '</div>' +
+        '</div></section><section class="card"><div class="form-section"><h3 class="section-title">节点设置' + helpTip(settingsHelp) + '</h3><div class="field-grid">' +
+        proxyEditorCheck('启用节点', 'pnode_enabled', editing ? Boolean(source.enabled) : true, '关闭后不参与新绑定') +
         proxyEditorField('优先级', 'pnode_priority', node.priority || 0, { type: 'number', min: -1000000, max: 1000000, hint: '数值越大越优先' }) +
         proxyEditorField('绑定上限', 'pnode_max_bindings', node.max_bindings || 0, { type: 'number', min: 0, hint: '0 表示不限' }) +
-        '</div><div class="form-actions"><button class="btn btn-primary" type="submit">' + icon('check') + '验证并保存</button><span class="status-line" id="proxySourceEditorStatus" role="status" aria-live="polite"></span></div></div></section></form>';
-      document.getElementById('proxyNodeEditorForm').addEventListener('submit', async (event) => {
+        '</div></div></section><div class="form-actions"><button class="btn btn-primary" type="submit">' + icon('check') + (editing ? '验证并保存' : '<span data-proxy-node-submit-label>保存节点</span>') + '</button><span class="status-line" id="proxySourceEditorStatus" role="status" aria-live="polite"></span></div></form>';
+      const form = document.getElementById('proxyNodeEditorForm');
+      syncProxyNodeRows();
+      form.addEventListener('input', (event) => {
+        if (!event.target.matches?.('[data-proxy-node-name], [data-proxy-node-url]')) return;
+        event.target.removeAttribute('aria-invalid');
+        event.target.title = event.target.value;
+      });
+      form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        const button = event.submitter;
+        const button = event.submitter || form.querySelector('button[type="submit"]');
         const revision = editor.revision;
-        if (source && !editor.dirty) {
+        if (editing && !editor.dirty) {
           const message = '内容未发生变化，不能保存';
           document.getElementById('proxySourceEditorStatus').textContent = message;
           toast(message, 'error');
           return;
         }
+        const rows = Array.from(form.querySelectorAll('[data-proxy-node-row]'));
+        rows.forEach((row) => row.querySelectorAll('input').forEach((input) => input.removeAttribute('aria-invalid')));
+        const entries = rows.map((row, index) => {
+          const nameField = row.querySelector('[data-proxy-node-name]');
+          const urlField = row.querySelector('[data-proxy-node-url]');
+          return { row, index, nameField, urlField, name: String(nameField?.value || '').trim(), url: String(urlField?.value || '').trim() };
+        }).filter((entry) => entry.name || entry.url);
+        const status = document.getElementById('proxySourceEditorStatus');
+        if (!entries.length) {
+          const firstURL = form.querySelector('[data-proxy-node-url]');
+          firstURL?.setAttribute('aria-invalid', 'true');
+          firstURL?.focus();
+          status.textContent = '请至少填写一个代理 URL';
+          return;
+        }
+        const seenURLs = new Map();
+        const seenNames = new Map();
+        let invalidEntry = null;
+        let invalidMessage = '';
+        for (const entry of entries) {
+          if (!entry.url) { invalidEntry = entry; invalidMessage = '第 ' + (entry.index + 1) + ' 个节点缺少代理 URL'; break; }
+          const parsed = proxyImportLine(entry.url);
+          if (!parsed.valid) { invalidEntry = entry; invalidMessage = '第 ' + (entry.index + 1) + ' 个节点的代理 URL 无效：' + (parsed.reason || '格式不正确'); break; }
+          if (seenURLs.has(parsed.key)) { invalidEntry = entry; invalidMessage = '第 ' + (entry.index + 1) + ' 个节点与第 ' + (seenURLs.get(parsed.key) + 1) + ' 个节点重复'; break; }
+          seenURLs.set(parsed.key, entry.index);
+          const nameKey = entry.name.toLowerCase();
+          if (nameKey && seenNames.has(nameKey)) { invalidEntry = entry; invalidMessage = '第 ' + (entry.index + 1) + ' 个节点名称重复'; break; }
+          if (nameKey) seenNames.set(nameKey, entry.index);
+        }
+        if (invalidEntry) {
+          invalidEntry.urlField?.setAttribute('aria-invalid', 'true');
+          invalidEntry.urlField?.focus();
+          status.textContent = invalidMessage;
+          toast(invalidMessage, 'error');
+          return;
+        }
         const input = {
           id: source ? source.id : '',
-          name: valueOf('pnode_name'),
-          url: valueOf('pnode_url'),
+          name: entries[0].name,
+          url: entries[0].url,
           enabled: document.getElementById('pnode_enabled').checked,
-          priority: numberValue('pnode_priority', 0),
+          priority: signedNumberValue('pnode_priority', 0),
           max_bindings: numberOrZero('pnode_max_bindings'),
           expected_version: source ? Number(source.config_version || 0) : 0
         };
         setBusy(button, true);
-        document.getElementById('proxySourceEditorStatus').textContent = '正在验证并保存…';
+        status.textContent = entries.length > 1 ? '正在验证并添加节点…' : '正在验证并保存…';
         try {
-          const queued = await api(source ? 'proxy.sources.update' : 'proxy.sources.create', { kind: 'node', source: input });
-          const result = await waitForTask(queued, '节点保存与绑定同步');
-          if (state.proxyEditing !== editor) return;
-          if (result?.ignored) { document.getElementById('proxySourceEditorStatus').textContent = '无协议的输入已忽略，请补全代理 URL 后再保存'; toast('没有创建节点：输入缺少协议'); return; }
-          const savedSource = result?.source || (result?.id ? result : null);
-          if (savedSource) source = Object.assign({}, source, savedSource);
-          editor.source = source;
-          if (editor.revision === revision) editor.dirty = false;
-          const summary = reportProxyResult(result, '节点保存与绑定同步');
-          if (summary.failed) {
-            const message = '节点已保存；' + summary.failed + ' 个已绑定账号同步失败，可在任务详情重试';
-            document.getElementById('proxySourceEditorStatus').textContent = message;
-            toast(message, 'error');
+          if (!editing && entries.length > 1) {
+            const nodes = entries.map((entry) => ({ name: entry.name, url: entry.url, enabled: input.enabled, priority: input.priority, max_bindings: input.max_bindings }));
+            const result = await waitForTask(await api('proxy.sources.import_nodes', { nodes: nodes }), '添加代理节点');
+            if (state.proxyEditing !== editor) return;
+            const created = Number(result?.created || 0);
+            const duplicate = Number(result?.duplicate || 0);
+            const invalid = Number(result?.invalid || 0);
+            const skipped = Number(result?.skipped || 0);
+            const message = '已添加：' + created + ' 个节点 · 重复：' + duplicate + ' · 无效：' + invalid + (skipped ? ' · 跳过：' + skipped : '');
+            status.textContent = message;
+            toast(message, created && !duplicate && !invalid && !skipped ? 'success' : 'error');
+            if (created && !duplicate && !invalid && !skipped && editor.revision === revision) {
+              editor.dirty = false;
+              await closeProxyDrawer(true);
+            }
           } else {
-            document.getElementById('proxySourceEditorStatus').textContent = summary.message + (editor.dirty ? '；当前草稿还有未保存修改' : '');
-            if (!editor.dirty) await closeProxyDrawer(true);
+            const queued = await api(editing ? 'proxy.sources.update' : 'proxy.sources.create', { kind: 'node', source: input });
+            const result = await waitForTask(queued, '节点保存与绑定同步');
+            if (state.proxyEditing !== editor) return;
+            if (result?.ignored) { status.textContent = '无协议的输入已忽略，请补全代理 URL 后再保存'; toast('没有创建节点：输入缺少协议'); return; }
+            const savedSource = result?.source || (result?.id ? result : null);
+            if (savedSource) source = Object.assign({}, source, savedSource);
+            editor.source = source;
+            if (editor.revision === revision) editor.dirty = false;
+            const summary = reportProxyResult(result, '节点保存与绑定同步');
+            if (summary.failed) {
+              const message = '节点已保存 · ' + summary.failed + ' 个已绑定账号同步失败，可在任务详情重试';
+              status.textContent = message;
+              toast(message, 'error');
+            } else {
+              status.textContent = summary.message + (editor.dirty ? ' · 当前草稿还有未保存修改' : '');
+              if (!editor.dirty) await closeProxyDrawer(true);
+            }
           }
           await loadProxyData();
           renderProxySources();
@@ -4843,20 +5782,21 @@
       const placeholder = definition || {};
       const kind = placeholder.kind || 'enum';
       if (kind === 'reserved') {
-        return '<details class="proxy-template-variable" data-placeholder-card="' + esc(name) + '" open><summary><span class="proxy-variable-name">{' + esc(name) + '}</span><span class="proxy-variable-kind">保留变量</span></summary><div class="proxy-variable-body"><p class="hint">由账号邮箱前缀自动生成；只取 @ 前的本地部分并转为小写，不能改名或改成枚举/随机值</p></div></details>';
+        return '<details class="proxy-template-variable" data-placeholder-card="' + esc(name) + '" open><summary><span class="proxy-variable-name">{' + esc(name) + '}</span><span class="proxy-variable-kind">保留变量</span>' + helpTip('取自账号邮箱 @ 前的前缀，并转为小写，', 'proxy-variable-help') + '</summary></details>';
       }
       const enumSpec = placeholder.enum || {};
       const random = placeholder.random || {};
       const enumInput = enumSpec.input || (enumSpec.values || []).join(enumSpec.separator || ',');
       const open = expanded !== false ? ' open' : '';
       const kindLabel = kind === 'enum' ? '枚举变量' : '随机变量';
-      return '<details class="proxy-template-variable" data-placeholder-card="' + esc(name) + '"' + open + '><summary><span class="proxy-variable-name">{' + esc(name) + '}</span><span class="proxy-variable-kind" data-placeholder-summary-kind>' + kindLabel + '</span></summary><div class="proxy-variable-body"><div class="field-grid proxy-generation-grid">' +
-        '<div class="field"><label>生成方式<select data-placeholder-kind="' + esc(name) + '"><option value="enum"' + (kind === 'enum' ? ' selected' : '') + '>枚举取值</option><option value="random"' + (kind === 'random' ? ' selected' : '') + '>随机字符串</option></select></label></div>' +
-        '<div class="field" data-enum-field><label>关联组<input data-placeholder-group="' + esc(name) + '" data-previous-group="' + esc(placeholder.group_id || '') + '" value="' + esc(placeholder.group_id || '') + '" placeholder="可选，如 plans"></label></div>' +
-        '<div class="field" data-enum-field><label>分隔符<input data-enum-separator="' + esc(name) + '" data-previous-separator="' + esc(enumSpec.separator || ',') + '" value="' + esc(enumSpec.separator || ',') + '"></label><span class="proxy-field-error" data-enum-error></span></div>' +
-        '<div class="field full" data-enum-field><label>候选值<textarea data-enum-input="' + esc(name) + '" placeholder="多个值按分隔符拼接">' + esc(enumInput) + '</textarea></label><span class="hint" data-enum-summary></span></div>' +
-        '<div class="field" data-random-field><label>随机长度<input type="number" min="1" max="128" data-random-length="' + esc(name) + '" value="' + esc(random.length || 16) + '"></label></div>' +
-        '<div class="field" data-random-field><label class="check-row"><input type="checkbox" data-random-case="' + esc(name) + '" ' + (random.case_sensitive ? 'checked' : '') + '><span>区分大小写</span></label><span class="hint">关闭时仅使用小写字母和数字</span></div>' +
+      const kindHelp = kind === 'enum' ? '从候选值中随机选择，关联组可限制变量之间的合法组合，' : '生成指定长度的英文字母与数字，关闭大小写区分时仅使用小写字母和数字，';
+      return '<details class="proxy-template-variable" data-placeholder-card="' + esc(name) + '"' + open + '><summary><span class="proxy-variable-name">{' + esc(name) + '}</span><span class="proxy-variable-kind" data-placeholder-summary-kind>' + kindLabel + '</span>' + helpTip(kindHelp, 'proxy-variable-help') + '</summary><div class="proxy-variable-body"><div class="field-grid proxy-generation-grid">' +
+        '<div class="field">' + proxyFieldLabel('生成方式', '', '选择枚举取值或随机字符串，') + '<select aria-label="生成方式" data-placeholder-kind="' + esc(name) + '"><option value="enum"' + (kind === 'enum' ? ' selected' : '') + '>枚举取值</option><option value="random"' + (kind === 'random' ? ' selected' : '') + '>随机字符串</option></select></div>' +
+        '<div class="field" data-enum-field>' + proxyFieldLabel('关联组', '', '可选，填写后由关联组生成合法候选值，') + '<input aria-label="关联组" data-placeholder-group="' + esc(name) + '" data-previous-group="' + esc(placeholder.group_id || '') + '" value="' + esc(placeholder.group_id || '') + '" placeholder="可选，如 plans"></div>' +
+        '<div class="field" data-enum-field>' + proxyFieldLabel('分隔符', '', '用于拆分候选值，') + '<input aria-label="分隔符" data-enum-separator="' + esc(name) + '" data-previous-separator="' + esc(enumSpec.separator || ',') + '" value="' + esc(enumSpec.separator || ',') + '"><span class="proxy-field-error" data-enum-error></span></div>' +
+        '<div class="field full" data-enum-field>' + proxyFieldLabel('候选值', '', '多个值按分隔符拆分，生成时随机选择，') + '<textarea aria-label="候选值" data-enum-input="' + esc(name) + '" placeholder="多个值按分隔符拼接">' + esc(enumInput) + '</textarea><span class="hint" data-enum-summary></span></div>' +
+        '<div class="field" data-random-field>' + proxyFieldLabel('随机长度', '', '允许 1 到 128 个字符，') + '<input aria-label="随机长度" type="number" min="1" max="128" data-random-length="' + esc(name) + '" value="' + esc(random.length || 16) + '"></div>' +
+        '<div class="field" data-random-field>' + proxyFieldLabel('字符集', '', '关闭时仅使用小写字母和数字，') + '<label class="check-row"><input type="checkbox" data-random-case="' + esc(name) + '" ' + (random.case_sensitive ? 'checked' : '') + '><span>区分大小写</span></label></div>' +
         '</div></div></details>';
     }
     function splitProxyEnum(input, separator) {
@@ -4942,7 +5882,7 @@
       return '<div class="proxy-group-editor" data-group-card="' + index + '"><div class="field-grid">' +
         '<div class="field"><label>组 ID<input data-group-id="' + index + '" value="' + esc(g.id) + '" placeholder="例如 plans"></label></div>' +
         '<div class="field"><label>显示名称<input data-group-name="' + index + '" value="' + esc(g.name) + '"></label></div>' +
-        '<div class="field full"><label>列与取样顺序 · 逗号分隔<input data-group-columns="' + index + '" value="' + esc(g.columns.join(', ')) + '" placeholder="vendor, plan, profile"></label><span class="hint">列名需与枚举变量一致；成员变量填写此组 ID</span></div>' +
+        '<div class="field full"><label>列与取样顺序 · 逗号分隔<input data-group-columns="' + index + '" value="' + esc(g.columns.join(', ')) + '" placeholder="vendor, plan, profile"></label><span class="hint">列名需与枚举变量一致，成员变量填写此组 ID</span></div>' +
         '</div><div class="form-actions"><button class="btn btn-xs" type="button" data-group-view="hierarchy">父级与子级</button><button class="btn btn-xs" type="button" data-group-view="table">高级表格</button><button class="btn btn-xs" type="button" data-group-view="import">导入 CSV/TSV</button><button class="btn btn-xs btn-ghost" type="button" data-group-export="csv">导出 CSV</button><button class="btn btn-xs btn-danger btn-ghost" type="button" data-remove-group="' + index + '">移除组</button></div><p class="proxy-field-error" data-group-error role="alert"></p><div class="proxy-group-view" data-group-body></div></div>';
     }
     function proxyGroupColumnChoices(group, column, prefix) {
@@ -4959,7 +5899,7 @@
       const body = card.querySelector('[data-group-body]');
       if (!g.columns.length) { body.innerHTML = '<p class="hint">填写列顺序后维护合法组合</p>'; return; }
       const incomplete = g.rows.filter((row) => row.length !== g.columns.length || row.some((value) => !String(value).trim())).length;
-      const summary = '<p class="hint">合法组合：' + (g.rows.length - incomplete) + ' 条' + (incomplete ? ' · 未完成：' + incomplete + ' 条，补全后可保存' : '') + '；所有视图共用这份数据</p>';
+      const summary = '<p class="hint">合法组合：' + (g.rows.length - incomplete) + ' 条' + (incomplete ? ' · 未完成：' + incomplete + ' 条，补全后可保存' : '') + '，所有视图共用这份数据</p>';
       if (g.view === 'table') {
         const pages = Math.max(1, Math.ceil(g.rows.length / 20));
         g.page = Math.max(1, Math.min(g.page, pages));
@@ -4968,7 +5908,7 @@
         return;
       }
       if (g.view === 'import') {
-        replaceProxyHTML(body, summary + '<div class="field-grid"><div class="field"><label>格式<select data-group-import-format><option value="csv"' + (g.importFormat === 'csv' ? ' selected' : '') + '>CSV · 逗号</option><option value="tsv"' + (g.importFormat === 'tsv' ? ' selected' : '') + '>TSV · 制表符</option></select></label></div><div class="field"><label>导入方式<select data-group-import-mode><option value="append"' + (g.importMode === 'append' ? ' selected' : '') + '>追加并去重</option><option value="replace"' + (g.importMode === 'replace' ? ' selected' : '') + '>替换本组全部行</option></select></label></div><div class="field"><label class="check-row"><input type="checkbox" data-group-import-header ' + (g.importHeader ? 'checked' : '') + '><span>首行是列名 · 可按名称对齐</span></label></div><div class="field"><label>UTF-8 文件<input type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" data-group-import-file></label></div><div class="field full"><label>组合数据<textarea data-group-import-text placeholder="' + esc(g.columns.join(',')) + '">' + esc(g.importText) + '</textarea></label><span class="hint">支持引号与值内逗号；非法行会阻止整批导入</span></div></div><button class="btn btn-xs" type="button" data-group-import-apply>解析并导入</button>');
+        replaceProxyHTML(body, summary + '<div class="field-grid"><div class="field"><label>格式<select data-group-import-format><option value="csv"' + (g.importFormat === 'csv' ? ' selected' : '') + '>CSV · 逗号</option><option value="tsv"' + (g.importFormat === 'tsv' ? ' selected' : '') + '>TSV · 制表符</option></select></label></div><div class="field"><label>导入方式<select data-group-import-mode><option value="append"' + (g.importMode === 'append' ? ' selected' : '') + '>追加并去重</option><option value="replace"' + (g.importMode === 'replace' ? ' selected' : '') + '>替换本组全部行</option></select></label></div><div class="field"><label class="check-row"><input type="checkbox" data-group-import-header ' + (g.importHeader ? 'checked' : '') + '><span>首行是列名 · 可按名称对齐</span></label></div><div class="field"><label>UTF-8 文件<input type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" data-group-import-file></label></div><div class="field full"><label>组合数据<textarea data-group-import-text placeholder="' + esc(g.columns.join(',')) + '">' + esc(g.importText) + '</textarea></label><span class="hint">支持引号与值内逗号，非法行会阻止整批导入</span></div></div><button class="btn btn-xs" type="button" data-group-import-apply>解析并导入</button>');
         return;
       }
       g.childIndex = Math.max(0, Math.min(g.childIndex, g.columns.length - 1));
@@ -4978,7 +5918,7 @@
         if (columnIndex < g.childIndex - 2) return '';
         const values = proxyGroupColumnChoices(g, columnIndex, g.path.slice(0, columnIndex));
         const listID = 'proxy-path-' + index + '-' + columnIndex;
-        return '<div class="field"><label>' + esc(column) + '<input data-group-path="' + columnIndex + '" list="' + listID + '" value="' + esc(g.path[columnIndex] || '') + '" autocomplete="off"></label><datalist id="' + listID + '">' + values.slice(0, 50).map((value) => '<option value="' + esc(value) + '"></option>').join('') + '</datalist><span class="hint">可选已有值或输入新分支' + (values.length > 50 ? '；候选展示前 50 项' : '') + '</span></div>';
+        return '<div class="field"><label>' + esc(column) + '<input data-group-path="' + columnIndex + '" list="' + listID + '" value="' + esc(g.path[columnIndex] || '') + '" autocomplete="off"></label><datalist id="' + listID + '">' + values.slice(0, 50).map((value) => '<option value="' + esc(value) + '"></option>').join('') + '</datalist><span class="hint">可选已有值或输入新分支' + (values.length > 50 ? '，候选展示前 50 项' : '') + '</span></div>';
       }).join('');
       const values = completePath ? proxyGroupColumnChoices(g, g.childIndex, prefix).filter((value) => !g.search || value.toLowerCase().includes(g.search.toLowerCase())) : [];
       const pages = Math.max(1, Math.ceil(values.length / 50));
@@ -4987,7 +5927,7 @@
       const separator = proxyGroupSeparator(column);
       const leafEditorHTML = g.editValue == null ? '' : '<div class="proxy-template-variable"><p class="proxy-path">编辑子项：' + esc(g.editPrefix.concat(g.editValue).join(' / ')) + '</p><div class="field"><label>' + esc(g.columns[g.columns.length - 1]) + ' 新值<input data-group-leaf-rename value="' + esc(g.editDraft) + '"></label></div><div class="form-actions"><button class="btn btn-xs" type="button" data-group-rename-child>应用子项修改</button><button class="btn btn-xs btn-ghost" type="button" data-group-cancel-child>取消此修改</button></div></div>';
       const breadcrumbsHTML = '<nav class="form-actions" aria-label="父级路径">' + g.columns.slice(0, g.childIndex).map((name, columnIndex) => '<button class="btn btn-xs btn-ghost" type="button" data-group-breadcrumb="' + columnIndex + '">' + esc(name + '=' + (g.path[columnIndex] || '待选择')) + '</button>').join('') + '</nav>';
-      replaceProxyHTML(body, summary + breadcrumbsHTML + '<div class="field"><label>当前编辑列<select data-group-child-column>' + g.columns.map((name, columnIndex) => '<option value="' + columnIndex + '"' + (columnIndex === g.childIndex ? ' selected' : '') + '>' + esc(name) + '</option>').join('') + '</select></label></div><p class="proxy-path">路径：' + esc(prefix.map((value, columnIndex) => g.columns[columnIndex] + '=' + (value || '待选择')).concat(column).join(' / ')) + '</p><div class="proxy-path-fields">' + fieldHTML + '</div><div class="field"><label>' + esc(column) + ' 批量值<textarea data-group-bulk-values placeholder="使用 ' + esc(separator) + ' 分隔">' + esc(g.bulkDrafts.get(proxyGroupBulkKey(g)) || '') + '</textarea></label><span class="hint">当前分隔符：' + esc(separator) + (g.childIndex < g.columns.length - 1 ? '；添加后继续选择此路径补全后续列' : '') + '</span></div><div class="form-actions"><button class="btn btn-xs" type="button" data-bulk-fill-group="' + index + '">追加到当前路径</button><button class="btn btn-xs btn-danger btn-ghost" type="button" data-group-delete-path ' + (!completePath ? 'disabled' : '') + '>删除当前路径</button></div><div class="field"><label>查找当前列子项<input type="search" data-group-child-search value="' + esc(g.search) + '"></label></div><div class="proxy-value-tags">' + values.slice((g.childPage - 1) * 50, g.childPage * 50).map((value) => '<button class="btn btn-xs btn-ghost" type="button" data-group-drill-value="' + esc(value) + '">' + esc(value) + (g.childIndex < g.columns.length - 1 ? ' →' : '') + '</button><button class="btn btn-xs btn-danger btn-ghost" type="button" aria-label="删除 ' + esc(value) + ' 分支" data-group-delete-value="' + esc(value) + '">' + icon('x') + '</button>').join('') + '</div><div class="form-actions"><button class="btn btn-xs" type="button" data-group-child-page="-1" ' + (g.childPage <= 1 ? 'disabled' : '') + '>上一页</button><span>子项：' + values.length + ' 个 · 第 ' + g.childPage + ' / ' + pages + ' 页</span><button class="btn btn-xs" type="button" data-group-child-page="1" ' + (g.childPage >= pages ? 'disabled' : '') + '>下一页</button></div>' + (g.childIndex ? '<details><summary>重命名或复制父级分支</summary><div class="field"><label>当前父级的新名称<input data-group-rename-value></label></div><button class="btn btn-xs" type="button" data-group-rename-path>重命名当前父级</button><div class="proxy-path-fields">' + g.columns.slice(0, g.childIndex).map((name, columnIndex) => '<div class="field"><label>目标 ' + esc(name) + '<input data-group-copy-target="' + columnIndex + '"></label></div>').join('') + '</div><div class="field"><label>复制方式<select data-group-copy-mode><option value="merge">合并并去重</option><option value="replace">替换目标分支</option></select></label></div><button class="btn btn-xs" type="button" data-group-copy-path>复制到目标父级</button></details>' : '') + leafEditorHTML);
+      replaceProxyHTML(body, summary + breadcrumbsHTML + '<div class="field"><label>当前编辑列<select data-group-child-column>' + g.columns.map((name, columnIndex) => '<option value="' + columnIndex + '"' + (columnIndex === g.childIndex ? ' selected' : '') + '>' + esc(name) + '</option>').join('') + '</select></label></div><p class="proxy-path">路径：' + esc(prefix.map((value, columnIndex) => g.columns[columnIndex] + '=' + (value || '待选择')).concat(column).join(' / ')) + '</p><div class="proxy-path-fields">' + fieldHTML + '</div><div class="field"><label>' + esc(column) + ' 批量值<textarea data-group-bulk-values placeholder="使用 ' + esc(separator) + ' 分隔">' + esc(g.bulkDrafts.get(proxyGroupBulkKey(g)) || '') + '</textarea></label><span class="hint">当前分隔符：' + esc(separator) + (g.childIndex < g.columns.length - 1 ? '，添加后继续选择此路径补全后续列' : '') + '</span></div><div class="form-actions"><button class="btn btn-xs" type="button" data-bulk-fill-group="' + index + '">追加到当前路径</button><button class="btn btn-xs btn-danger btn-ghost" type="button" data-group-delete-path ' + (!completePath ? 'disabled' : '') + '>删除当前路径</button></div><div class="field"><label>查找当前列子项<input type="search" data-group-child-search value="' + esc(g.search) + '"></label></div><div class="proxy-value-tags">' + values.slice((g.childPage - 1) * 50, g.childPage * 50).map((value) => '<button class="btn btn-xs btn-ghost" type="button" data-group-drill-value="' + esc(value) + '">' + esc(value) + (g.childIndex < g.columns.length - 1 ? ' →' : '') + '</button><button class="btn btn-xs btn-danger btn-ghost" type="button" aria-label="删除 ' + esc(value) + ' 分支" data-group-delete-value="' + esc(value) + '">' + icon('x') + '</button>').join('') + '</div><div class="form-actions"><button class="btn btn-xs" type="button" data-group-child-page="-1" ' + (g.childPage <= 1 ? 'disabled' : '') + '>上一页</button><span>子项：' + values.length + ' 个 · 第 ' + g.childPage + ' / ' + pages + ' 页</span><button class="btn btn-xs" type="button" data-group-child-page="1" ' + (g.childPage >= pages ? 'disabled' : '') + '>下一页</button></div>' + (g.childIndex ? '<details><summary>重命名或复制父级分支</summary><div class="field"><label>当前父级的新名称<input data-group-rename-value></label></div><button class="btn btn-xs" type="button" data-group-rename-path>重命名当前父级</button><div class="proxy-path-fields">' + g.columns.slice(0, g.childIndex).map((name, columnIndex) => '<div class="field"><label>目标 ' + esc(name) + '<input data-group-copy-target="' + columnIndex + '"></label></div>').join('') + '</div><div class="field"><label>复制方式<select data-group-copy-mode><option value="merge">合并并去重</option><option value="replace">替换目标分支</option></select></label></div><button class="btn btn-xs" type="button" data-group-copy-path>复制到目标父级</button></details>' : '') + leafEditorHTML);
     }
     function parseProxyDelimitedTable(text, delimiter) {
       const source = String(text || '').replace(/^\uFEFF/, '');
@@ -5021,12 +5961,12 @@
       return [columns].concat(rows).map((row) => row.map(encode).join(delimiter)).join('\r\n');
     }
     function alignProxyImportedRows(columns, records, hasHeader) {
-      if (!columns.length) throw new Error('先填写本组列名；导入不会自动建立依赖');
+      if (!columns.length) throw new Error('先填写本组列名，导入不会自动建立依赖');
       const rows = records.map((row) => row.slice());
       let indices = columns.map((_, index) => index);
       if (hasHeader) {
         const header = rows.shift() || [];
-        if (header.length !== columns.length || new Set(header).size !== header.length || columns.some((column) => !header.includes(column))) throw new Error('首行列名须精确匹配本组；允许重排列顺序');
+        if (header.length !== columns.length || new Set(header).size !== header.length || columns.some((column) => !header.includes(column))) throw new Error('首行列名须精确匹配本组，允许重排列顺序');
         indices = columns.map((column) => header.indexOf(column));
       }
       if (!rows.length) throw new Error('导入数据没有组合行');
@@ -5057,7 +5997,7 @@
       const editor = state.proxyEditing;
       if (!container || !['template', 'resin'].includes(editor?.kind)) return;
       const names = Array.from(document.querySelectorAll('[data-placeholder-card]')).filter((card) => card.querySelector('[data-placeholder-kind]')?.value === 'enum').map((card) => card.dataset.placeholderCard);
-      container.innerHTML = names.map((name, index) => '<div class="field"><label>' + esc(name) + ' 固定值<input data-proxy-assignment="' + esc(name) + '" list="proxy-condition-' + index + '" value="' + esc(editor.assignments[name] || '') + '" placeholder="留空随机" autocomplete="off"></label><datalist id="proxy-condition-' + index + '">' + proxyTemplateConditionValues(name).slice(0, 50).map((value) => '<option value="' + esc(value) + '"></option>').join('') + '</datalist><span class="hint">留空则随机</span></div>').join('') || '<p class="hint">当前没有可固定的枚举变量</p>';
+      container.innerHTML = names.map((name, index) => '<div class="field">' + proxyFieldLabel(name + ' 固定值', '', '留空时随机生成，') + '<input aria-label="' + esc(name) + ' 固定值" data-proxy-assignment="' + esc(name) + '" list="proxy-condition-' + index + '" value="' + esc(editor.assignments[name] || '') + '" placeholder="留空随机" autocomplete="off"><datalist id="proxy-condition-' + index + '">' + proxyTemplateConditionValues(name).slice(0, 50).map((value) => '<option value="' + esc(value) + '"></option>').join('') + '</datalist></div>').join('') || '<p class="proxy-empty-note">无枚举变量，可直接随机预览</p>';
     }
     function updateProxyTemplateConditionLists() {
       document.querySelectorAll('[data-proxy-assignment]').forEach((field) => {
@@ -5084,7 +6024,8 @@
           return;
         }
         const summary = result.summary || result.validation?.summary || {};
-        output.innerHTML = '<p class="hint">验证通过' + (summary.maximum_username_bytes ? ' · 最大用户名：' + summary.maximum_username_bytes + ' 字节' : '') + '；以下 ' + (result.samples || []).length + ' 个样本来自合法组合</p>' + (result.samples || []).map((sample) => '<div class="proxy-template-variable"><div class="mono">' + esc(sample.masked_url || sample.endpoint || '-') + '</div><div class="detail-grid">' + Object.entries(sample.values || {}).map(([name, value]) => evidenceCell(name, value)).join('') + '</div></div>').join('');
+        const count = (result.samples || []).length;
+        output.innerHTML = proxyPreviewSamplesHTML(result.samples, '验证通过 · ' + count + ' 个合法样本' + (summary.maximum_username_bytes ? ' · 最大用户名 ' + summary.maximum_username_bytes + ' 字节' : ''));
         document.getElementById('proxySourceEditorStatus').textContent = '预览通过';
       } catch (error) {
         if (state.proxyEditing !== editor || request !== state.proxyPreviewSequence) return;
@@ -5106,15 +6047,16 @@
       const initialNames = templatePlaceholderNames(template.username_pattern || '');
       const groups = template.value_groups || [];
       document.getElementById('proxySourceEditorTitle').textContent = source ? '编辑代理模板' : '添加代理模板';
-      document.getElementById('proxySourceEditorSubtitle').textContent = source ? '已回显当前模板 URL；密码随 URL 修改，相同定义只能存在一个模板' : '变量用于生成用户名，密码从 URL 解析，相同定义只能存在一个模板';
-      document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyTemplateEditorForm" class="drawer-form"><div class="stack"><section class="card"><div class="form-section"><h3 class="section-title">代理格式</h3><div class="field-grid">' +
-        proxyEditorField('模板名称', 'ptpl_name', template.name || '', { hint: '用于识别模板' }) +
-        proxyEditorCheck('启用模板', 'ptpl_enabled', source ? Boolean(source.enabled) : true, '关闭后不参与新绑定') +
-        proxyEditorField('模板 URL', 'ptpl_url', template.edit_url || '', { full: true, placeholder: 'socks5h://user-{vendor}-{plan}:password@proxy.example:1080', hint: (template.username_pattern ? ('当前用户名：' + template.username_pattern + '；') : '') + '密码直接从 URL 解析：URL 含密码即为有密码，不含即为无密码；password 不可使用占位符；相同定义不能重复添加，名称也不能与其他代理重复' }) +
-        proxyEditorField('优先级', 'ptpl_priority', template.priority || 0, { type: 'number', min: -1000000, max: 1000000, hint: '数值越大越优先' }) +
-        proxyEditorField('绑定上限', 'ptpl_max_bindings', template.max_bindings || 0, { type: 'number', min: 0, hint: '0 表示不限' }) +
-        '<div class="field"><label for="ptpl_update_policy">保存修改时</label><select id="ptpl_update_policy"><option value="keep_bound">仅保存模板</option><option value="rerender_bound">同步已绑定账号</option></select><span class="hint">仅保存或同步已绑定账号</span></div>' +
-        '</div></div></section><section class="card"><div class="form-section"><h3 class="section-title">变量与关联 <span class="section-count" id="proxyTemplateVariableCount">' + initialNames.length + ' 个变量</span></h3><p class="hint">关联组用于限制合法组合</p><div id="proxyTemplateVariables">' + (initialNames.map((name, index) => proxyPlaceholderCard(name, existing.get(name), index === 0)).join('') || '<p class="hint">填写模板 URL 后显示变量</p>') + '</div><div id="proxyTemplateGroups">' + groups.map((group, index) => proxyGroupCard(group, index)).join('') + '</div><div class="form-actions"><button class="btn btn-xs" type="button" id="proxyAddGroupBtn">' + icon('plus') + '添加关联组</button></div></div></section><section class="card"><div class="form-section"><h3 class="section-title">验证与预览</h3><p class="hint">固定枚举条件，其余随机生成</p><div class="field-grid" id="proxyTemplateConditions"></div><div id="proxyTemplatePreviewResults" role="status" aria-live="polite"></div></div></section></div><div class="form-actions"><button class="btn" type="button" id="proxyTemplatePreviewBtn">' + icon('eye') + '生成预览</button><button class="btn btn-primary" type="submit">' + icon('check') + '验证并保存</button><span class="status-line" id="proxySourceEditorStatus" role="status" aria-live="polite"></span></div><p class="hint">当前绑定：' + Number(source?.binding_count || 0) + ' 个账号 · 保存后按策略同步</p></form>';
+      document.getElementById('proxySourceEditorSubtitle').textContent = source ? '修改用户名模板与合法组合' : '配置变量化用户名与合法组合';
+      setProxyEditorMeta(source, '保存后按策略同步');
+      document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyTemplateEditorForm" class="drawer-form"><div class="stack"><section class="card"><div class="form-section"><h3 class="section-title">代理格式' + helpTip('用户名支持占位符，密码随 URL 维护，') + '</h3><div class="field-grid">' +
+        proxyEditorField('模板名称', 'ptpl_name', template.name || '', { hint: '用于代理列表与自动绑定选择，' }) +
+        proxyEditorCheck('启用模板', 'ptpl_enabled', source ? Boolean(source.enabled) : true, '关闭后不参与新绑定，') +
+        proxyEditorField('模板 URL', 'ptpl_url', template.edit_url || '', { full: true, placeholder: 'socks5h://user-{vendor}-{plan}:password@proxy.example:1080', hint: (template.username_pattern ? ('当前用户名：' + template.username_pattern + '，') : '') + '用户名可包含占位符，相同定义仅允许一个模板，' }) +
+        proxyEditorField('优先级', 'ptpl_priority', template.priority || 0, { type: 'number', min: -1000000, max: 1000000, hint: '数值越大越优先，' }) +
+        proxyEditorField('绑定上限', 'ptpl_max_bindings', template.max_bindings || 0, { type: 'number', min: 0, hint: '0 表示不限，' }) +
+        '<div class="field">' + proxyFieldLabel('保存修改时', 'ptpl_update_policy', '仅保存模板，或同步更新已绑定账号，') + '<select id="ptpl_update_policy"><option value="keep_bound">仅保存模板</option><option value="rerender_bound">同步已绑定账号</option></select></div>' +
+        '</div></div></section><section class="card"><div class="form-section"><h3 class="section-title">变量与关联' + helpTip('关联组用于限制多个变量之间的合法组合，') + '<span class="section-count" id="proxyTemplateVariableCount">' + initialNames.length + ' 个变量</span></h3><div id="proxyTemplateVariables">' + (initialNames.map((name, index) => proxyPlaceholderCard(name, existing.get(name), index === 0)).join('') || '<p class="proxy-empty-note">填写模板 URL 后显示变量</p>') + '</div><div id="proxyTemplateGroups">' + groups.map((group, index) => proxyGroupCard(group, index)).join('') + '</div><div class="form-actions"><button class="btn btn-xs" type="button" id="proxyAddGroupBtn">' + icon('plus') + '添加关联组</button></div></div></section><section class="card"><div class="form-section"><h3 class="section-title">验证与预览' + helpTip('可固定部分枚举值，生成 3 个标准代理 URL 样本，密码已脱敏，') + '</h3><div class="field-grid" id="proxyTemplateConditions"></div><div id="proxyTemplatePreviewResults" role="status" aria-live="polite"></div></div></section></div><div class="form-actions"><button class="btn" type="button" id="proxyTemplatePreviewBtn">' + icon('eye') + '生成预览</button><button class="btn btn-primary" type="submit">' + icon('check') + '验证并保存</button><span class="status-line" id="proxySourceEditorStatus" role="status" aria-live="polite"></span></div></form>';
       if (template.update_policy) setValue('ptpl_update_policy', template.update_policy);
       const rerenderVariables = () => {
         const rawURL = valueOf('ptpl_url');
@@ -5164,7 +6106,7 @@
           if (editor.revision === revision) editor.dirty = false;
           const summary = reportProxyResult(result, '模板保存与绑定同步');
           if (summary.failed) {
-            const message = '模板已保存；' + summary.failed + ' 个已绑定账号回溯失败，可在任务详情重试';
+            const message = '模板已保存，' + summary.failed + ' 个已绑定账号回溯失败，可在任务详情重试';
             document.getElementById('proxySourceEditorStatus').textContent = message;
             toast(message, 'error');
             if (source && result.source) {
@@ -5172,7 +6114,7 @@
               source.revision = result.source.revision;
             }
           } else {
-            document.getElementById('proxySourceEditorStatus').textContent = summary.message + (editor.dirty ? '；当前草稿还有未保存修改' : '');
+            document.getElementById('proxySourceEditorStatus').textContent = summary.message + (editor.dirty ? '，当前草稿还有未保存修改' : '');
             if (!editor.dirty) await closeProxyDrawer(true);
           }
           await loadProxyData();
@@ -5196,149 +6138,152 @@
       if (detail) source = Object.assign({}, source, detail.view || detail.source || detail);
       editor.source = source;
       const resin = detail?.kind === 'resin' ? detail : (detail || {});
-	  const accountFormat = resin.account_format || 'grok-{account}-{suffix}';
-	  const existing = new Map((resin.placeholders || []).map((item) => [item.name, item]));
-	  existing.set('account', { name: 'account', kind: 'reserved' });
-	  if (!existing.has('suffix') && !source) existing.set('suffix', { name: 'suffix', kind: 'random', random: { length: 4, case_sensitive: false } });
-	  editor.placeholderDrafts = existing;
-	  const initialNames = templatePlaceholderNames(accountFormat);
-	  const groups = resin.value_groups || [];
-	  document.getElementById('proxySourceEditorTitle').textContent = source ? '编辑 Resin 代理' : '添加 Resin 代理';
-	  document.getElementById('proxySourceEditorSubtitle').textContent = source ? '按模板方式维护账号格式与生成规则；密钥不会回填' : 'Resin 是带租约清理能力的特殊模板；可添加多个代理';
-	  document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyResinEditorForm" class="drawer-form"><div class="stack"><section class="card"><div class="form-section"><h3 class="section-title">Resin 连接</h3><div class="field-grid">' +
-	    proxyEditorField('代理名称', 'presin_name', resin.name || 'Resin', { placeholder: '例如 主 Resin', hint: '用于代理列表和自动绑定选择，不能与其他代理重名' }) +
-	    proxyEditorCheck('启用来源', 'presin_enabled', source ? Boolean(source.enabled) : true, '关闭后不参与新绑定') +
-	    proxyEditorCheck('仅本地轮换', 'presin_local_only', Boolean(resin.local_only), '只改写已有 Resin 用户名，不调用 Admin API，也不创建新绑定') +
-	    proxyEditorField('平台名称', 'presin_platform', resin.platform || '', { placeholder: '例如 Default', hint: '保存时通过 Admin API 解析平台 UUID' }) +
-	    proxyEditorField('Admin API URL', 'presin_admin_url', resin.admin_url || '', { placeholder: 'http://resin:2260', hint: '仅 API 模式需要，必须是 CPA 插件进程可访问的地址' }) +
-	    proxyEditorField('Admin Token', 'presin_admin_token', '', { type: 'password', placeholder: '留空保持已保存值', hint: resin.admin_token_set ? '已配置，留空保持' : 'API 模式必填' }) +
-	    proxyEditorField('Proxy Token', 'presin_proxy_token', '', { type: 'password', placeholder: '留空保持已保存值', hint: resin.proxy_token_set ? '已配置，留空保持' : 'API 模式必填；本地轮换不需要' }) +
-	    proxyEditorField('优先级', 'presin_priority', resin.priority || 0, { type: 'number', min: -1000000, max: 1000000, hint: '数值越大越优先' }) +
-	    proxyEditorField('绑定上限', 'presin_max_bindings', resin.max_bindings || 0, { type: 'number', min: 0, hint: '0 表示不限' }) +
-	    '</div><p class="hint">同一 Resin 服务可以创建多个代理，分别使用不同平台、Admin 地址或账号生成规则</p></div></section>' +
-	    '<section class="card"><div class="form-section"><h3 class="section-title">代理账号格式 <span class="section-count" id="proxyResinVariableCount">' + initialNames.length + ' 个变量</span></h3>' +
-	    proxyEditorField('账号格式', 'presin_account_format', accountFormat, { full: true, placeholder: 'xai-{account}-{region}', hint: '只填写平台名后的 username 后缀；{account} 是保留变量，取邮箱 @ 前的前缀并转小写；其他变量与模板一样支持枚举、随机和关联组' }) +
-	    '<p class="hint">系统会生成 socks5h://&lt;平台&gt;.&lt;账号格式&gt;:&lt;Proxy Token&gt;@&lt;Admin API 主机&gt;:&lt;端口&gt;；仅本地轮换只使用账号格式生成新后缀</p>' +
-	    '<div id="proxyTemplateVariables">' + (initialNames.map((name, index) => proxyPlaceholderCard(name, existing.get(name), index === 0)).join('') || '<p class="hint">在账号格式中使用 {account} 或其他变量</p>') + '</div>' +
-	    '<div id="proxyTemplateGroups">' + groups.map((group, index) => proxyGroupCard(group, index)).join('') + '</div><div class="form-actions"><button class="btn btn-xs" type="button" id="proxyAddGroupBtn">' + icon('plus') + '添加关联组</button></div></div></section>' +
-	    '<section class="card"><div class="form-section"><h3 class="section-title">验证与预览</h3><p class="hint">预览使用示例邮箱前缀 preview，不会访问 Resin</p><div id="proxyTemplatePreviewResults" role="status" aria-live="polite"></div></div></section></div>' +
-	    '<div class="form-actions"><button class="btn" type="button" id="proxyResinPreviewBtn">' + icon('eye') + '生成预览</button><button class="btn btn-primary" type="submit">' + icon('check') + '验证并保存</button><span class="status-line" id="proxySourceEditorStatus" role="status" aria-live="polite"></span></div><p class="hint">当前绑定：' + Number(source?.binding_count || 0) + ' 个账号 · 修改账号格式后已有绑定保持不变</p></form>';
-	  const rerenderVariables = () => {
-	    const rawFormat = valueOf('presin_account_format');
-	    const names = templatePlaceholderNames(rawFormat || accountFormat);
-	    const container = document.getElementById('proxyTemplateVariables');
-	    Array.from(container.querySelectorAll('[data-placeholder-card]')).forEach((card) => {
-	      if (!card.querySelector('[data-placeholder-kind]')) return;
-	      editor.placeholderDrafts.set(card.dataset.placeholderCard, readProxyPlaceholder(card.dataset.placeholderCard));
-	    });
-	    container.innerHTML = names.map((name, index) => proxyPlaceholderCard(name, editor.placeholderDrafts.get(name), index === 0)).join('') || '<p class="hint">在账号格式中使用 {account} 或其他变量</p>';
-	    const count = document.getElementById('proxyResinVariableCount');
-	    if (count) count.textContent = names.length + ' 个变量';
-	    syncProxyPlaceholderCards();
-	    renderProxyTemplateConditions();
-	  };
-	  const updateMode = () => {
-	    const local = document.getElementById('presin_local_only').checked;
-	    ['presin_platform', 'presin_admin_url', 'presin_admin_token', 'presin_proxy_token'].forEach((id) => {
-	      const field = document.getElementById(id);
-	      if (field) field.disabled = local;
-	    });
-	    const status = document.getElementById('proxySourceEditorStatus');
-	    if (status && !editor.dirty) status.textContent = local ? '本地轮换不需要 Admin API 和 Proxy Token' : 'API 模式保存时会验证 Admin API、平台和 Proxy Token';
-	  };
-	  document.getElementById('presin_account_format').addEventListener('input', rerenderVariables);
-	  document.getElementById('presin_local_only').addEventListener('change', updateMode);
-	  document.getElementById('proxyAddGroupBtn').addEventListener('click', () => {
-	    const container = document.getElementById('proxyTemplateGroups');
-	    const index = editor.nextGroupIndex++;
-	    container.insertAdjacentHTML('beforeend', proxyGroupCard({ id: '', columns: [], rows: [] }, index));
-	    renderProxyGroup(index);
-	    markProxyEditorDirty();
-	  });
-	  document.getElementById('proxyResinPreviewBtn').addEventListener('click', (event) => previewProxyResin(editor, source, resin, event.currentTarget));
-	  document.getElementById('proxyResinEditorForm').addEventListener('submit', async (event) => {
-	    event.preventDefault();
-	    const button = event.submitter;
-	    const revision = editor.revision;
-	    if (source && !editor.dirty) {
-	      const message = '内容未发生变化，不能保存';
-	      document.getElementById('proxySourceEditorStatus').textContent = message;
-	      toast(message, 'error');
-	      return;
-	    }
-	    setBusy(button, true);
-	    document.getElementById('proxySourceEditorStatus').textContent = '正在验证并保存…';
-	    try {
-	      const input = collectProxyResinEditor(source, resin);
-	      const queued = await api(source ? 'proxy.sources.update' : 'proxy.sources.create', { kind: 'resin', source: input });
-	      const result = await waitForTask(queued, 'Resin 保存');
-	      if (state.proxyEditing !== editor) return;
-	      const savedSource = result?.source || result;
-	      if (savedSource?.id) source = Object.assign({}, source, savedSource);
-	      editor.source = source;
-	      if (editor.revision === revision) editor.dirty = false;
-	      document.getElementById('proxySourceEditorStatus').textContent = 'Resin 代理已保存';
-	      toast('Resin 代理已保存', 'success');
-	      await loadProxyData();
-	      renderProxySources();
-	      renderResin();
-	      if (!editor.dirty) await closeProxyDrawer(true);
-	    } catch (error) {
-	      document.getElementById('proxySourceEditorStatus').textContent = '保存失败：' + error.message;
-	      toast(error.message, 'error');
-	    } finally {
-	      setBusy(button, false);
-	    }
-	  });
-	  editor.groups.forEach((_, index) => renderProxyGroup(index));
-	  syncProxyPlaceholderCards();
-	  renderProxyTemplateConditions();
-	  updateMode();
-	  openProxyDrawer();
-	}
-	function collectProxyResinEditor(source, current) {
-	  const format = valueOf('presin_account_format');
-	  const names = templatePlaceholderNames(format || current.account_format || '');
-	  const placeholders = names.filter((name) => name !== 'account').map(readProxyPlaceholder).filter(Boolean);
-	  return {
-	    id: source ? source.id : '',
-	    name: valueOf('presin_name'),
-	    enabled: document.getElementById('presin_enabled').checked,
-	    local_only: document.getElementById('presin_local_only').checked,
-	    platform: valueOf('presin_platform'),
-	    admin_url: valueOf('presin_admin_url'),
-	    admin_token: valueOf('presin_admin_token'),
-	    proxy_token: valueOf('presin_proxy_token'),
-	    account_format: format,
-	    placeholders: placeholders,
-	    value_groups: collectProxyTemplateGroups(),
-	    priority: numberValue('presin_priority', 0),
-	    max_bindings: numberOrZero('presin_max_bindings'),
-	    update_policy: 'keep_bound',
-	    expected_version: source ? Number(source.config_version || 0) : 0
-	  };
-	}
-	async function previewProxyResin(editor, source, current, button) {
-	  const revision = editor.revision;
-	  setBusy(button, true);
-	  try {
-	    const input = collectProxyResinEditor(source, current);
-	    const result = await api('proxy.sources.preview', { kind: 'resin', source: input, count: 3 });
-	    if (state.proxyEditing !== editor || editor.revision !== revision) return;
-	    const output = document.getElementById('proxyTemplatePreviewResults');
-	    if (!result || !result.valid) {
-	      output.innerHTML = '<p class="proxy-field-error" role="alert">' + esc(result?.error || 'Resin 验证失败') + '</p>';
-	      return;
-	    }
-	    output.innerHTML = '<p class="hint">验证通过；以下样本使用邮箱前缀 preview 生成</p>' + (result.samples || []).map((sample) => '<div class="proxy-template-variable"><div class="mono">' + esc(sample.masked_url || '-') + '</div><div class="detail-grid">' + Object.entries(sample.values || {}).map(([name, value]) => evidenceCell(name, value)).join('') + '</div></div>').join('');
-	    document.getElementById('proxySourceEditorStatus').textContent = '预览通过';
-	  } catch (error) {
-	    if (state.proxyEditing === editor) document.getElementById('proxySourceEditorStatus').textContent = '预览失败：' + error.message;
-	    toast(error.message, 'error');
-	  } finally {
-	    setBusy(button, false);
-	  }
-	}
+      const accountFormat = resin.account_format || 'grok-{account}-{suffix}';
+      const existing = new Map((resin.placeholders || []).map((item) => [item.name, item]));
+      existing.set('account', { name: 'account', kind: 'reserved' });
+      if (!existing.has('suffix') && !source) existing.set('suffix', { name: 'suffix', kind: 'random', random: { length: 4, case_sensitive: false } });
+      editor.placeholderDrafts = existing;
+      const initialNames = templatePlaceholderNames(accountFormat);
+      const groups = resin.value_groups || [];
+      document.getElementById('proxySourceEditorTitle').textContent = source ? '编辑 Resin 代理' : '添加 Resin 代理';
+      document.getElementById('proxySourceEditorSubtitle').textContent = source ? '维护连接、账号格式与租约规则' : '添加 Resin 租约代理';
+      setProxyEditorMeta(source, '修改账号格式不影响已绑定账号');
+      document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyResinEditorForm" class="drawer-form"><div class="stack"><section class="card"><div class="form-section"><h3 class="section-title">Resin 连接' + helpTip('同一 Resin 服务可创建多个代理，按平台、地址或账号规则区分，') + '<span class="section-count" id="proxyResinModeBadge">API 模式</span></h3><div class="field-grid">' +
+        proxyEditorField('代理名称', 'presin_name', resin.name || 'Resin', { placeholder: '例如 主 Resin', hint: '用于代理列表和自动绑定选择，必须唯一，' }) +
+        proxyEditorCheck('启用来源', 'presin_enabled', source ? Boolean(source.enabled) : true, '关闭后不参与新绑定，') +
+        proxyEditorCheck('仅本地轮换', 'presin_local_only', Boolean(resin.local_only), '只改写已有用户名，不调用 Admin API，也不创建新绑定，') +
+        proxyEditorField('平台名称', 'presin_platform', resin.platform || '', { placeholder: '例如 Default', hint: '保存时通过 Admin API 解析平台 UUID，' }) +
+        proxyEditorField('Admin API URL', 'presin_admin_url', resin.admin_url || '', { placeholder: 'http://resin:2260', hint: '仅 API 模式需要，必须能被 CPA 插件进程访问，' }) +
+        proxyEditorField('Admin Token', 'presin_admin_token', '', { type: 'password', placeholder: '留空保持已保存值', hint: resin.admin_token_set ? '已配置，留空保持当前值，' : 'API 模式必填，' }) +
+        proxyEditorField('Proxy Token', 'presin_proxy_token', '', { type: 'password', placeholder: '留空保持已保存值', hint: resin.proxy_token_set ? '已配置，留空保持当前值，' : 'API 模式必填，本地轮换不需要，' }) +
+        proxyEditorField('优先级', 'presin_priority', resin.priority || 0, { type: 'number', min: -1000000, max: 1000000, hint: '数值越大越优先，' }) +
+        proxyEditorField('绑定上限', 'presin_max_bindings', resin.max_bindings || 0, { type: 'number', min: 0, hint: '0 表示不限，' }) +
+        '</div></div></section>' +
+        '<section class="card"><div class="form-section"><h3 class="section-title">代理账号格式' + helpTip('完整地址：socks5h://<平台>.<账号格式>:<Proxy Token>@<Admin API 主机>:<端口>，') + '<span class="section-count" id="proxyResinVariableCount">' + initialNames.length + ' 个变量</span></h3>' +
+        proxyEditorField('账号格式', 'presin_account_format', accountFormat, { full: true, placeholder: 'xai-{account}-{region}', hint: '只填写平台名后的 username 后缀，{account} 取自邮箱前缀并转为小写，' }) +
+        '<div id="proxyTemplateVariables">' + (initialNames.map((name, index) => proxyPlaceholderCard(name, existing.get(name), index === 0)).join('') || '<p class="proxy-empty-note">在账号格式中使用 {account} 或其他变量</p>') + '</div>' +
+        '<div id="proxyTemplateGroups">' + groups.map((group, index) => proxyGroupCard(group, index)).join('') + '</div><div class="form-actions"><button class="btn btn-xs" type="button" id="proxyAddGroupBtn">' + icon('plus') + '添加关联组</button></div></div></section>' +
+        '<section class="card"><div class="form-section"><h3 class="section-title">验证与预览' + helpTip('使用示例邮箱前缀 preview 生成 3 个标准代理 URL 样本，不访问 Resin，密码已脱敏，') + '</h3><div id="proxyTemplatePreviewResults" role="status" aria-live="polite"></div></div></section></div>' +
+        '<div class="form-actions"><button class="btn" type="button" id="proxyResinPreviewBtn">' + icon('eye') + '生成预览</button><button class="btn btn-primary" type="submit">' + icon('check') + '验证并保存</button><span class="status-line" id="proxySourceEditorStatus" role="status" aria-live="polite"></span></div></form>';
+      const rerenderVariables = () => {
+        const rawFormat = valueOf('presin_account_format');
+        const names = templatePlaceholderNames(rawFormat || accountFormat);
+        const container = document.getElementById('proxyTemplateVariables');
+        Array.from(container.querySelectorAll('[data-placeholder-card]')).forEach((card) => {
+          if (!card.querySelector('[data-placeholder-kind]')) return;
+          editor.placeholderDrafts.set(card.dataset.placeholderCard, readProxyPlaceholder(card.dataset.placeholderCard));
+        });
+        container.innerHTML = names.map((name, index) => proxyPlaceholderCard(name, editor.placeholderDrafts.get(name), index === 0)).join('') || '<p class="hint">在账号格式中使用 {account} 或其他变量</p>';
+        const count = document.getElementById('proxyResinVariableCount');
+        if (count) count.textContent = names.length + ' 个变量';
+        syncProxyPlaceholderCards();
+        renderProxyTemplateConditions();
+      };
+      const updateMode = () => {
+        const local = document.getElementById('presin_local_only').checked;
+        ['presin_platform', 'presin_admin_url', 'presin_admin_token', 'presin_proxy_token'].forEach((id) => {
+          const field = document.getElementById(id);
+          if (field) {
+            field.disabled = local;
+            field.closest?.('.field')?.classList.toggle('is-disabled', local);
+          }
+        });
+        const badge = document.getElementById('proxyResinModeBadge');
+        if (badge) badge.textContent = local ? '本地轮换' : 'API 模式';
+      };
+      document.getElementById('presin_account_format').addEventListener('input', rerenderVariables);
+      document.getElementById('presin_local_only').addEventListener('change', updateMode);
+      document.getElementById('proxyAddGroupBtn').addEventListener('click', () => {
+        const container = document.getElementById('proxyTemplateGroups');
+        const index = editor.nextGroupIndex++;
+        container.insertAdjacentHTML('beforeend', proxyGroupCard({ id: '', columns: [], rows: [] }, index));
+        renderProxyGroup(index);
+        markProxyEditorDirty();
+      });
+      document.getElementById('proxyResinPreviewBtn').addEventListener('click', (event) => previewProxyResin(editor, source, resin, event.currentTarget));
+      document.getElementById('proxyResinEditorForm').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const button = event.submitter;
+        const revision = editor.revision;
+        if (source && !editor.dirty) {
+          const message = '内容未发生变化，不能保存';
+          document.getElementById('proxySourceEditorStatus').textContent = message;
+          toast(message, 'error');
+          return;
+        }
+        setBusy(button, true);
+        document.getElementById('proxySourceEditorStatus').textContent = '正在验证并保存…';
+        try {
+          const input = collectProxyResinEditor(source, resin);
+          const queued = await api(source ? 'proxy.sources.update' : 'proxy.sources.create', { kind: 'resin', source: input });
+          const result = await waitForTask(queued, 'Resin 保存');
+          if (state.proxyEditing !== editor) return;
+          const savedSource = result?.source || result;
+          if (savedSource?.id) source = Object.assign({}, source, savedSource);
+          editor.source = source;
+          if (editor.revision === revision) editor.dirty = false;
+          document.getElementById('proxySourceEditorStatus').textContent = 'Resin 代理已保存';
+          toast('Resin 代理已保存', 'success');
+          await loadProxyData();
+          renderProxySources();
+          renderResin();
+          if (!editor.dirty) await closeProxyDrawer(true);
+        } catch (error) {
+          document.getElementById('proxySourceEditorStatus').textContent = '保存失败：' + error.message;
+          toast(error.message, 'error');
+        } finally {
+          setBusy(button, false);
+        }
+      });
+      editor.groups.forEach((_, index) => renderProxyGroup(index));
+      syncProxyPlaceholderCards();
+      renderProxyTemplateConditions();
+      updateMode();
+      openProxyDrawer();
+    }
+    function collectProxyResinEditor(source, current) {
+      const format = valueOf('presin_account_format');
+      const names = templatePlaceholderNames(format || current.account_format || '');
+      const placeholders = names.filter((name) => name !== 'account').map(readProxyPlaceholder).filter(Boolean);
+      return {
+        id: source ? source.id : '',
+        name: valueOf('presin_name'),
+        enabled: document.getElementById('presin_enabled').checked,
+        local_only: document.getElementById('presin_local_only').checked,
+        platform: valueOf('presin_platform'),
+        admin_url: valueOf('presin_admin_url'),
+        admin_token: valueOf('presin_admin_token'),
+        proxy_token: valueOf('presin_proxy_token'),
+        account_format: format,
+        placeholders: placeholders,
+        value_groups: collectProxyTemplateGroups(),
+        priority: signedNumberValue('presin_priority', 0),
+        max_bindings: numberOrZero('presin_max_bindings'),
+        update_policy: 'keep_bound',
+        expected_version: source ? Number(source.config_version || 0) : 0
+      };
+    }
+    async function previewProxyResin(editor, source, current, button) {
+      const revision = editor.revision;
+      setBusy(button, true);
+      try {
+        const input = collectProxyResinEditor(source, current);
+        const result = await api('proxy.sources.preview', { kind: 'resin', source: input, count: 3 });
+        if (state.proxyEditing !== editor || editor.revision !== revision) return;
+        const output = document.getElementById('proxyTemplatePreviewResults');
+        if (!result || !result.valid) {
+          output.innerHTML = '<p class="proxy-field-error" role="alert">' + esc(result?.error || 'Resin 验证失败') + '</p>';
+          return;
+        }
+        output.innerHTML = proxyPreviewSamplesHTML(result.samples, '验证通过 · 示例邮箱前缀 preview');
+        document.getElementById('proxySourceEditorStatus').textContent = '预览通过';
+      } catch (error) {
+        if (state.proxyEditing === editor) document.getElementById('proxySourceEditorStatus').textContent = '预览失败：' + error.message;
+        toast(error.message, 'error');
+      } finally {
+        setBusy(button, false);
+      }
+    }
     function readProxyPlaceholder(name) {
       const card = document.querySelector('[data-placeholder-card="' + CSS.escape(name) + '"]');
       if (!card) return null;
@@ -5399,7 +6344,7 @@
         placeholders: placeholders,
         value_groups: collectProxyTemplateGroups(),
         enabled: document.getElementById('ptpl_enabled').checked,
-        priority: numberValue('ptpl_priority', 0),
+        priority: signedNumberValue('ptpl_priority', 0),
         max_bindings: numberOrZero('ptpl_max_bindings'),
         update_policy: valueOf('ptpl_update_policy') || 'keep_bound',
         expected_version: source ? Number(source.config_version || 0) : 0
@@ -5570,8 +6515,8 @@
       const editor = beginProxyEditor('import', null);
       editor.importTimer = 0;
       document.getElementById('proxySourceEditorTitle').textContent = '批量导入代理节点';
-      document.getElementById('proxySourceEditorSubtitle').textContent = '每行一个代理节点，自动优先按标准 URL 解析，失败后尝试地址在前和 host:port@user:pass 格式；支持 HTTP、HTTPS、SOCKS5、SOCKS5H';
-      document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyImportForm" class="drawer-form"><section class="card"><div class="form-section"><div class="import-toolbar"><div><h3>代理列表</h3></div><div class="import-toolbar-actions"><input id="proxyImportFile" type="file" accept=".txt,.list,.csv,text/plain,text/csv" hidden><button class="btn btn-xs" type="button" id="proxyImportFileBtn">' + icon('upload') + '加载文件</button><button class="btn btn-xs btn-ghost" type="button" id="proxyImportFilterBtn">' + icon('check') + '过滤无效行</button></div></div><div class="field full"><label for="proxyImportText">代理 URL</label><textarea id="proxyImportText" class="proxy-import-text" spellcheck="false" wrap="off" aria-describedby="proxyImportHint" placeholder="http://user:pass@proxy.example:8080\nsocks5h://proxy.example:1080:user:pass\nhttp://proxy.example:8080@user:pass\nsocks5h://[2001:db8::1]:1080:user:pass"></textarea><span class="hint" id="proxyImportHint">标准 URL 优先，失败后自动尝试地址在前或 host:port@user:pass；上限：100000 条 · 16 MiB，重复项自动忽略</span></div><div class="import-stats" id="proxyImportStats" role="status" aria-live="polite"></div><div class="import-samples" id="proxyImportSamples" hidden></div><div class="form-actions"><button class="btn btn-primary" type="submit" id="proxyImportSubmitBtn" disabled>' + icon('check') + '导入有效节点</button><span class="status-line" id="proxySourceEditorStatus" role="status" aria-live="polite"></span></div></div></section></form>';
+      document.getElementById('proxySourceEditorSubtitle').textContent = '每行一个代理节点，自动优先按标准 URL 解析，失败后尝试地址在前和 host:port@user:pass 格式，支持 HTTP、HTTPS、SOCKS5、SOCKS5H';
+      document.getElementById('proxySourceEditor').innerHTML = '<form id="proxyImportForm" class="drawer-form"><section class="card"><div class="form-section"><div class="import-toolbar"><div><h3>代理列表</h3></div><div class="import-toolbar-actions"><input id="proxyImportFile" type="file" accept=".txt,.list,.csv,text/plain,text/csv" hidden><button class="btn btn-xs" type="button" id="proxyImportFileBtn">' + icon('upload') + '加载文件</button><button class="btn btn-xs btn-ghost" type="button" id="proxyImportFilterBtn">' + icon('check') + '过滤无效行</button></div></div><div class="field full"><label for="proxyImportText">代理 URL</label><textarea id="proxyImportText" class="proxy-import-text" spellcheck="false" wrap="off" aria-describedby="proxyImportHint" placeholder="http://user:pass@proxy.example:8080\nsocks5h://proxy.example:1080:user:pass\nhttp://proxy.example:8080@user:pass\nsocks5h://[2001:db8::1]:1080:user:pass"></textarea><span class="hint" id="proxyImportHint">标准 URL 优先，失败后自动尝试地址在前或 host:port@user:pass，上限：100000 条 · 16 MiB，重复项自动忽略</span></div><div class="import-stats" id="proxyImportStats" role="status" aria-live="polite"></div><div class="import-samples" id="proxyImportSamples" hidden></div><div class="form-actions"><button class="btn btn-primary" type="submit" id="proxyImportSubmitBtn" disabled>' + icon('check') + '导入有效节点</button><span class="status-line" id="proxySourceEditorStatus" role="status" aria-live="polite"></span></div></div></section></form>';
 
       const textarea = document.getElementById('proxyImportText');
       const fileInput = document.getElementById('proxyImportFile');
@@ -5693,7 +6638,7 @@
     async function deleteProxySource(sourceID, kind) {
       const confirmed = await confirmAction({
         title: '删除代理',
-        detail: '将删除此代理并清理受管理代理；失败项保留并报告',
+        detail: '将删除此代理并清理受管理代理，失败项保留并报告',
         confirmLabel: '删除并清理',
         icon: 'x',
         tone: 'danger'
@@ -5796,7 +6741,7 @@
       }
       const confirmed = await confirmAction({
         title: '删除所选代理',
-        detail: '将删除 ' + ids.length + ' 个代理并清理受管理代理；失败项保留并报告',
+        detail: '将删除 ' + ids.length + ' 个代理并清理受管理代理，失败项保留并报告',
         confirmLabel: '删除所选',
         icon: 'x',
         tone: 'danger'
@@ -5812,7 +6757,7 @@
         deleted.forEach((id) => state.proxySourceSelection.delete(id));
         const failed = Number(result?.counts?.failed || 0);
         if (failed) {
-          const message = '已删除 ' + deleted.size + ' 个代理；' + failed + ' 个清理失败并保留，可在任务详情查看原因';
+          const message = '已删除 ' + deleted.size + ' 个代理，' + failed + ' 个清理失败并保留，可在任务详情查看原因';
           toast(message, 'error');
         } else {
           state.proxySourceSelection.clear();
@@ -5826,7 +6771,7 @@
         const deleted = new Set(items.filter((item) => item.status === 'deleted').map((item) => item.source_id));
         deleted.forEach((id) => state.proxySourceSelection.delete(id));
         if (deleted.size) {
-          toast(error.message + '；已完成删除 ' + deleted.size + ' 个代理', 'error');
+          toast(error.message + '，已完成删除 ' + deleted.size + ' 个代理', 'error');
           await loadProxyData();
           renderProxySources();
           renderResin();
@@ -5842,7 +6787,7 @@
       catch (error) { toast(error.message, 'error'); return; }
       const confirmed = await confirmAction({
         title: '应用模板到已绑定账号',
-        detail: '将为 ' + Number(preview.count || preview.bound_count || 0) + ' 个已绑定账号应用当前模板版本；账号代理与记录不一致时会跳过并报告',
+        detail: '将为 ' + Number(preview.count || preview.bound_count || 0) + ' 个已绑定账号应用当前模板版本，账号代理与记录不一致时会跳过并报告',
         confirmLabel: '开始应用',
         icon: 'refresh'
       });
@@ -5864,8 +6809,8 @@
       const policy = state.proxy?.auto_bind?.manual_clear_policy || 'rebind';
       const options = clear
         ? '<div class="field"><label for="proxyClearPolicy">清除后自动绑定</label><select id="proxyClearPolicy"><option value="global">遵循全局设置 · ' + (policy === 'pause' ? '暂停这些账号' : '允许重新绑定') + '</option><option value="rebind">本次允许重新绑定</option><option value="pause">本次暂停这些账号</option></select><span class="hint">已经暂停的账号保留暂停状态，可通过恢复自动绑定解除</span></div>'
-        : '<div class="field-grid"><div class="field"><label for="proxyBindScope">代理范围</label><select id="proxyBindScope"><option value="all">全部代理</option><option value="nodes">仅节点</option><option value="templates">仅模板</option><option value="resin">仅 Resin</option></select><span class="hint">限制自动分配和候选列表的代理类型</span></div><div class="field proxy-source-picker"><label for="proxyOperationSource">指定代理 · 可按名称搜索</label><div class="proxy-source-combobox"><input id="proxyOperationSource" type="text" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="proxyOperationSourceChoices" placeholder="留空按范围自动分配"><input id="proxyOperationSourceID" type="hidden" value=""><div class="proxy-source-picker-menu" id="proxyOperationSourceChoices" role="listbox" hidden></div></div><span class="hint">候选按代理范围过滤；也可填写代理 ID</span></div></div>';
-      const pending = confirmAction({ title: label, detail: '将处理 ' + count + ' 个账号' + (action === 'clear-external' ? '仅清除本地代理 URL，不删除 Resin 租约' : clear ? '清除前核对当前代理与管理记录；外部配置也会一并清除；漂移和读取失败项目会报告' : '仅绑定代理为空的 Grok/xAI 账号；已有外部代理或未解决操作会跳过'), confirmLabel: clear ? '开始清除' : '开始绑定', icon: clear ? 'x' : 'link', tone: clear ? 'danger' : '', wide: !clear, optionsHTML: options });
+        : '<div class="field-grid"><div class="field"><label for="proxyBindScope">代理范围</label><select id="proxyBindScope"><option value="all">全部代理</option><option value="nodes">仅节点</option><option value="templates">仅模板</option><option value="resin">仅 Resin</option></select><span class="hint">限制自动分配和候选列表的代理类型</span></div><div class="field proxy-source-picker"><label for="proxyOperationSource">指定代理 · 可按名称搜索</label><div class="proxy-source-combobox"><input id="proxyOperationSource" type="text" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="proxyOperationSourceChoices" placeholder="留空按范围自动分配"><input id="proxyOperationSourceID" type="hidden" value=""><div class="proxy-source-picker-menu" id="proxyOperationSourceChoices" role="listbox" hidden></div></div><span class="hint">候选按代理范围过滤，也可填写代理 ID</span></div></div>';
+      const pending = confirmAction({ title: label, detail: '将处理 ' + count + ' 个账号' + (action === 'clear-external' ? '仅清除本地代理 URL，不删除 Resin 租约' : clear ? '清除前核对当前代理与管理记录，外部配置也会一并清除，漂移和读取失败项目会报告' : '仅绑定代理为空的 Grok/xAI 账号，已有外部代理或未解决操作会跳过'), confirmLabel: clear ? '开始清除' : '开始绑定', icon: clear ? 'x' : 'link', tone: clear ? 'danger' : '', wide: !clear, optionsHTML: options });
       const sourceField = document.getElementById('proxyOperationSource');
       if (sourceField) {
         const scopeField = document.getElementById('proxyBindScope');
@@ -5957,7 +6902,7 @@
         }
         toast((excluded ? '已暂停：' : '已恢复：') + updated + ' 个账号的自动绑定', 'success');
         await reloadList('leases');
-      } catch (error) { toast('已处理：' + updated + ' 个账号；后续操作失败：' + error.message, 'error'); }
+      } catch (error) { toast('已处理：' + updated + ' 个账号，后续操作失败：' + error.message, 'error'); }
       finally { setBusy(button, false); }
     }
     async function retryProxySourceSync(sourceID, button) {
@@ -6107,7 +7052,7 @@
         const before = group.rows.length;
         const next = proxyRowsUnique((group.importMode === 'replace' ? [] : group.rows).concat(unique));
         const duplicate = parsed.length - (group.importMode === 'replace' ? next.length : next.length - before);
-        if (group.importMode === 'replace' && before && !await confirmAction({ title: '替换关联组合草稿', detail: '覆盖现有 ' + before + ' 行；导入 ' + unique.length + ' 行，去除 ' + (parsed.length - unique.length) + ' 个重复项', confirmLabel: '替换草稿', tone: 'danger' })) return;
+        if (group.importMode === 'replace' && before && !await confirmAction({ title: '替换关联组合草稿', detail: '覆盖现有 ' + before + ' 行，导入 ' + unique.length + ' 行，去除 ' + (parsed.length - unique.length) + ' 个重复项', confirmLabel: '替换草稿', tone: 'danger' })) return;
         group.rows = next;
         group.importAppliedRevision = group.importRevision;
         group.error = '';
@@ -6139,7 +7084,7 @@
       if (!next) { group.error = '子项值不能为空'; renderProxyGroup(group.index); return; }
       if (!group.rows.some((row) => proxyRowsMatchPrefix(row, oldPath))) { group.error = '此组合已不存在，请取消当前子项编辑'; renderProxyGroup(group.index); return; }
       const exists = next !== group.editValue && group.rows.some((row) => proxyRowsMatchPrefix(row, nextPath));
-      if (exists && !await confirmAction({ title: '合并同名子项', detail: '当前路径已有此子项；确认后合并重复组合', confirmLabel: '确认合并' })) return;
+      if (exists && !await confirmAction({ title: '合并同名子项', detail: '当前路径已有此子项，确认后合并重复组合', confirmLabel: '确认合并' })) return;
       group.rows = proxyRowsUnique(group.rows.map((row) => proxyRowsMatchPrefix(row, oldPath) ? nextPath : row));
       group.leafDrafts.delete(JSON.stringify(oldPath)); group.editValue = null; group.error = '';
       markProxyEditorDirty(); renderProxyGroup(group.index); syncProxyPlaceholderCards(); renderProxyTemplateConditions();
@@ -6152,7 +7097,7 @@
       if (JSON.stringify(prefix) === JSON.stringify(target)) return;
       const sourceRows = group.rows.filter((row) => proxyRowsMatchPrefix(row, prefix));
       const exists = group.rows.some((row) => proxyRowsMatchPrefix(row, target));
-      if (!await confirmAction({ title: exists ? '合并同名父级分支' : '重命名父级', detail: '将更新 ' + sourceRows.length + ' 行；' + (exists ? '目标父级已存在，将按你的确认合并并去重' : '其余父级路径保持独立'), confirmLabel: exists ? '确认合并' : '重命名' })) return;
+      if (!await confirmAction({ title: exists ? '合并同名父级分支' : '重命名父级', detail: '将更新 ' + sourceRows.length + ' 行，' + (exists ? '目标父级已存在，将按你的确认合并并去重' : '其余父级路径保持独立'), confirmLabel: exists ? '确认合并' : '重命名' })) return;
       group.rows = proxyRowsUnique(group.rows.map((row) => proxyRowsMatchPrefix(row, prefix) ? target.concat(row.slice(prefix.length)) : row));
       group.path = target.concat(group.path.slice(prefix.length));
       markProxyEditorDirty(); renderProxyGroup(group.index); syncProxyPlaceholderCards(); renderProxyTemplateConditions();
@@ -6197,6 +7142,7 @@
     function setChecked(id, value) { const el = document.getElementById(id); if (el) el.checked = Boolean(value); }
     function valueOf(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
     function numberValue(id, fallback) { const parsed = Number(valueOf(id)); return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback; }
+    function signedNumberValue(id, fallback) { const raw = valueOf(id); if (raw === '') return fallback; const parsed = Number(raw); return Number.isFinite(parsed) ? parsed : fallback; }
     function populatePolicyForm() {
       if (isFormDirty('policyForm')) return;
       const policy = state.policy || {};
@@ -6364,12 +7310,12 @@
       const proxyStatus = account.proxy_status || 'unbound';
       const proxyStatusBadge = proxyStatus === 'bound' ? badge('代理已绑定', 'info') : (proxyStatus === 'drifted' ? badge('与记录不一致', 'warn') : (proxyStatus === 'reconcile_required' ? badge('待核对', 'bad') : (proxyStatus === 'external' ? badge('外部配置', '') : (proxyStatus === 'unknown' ? badge('读取失败', 'bad') : badge('未绑定代理', '')))));
       const proxyIdentity = proxySourceIdentity(account);
-      const proxySourceCell = (proxyIdentity.kindLabel || proxyIdentity.name) ? '<div class="detail-cell detail-cell-wide"><div class="detail-label">代理来源</div><div class="detail-value proxy-source-value">' + (proxyIdentity.kindLabel ? '<span class="proxy-kind-chip">' + esc(proxyIdentity.kindLabel) + '</span>' : '') + (proxyIdentity.name ? '<span class="proxy-source-name" title="' + esc(proxyIdentity.name) + '">' + esc(proxyIdentity.name) + '</span>' : '') + '</div></div>' : '<div class="detail-cell detail-cell-wide"><div class="detail-label">代理来源</div><div class="detail-value">-</div></div>';
+      const proxySourceCell = (proxyIdentity.kindLabel || proxyIdentity.name) ? '<div class="detail-cell detail-cell-wide"><div class="detail-label">代理</div><div class="detail-value proxy-source-value">' + (proxyIdentity.kindLabel ? '<span class="proxy-kind-chip">' + esc(proxyIdentity.kindLabel) + '</span>' : '') + (proxyIdentity.name ? '<span class="proxy-source-name" title="' + esc(proxyIdentity.name) + '">' + esc(proxyIdentity.name) + '</span>' : '') + '</div></div>' : '<div class="detail-cell detail-cell-wide"><div class="detail-label">代理</div><div class="detail-value">-</div></div>';
       const actionButtons = [
         '<button class="btn" type="button" data-account-action="accounts.probe" data-auth="' + esc(account.auth_id) + '">' + icon('play') + '主动探测</button>',
         '<button class="btn" type="button" data-account-action="accounts.cooldown" data-auth="' + esc(account.auth_id) + '">' + icon('clock') + '冷却 12 小时</button>',
         '<button class="btn" type="button" data-account-action="accounts.restore" data-auth="' + esc(account.auth_id) + '">' + icon('check') + '恢复</button>',
-        '<span class="action-tooltip-wrap"><button class="btn btn-danger" type="button" data-account-action="accounts.disable" data-auth="' + esc(account.auth_id) + '" aria-describedby="permanentDisableTooltip">' + icon('power') + '永久禁用</button><span class="action-tooltip" role="tooltip" id="permanentDisableTooltip">修改 OAuth 文件 disabled 为 true；恢复仅解除插件禁用</span></span>'
+        '<span class="action-tooltip-wrap"><button class="btn btn-danger" type="button" data-account-action="accounts.disable" data-auth="' + esc(account.auth_id) + '" aria-describedby="permanentDisableTooltip">' + icon('power') + '永久禁用</button><span class="action-tooltip" role="tooltip" id="permanentDisableTooltip">修改 OAuth 文件 disabled 为 true，恢复仅解除插件禁用</span></span>'
       ];
       const evidence = account.evidence;
       const ignoredAttempt = account.last_attempt && account.last_attempt.class === 'ignored' ? badge('最近尝试未计入质量', 'warn') : '';
@@ -6489,7 +7435,7 @@
       }
       const probeConfirmed = await confirmAction({
         title: '检测所选账号',
-        detail: '将立即检测 ' + count + ' 个账号\n检测会发起真实模型请求并可能产生额度消耗；需要恢复的账号会在同一任务内先恢复再检测，外部禁用账号会跳过',
+        detail: '将立即检测 ' + count + ' 个账号\n检测会发起真实模型请求并可能产生额度消耗，需要恢复的账号会在同一任务内先恢复再检测，外部禁用账号会跳过',
         confirmLabel: '开始检测',
         icon: 'play'
       });
@@ -6532,7 +7478,7 @@
       }
       const restoreConfirmed = await confirmAction({
         title: '恢复所选账号',
-        detail: '将恢复当前已选 ' + count + ' 个账号\n已由插件冷却、额度耗尽、凭据失效或隔离的账号会重新启用；健康账号会跳过，外部禁用账号只会清理插件状态，不会修改 OAuth 的 disabled 标记',
+        detail: '将恢复当前已选 ' + count + ' 个账号\n已由插件冷却、额度耗尽、凭据失效或隔离的账号会重新启用，健康账号会跳过，外部禁用账号只会清理插件状态，不会修改 OAuth 的 disabled 标记',
         confirmLabel: '恢复账号',
         icon: 'check'
       });
@@ -6695,6 +7641,27 @@
           const retry = target.hasAttribute('data-cleanup-retry');
           const result = await waitForTask(await api(retry ? 'resin.cleanup.retry' : 'resin.cleanup.pause', retry ? { id: target.dataset.cleanupRetry } : { id: target.dataset.cleanupPause, paused: target.dataset.paused === 'true' }), retry ? '重试 Resin 清理' : '更新清理暂停状态');
           reportProxyResult(result, retry ? '重试清理' : '更新清理状态'); await refreshProxyTasks(); renderProxyTaskDrawer(); return;
+        }
+        if (target.hasAttribute('data-proxy-node-add')) {
+          const list = document.getElementById('proxyNodeRows');
+          const editor = state.proxyEditing;
+          if (!list || editor?.kind !== 'node') return;
+          const index = editor.nextNodeRow++;
+          list.insertAdjacentHTML('beforeend', proxyNodeRowHTML(index, {}, true));
+          syncProxyNodeRows();
+          markProxyEditorDirty();
+          list.querySelector('[data-proxy-node-row]:last-child [data-proxy-node-url]')?.focus();
+          return;
+        }
+        if (target.hasAttribute('data-proxy-node-remove')) {
+          const row = target.closest('[data-proxy-node-row]');
+          const list = document.getElementById('proxyNodeRows');
+          if (!row || !list || list.querySelectorAll('[data-proxy-node-row]').length <= 1) return;
+          row.remove();
+          syncProxyNodeRows();
+          markProxyEditorDirty();
+          list.querySelector('[data-proxy-node-row]:last-child [data-proxy-node-url]')?.focus();
+          return;
         }
         const card = target.closest('[data-group-card]');
         const group = card && state.proxyEditing?.groups.get(Number(card.dataset.groupCard));
@@ -6883,6 +7850,26 @@
       if (config.metadata) reloadList(kind);
       else config.render();
     });
+    document.addEventListener('pointerover', (event) => {
+      const tip = event.target.closest?.('.help-tip');
+      if (!tip || tip.contains(event.relatedTarget)) return;
+      showHelpTooltip(tip);
+    });
+    document.addEventListener('pointerout', (event) => {
+      const tip = event.target.closest?.('.help-tip');
+      if (!tip || tip.contains(event.relatedTarget)) return;
+      hideHelpTooltip(tip);
+    });
+    document.addEventListener('focusin', (event) => {
+      const tip = event.target.closest?.('.help-tip');
+      if (tip) showHelpTooltip(tip);
+    });
+    document.addEventListener('focusout', (event) => {
+      const tip = event.target.closest?.('.help-tip');
+      if (tip) hideHelpTooltip(tip);
+    });
+    document.addEventListener('scroll', () => hideHelpTooltip(), true);
+    window.addEventListener('resize', () => hideHelpTooltip());
     document.getElementById('drawerClose').addEventListener('click', closeDrawer);
     document.getElementById('accountDrawer').addEventListener('click', (event) => { if (event.target === event.currentTarget) closeDrawer(); });
     document.getElementById('proxySourceEditorClose').addEventListener('click', closeProxyDrawer);
