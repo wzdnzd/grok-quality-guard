@@ -29,6 +29,7 @@ const (
 var (
 	ErrTaskNotFound = errors.New("task not found")
 	ErrTaskFinished = errors.New("task already finished")
+	ErrTaskActive   = errors.New("task is still active")
 )
 
 // Task is the management-facing view of one long-running operation.
@@ -75,6 +76,7 @@ type record struct {
 	cancelRequested bool
 	history         *activeHistory
 	lastMetaWrite   time.Time
+	done            chan struct{}
 }
 
 type taskContextKey struct{}
@@ -151,7 +153,7 @@ func (m *Manager) Start(kind string, authIDs []string, progress string, fn func(
 	}
 	m.pruneRecentLocked(now)
 	m.pruneLocked(now)
-	entry := &record{task: task, cancel: cancel, lastMetaWrite: now}
+	entry := &record{task: task, cancel: cancel, lastMetaWrite: now, done: make(chan struct{})}
 	if active, errHistory := m.openActiveHistoryLocked(task); errHistory == nil {
 		entry.history = active
 	}
@@ -199,7 +201,11 @@ func (m *Manager) runTask(ctx context.Context, taskID string, fn func(context.Co
 	entry.task.UpdatedAt = entry.task.StartedAt
 	cancelledBeforeRun := entry.cancelRequested || ctx.Err() != nil
 	m.persistActiveMetadataLocked(entry, true)
+	done := entry.done
 	m.mu.Unlock()
+	if done != nil {
+		defer close(done)
+	}
 
 	ctx = context.WithValue(ctx, taskContextKey{}, &contextTask{manager: m, id: taskID})
 	var result any
@@ -542,6 +548,68 @@ func (m *Manager) CancelTask(taskID string) (Task, error) {
 		return task, ErrTaskFinished
 	}
 	return Task{}, ErrTaskNotFound
+}
+
+// DeleteTask permanently removes a finished task from memory and from the
+// task-center history archive. Queued and running tasks must be cancelled and
+// allowed to finish first so their worker cannot recreate the deleted record.
+func (m *Manager) DeleteTask(taskID string) error {
+	taskID = strings.TrimSpace(taskID)
+	if m == nil || taskID == "" {
+		return ErrTaskNotFound
+	}
+	for {
+		m.mu.Lock()
+		entry := m.tasks[taskID]
+		if entry != nil {
+			if entry.task.Status == taskStatusQueued || entry.task.Status == taskStatusRunning {
+				m.mu.Unlock()
+				return ErrTaskActive
+			}
+			if entry.done != nil {
+				select {
+				case <-entry.done:
+				default:
+					done := entry.done
+					m.mu.Unlock()
+					<-done
+					continue
+				}
+			}
+		}
+		m.mu.Unlock()
+		break
+	}
+
+	m.mu.Lock()
+	found := m.tasks[taskID] != nil
+	m.pruneRecentLocked(time.Now().UTC())
+	if _, ok := m.recent[taskID]; ok {
+		found = true
+	}
+	m.mu.Unlock()
+
+	historyDir := m.historyBaseDir()
+	if err := removeActiveTaskFiles(historyDir, taskID); err != nil {
+		return err
+	}
+	archived, errArchive := m.deleteArchivedTask(taskID)
+	if errArchive != nil {
+		return errArchive
+	}
+	if !found && !archived {
+		return ErrTaskNotFound
+	}
+
+	m.mu.Lock()
+	if entry := m.tasks[taskID]; entry != nil {
+		if entry.task.Status != taskStatusQueued && entry.task.Status != taskStatusRunning {
+			delete(m.tasks, taskID)
+		}
+	}
+	delete(m.recent, taskID)
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *Manager) Cancel() {

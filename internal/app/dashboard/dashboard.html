@@ -1814,6 +1814,7 @@
     }
 
     .task-row {
+      position: relative;
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
       align-items: start;
@@ -1824,8 +1825,25 @@
       border-radius: 7px;
       background: transparent;
       color: var(--text);
+      cursor: pointer;
       text-align: left;
       transition: border-color .16s, background .16s;
+    }
+
+    .task-row-hit {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      padding: 0;
+      border: 0;
+      border-radius: inherit;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .task-row-hit:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: -2px;
     }
 
     .task-row:hover {
@@ -1840,7 +1858,10 @@
     }
 
     .task-row-main {
+      position: relative;
+      z-index: 1;
       min-width: 0;
+      pointer-events: none;
     }
 
     .task-row-title {
@@ -1852,11 +1873,38 @@
       font-weight: 650;
     }
 
-    .task-row-title span:first-child {
+    .task-row-label {
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .task-row-status-group {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .task-row-action {
+      position: relative;
+      z-index: 2;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--bad);
+      cursor: pointer;
+      font: inherit;
+      font-size: 10px;
+      font-weight: 650;
+      line-height: 1.4;
+      white-space: nowrap;
+      pointer-events: auto;
+    }
+
+    .task-row-action:hover {
+      text-decoration: underline;
     }
 
     .task-row-meta {
@@ -1869,10 +1917,13 @@
     }
 
     .task-row-progress {
+      position: relative;
+      z-index: 1;
       grid-column: 1 / -1;
       display: flex;
       align-items: center;
       gap: 9px;
+      pointer-events: none;
     }
 
     .task-row-progress .progress-track {
@@ -1880,11 +1931,14 @@
     }
 
     .task-row-count {
+      position: relative;
+      z-index: 1;
       min-width: 54px;
       color: var(--muted);
       font-size: 10px;
       text-align: right;
       font-variant-numeric: tabular-nums;
+      pointer-events: none;
     }
 
     .task-status {
@@ -7954,15 +8008,21 @@
     }
     function taskRow(task) {
       const id = esc(task.task_id);
+      const label = task.label || task.kind || '任务';
       const status = String(task.status || '');
+      const active = status === 'queued' || status === 'running';
       const percent = taskPercent(task);
       const tone = status === 'failed' || status === 'interrupted' ? 'bad' : (status === 'succeeded' ? 'good' : '');
       const meta = [taskCategoryLabel(task.category), task.auth_count ? '账号：' + task.auth_count : '', formatFullTime(task.created_at)].filter(Boolean).join(' · ');
-      return '<button class="task-row ' + (state.taskCenterSelectedID === task.task_id ? 'selected' : '') + '" type="button" data-task-select="' + id + '">' +
-        '<span class="task-row-main"><span class="task-row-title"><span>' + esc(task.label || task.kind || '任务') + '</span><span class="task-status ' + taskStatusClass(status) + '">' + esc(taskStatusLabel(status)) + '</span></span>' +
+      const action = active
+        ? '<button class="task-row-action" type="button" data-task-center-cancel="' + id + '">取消任务</button>'
+        : '<button class="task-row-action" type="button" data-task-center-delete="' + id + '">删除任务</button>';
+      return '<div class="task-row ' + (state.taskCenterSelectedID === task.task_id ? 'selected' : '') + '">' +
+        '<button class="task-row-hit" type="button" data-task-select="' + id + '" aria-label="查看任务：' + esc(label) + '"></button>' +
+        '<span class="task-row-main"><span class="task-row-title"><span class="task-row-label">' + esc(label) + '</span><span class="task-row-status-group"><span class="task-status ' + taskStatusClass(status) + '">' + esc(taskStatusLabel(status)) + '</span>' + action + '</span></span>' +
         '<span class="task-row-meta">' + esc(meta) + ' · ' + esc(taskProgressText(task)) + '</span></span>' +
         '<span class="task-row-count">' + Number(task.completed || 0) + ' / ' + Number(task.total || 0) + '</span>' +
-        '<span class="task-row-progress"><span class="progress-track"><span class="progress-fill ' + tone + '" style="width:' + percent + '%"></span></span><span class="task-row-count">' + percent + '%</span></span></button>';
+        '<span class="task-row-progress"><span class="progress-track"><span class="progress-fill ' + tone + '" style="width:' + percent + '%"></span></span><span class="task-row-count">' + percent + '%</span></span></div>';
     }
     function queueMetric(label, value) {
       return '<span class="task-toolbar-metric"><span>' + esc(label) + '：</span><strong>' + esc(value) + '</strong></span>';
@@ -8059,7 +8119,7 @@
       }).join('');
       const itemPagination = '<div class="task-item-toolbar"><span class="muted">匹配 ' + num(detail.total || 0) + ' 条 · 共保留 ' + num(itemTotal) + ' 条' + (detail.items_truncated ? '（超出上限，已截断）' : '') + '</span><span class="muted">第 ' + Number(detail.page || 1) + ' / ' + Math.max(1, Math.ceil(Number(detail.total || 0) / Number(detail.page_size || 20))) + ' 页</span></div>';
       const itemTable = '<div class="table-wrap task-item-table"><table><thead><tr><th>账号 / 对象</th><th>结果</th><th>原因 / 明细</th></tr></thead><tbody>' + (itemRows || '<tr><td colspan="3" class="muted">暂无逐项明细</td></tr>') + '</tbody></table></div>';
-      const itemActions = '<div class="form-actions task-detail-actions"><button class="btn btn-xs" type="button" data-task-item-page="-1" ' + (Number(detail.page || 1) <= 1 ? 'disabled' : '') + '>上一页</button><button class="btn btn-xs" type="button" data-task-item-page="1" ' + ((Number(detail.page || 1) * Number(detail.page_size || 20)) >= Number(detail.total || 0) ? 'disabled' : '') + '>下一页</button>' + (['queued', 'running'].includes(status) ? '<button class="btn btn-xs btn-danger" type="button" data-task-center-cancel="' + esc(task.task_id) + '">取消任务</button>' : '') + '</div>';
+      const itemActions = '<div class="form-actions task-detail-actions"><button class="btn btn-xs" type="button" data-task-item-page="-1" ' + (Number(detail.page || 1) <= 1 ? 'disabled' : '') + '>上一页</button><button class="btn btn-xs" type="button" data-task-item-page="1" ' + ((Number(detail.page || 1) * Number(detail.page_size || 20)) >= Number(detail.total || 0) ? 'disabled' : '') + '>下一页</button></div>';
       document.getElementById('taskDetailBody').innerHTML =
         '<div class="task-detail-hero"><div class="task-detail-hero-top"><div class="task-detail-hero-title"><strong>' + esc(taskProgressText(task)) + '</strong><p>' + esc((task.current_stage || '') + (task.auth_count ? ' · 涉及 ' + task.auth_count + ' 个账号' : '')) + '</p></div><span class="muted">' + percent + '%</span></div><div class="progress-track"><div class="progress-fill ' + (status === 'failed' || status === 'interrupted' ? 'bad' : (status === 'succeeded' ? 'good' : '')) + '" style="width:' + percent + '%"></div></div><div class="task-detail-percent">' + num(completed) + ' / ' + num(total) + ' 项已完成' + (running || waiting ? ' · 正在处理 ' + num(running) + ' · 等待 ' + num(waiting) : '') + '</div></div>' +
         '<div class="task-detail-section">' + counts + '</div>' +
@@ -8703,7 +8763,58 @@
     document.getElementById('taskRefreshBtn').addEventListener('click', (event) => {
       refreshTaskCenter(false).then(() => toast('任务列表已刷新', 'success'));
     });
-    document.getElementById('taskRows').addEventListener('click', (event) => {
+    document.getElementById('taskRows').addEventListener('click', async (event) => {
+      const cancel = event.target.closest('[data-task-center-cancel]');
+      if (cancel) {
+        const taskID = cancel.dataset.taskCenterCancel;
+        const confirmed = await confirmAction({
+          title: '取消任务',
+          detail: '将停止接受新的工作项，并等待正在执行的操作退出',
+          confirmLabel: '请求取消',
+          icon: 'power',
+          tone: 'danger'
+        });
+        if (!confirmed) return;
+        try {
+          await api('tasks.center.cancel', { task_id: taskID });
+          toast('已请求取消任务', 'success');
+          await refreshTaskCenter(true);
+        } catch (error) {
+          toast(error.message, 'error');
+          await refreshTaskCenter(true);
+        }
+        return;
+      }
+      const remove = event.target.closest('[data-task-center-delete]');
+      if (remove) {
+        const taskID = remove.dataset.taskCenterDelete;
+        const task = (state.taskCenter?.items || []).find((item) => item.task_id === taskID);
+        const label = task?.label || task?.kind || '该任务';
+        const confirmed = await confirmAction({
+          title: '删除任务',
+          detail: '将永久删除“' + label + '”的历史记录和全部逐项明细，删除后无法恢复',
+          confirmLabel: '永久删除',
+          icon: 'x',
+          tone: 'danger'
+        });
+        if (!confirmed) return;
+        try {
+          await api('tasks.center.delete', { task_id: taskID });
+          if (state.taskCenterSelectedID === taskID) {
+            state.taskCenterDetailRequest++;
+            state.taskCenterSelectedID = '';
+            state.taskCenterDetail = null;
+            document.getElementById('taskDetailCard').classList.remove('mobile-open');
+            if (window.history && window.history.replaceState) window.history.replaceState(null, '', '#tasks');
+          }
+          toast('任务已永久删除', 'success');
+          await refreshTaskCenter(true);
+        } catch (error) {
+          toast(error.message, 'error');
+          await refreshTaskCenter(true);
+        }
+        return;
+      }
       const row = event.target.closest('[data-task-select]');
       if (row) selectTaskCenterTask(row.dataset.taskSelect, true);
     });
@@ -8745,24 +8856,7 @@
         loadTaskCenterDetail(state.taskCenterSelectedID, page, state.taskCenterDetailStatus, false);
         return;
       }
-      const cancel = event.target.closest('[data-task-center-cancel]');
-      if (cancel) {
-        const confirmed = await confirmAction({
-          title: '取消任务',
-          detail: '将停止接受新的工作项，并等待正在执行的操作退出',
-          confirmLabel: '请求取消',
-          icon: 'power',
-          tone: 'danger'
-        });
-        if (!confirmed) return;
-        try {
-          await api('tasks.center.cancel', { task_id: cancel.dataset.taskCenterCancel });
-          toast('已请求取消任务', 'success');
-          await loadTaskCenterDetail(state.taskCenterSelectedID, state.taskCenterDetailPage, state.taskCenterDetailStatus, true);
-          refreshTaskCenter(true);
-        } catch (error) { toast(error.message, 'error'); }
-        return;
-      }
+
       const queuePage = event.target.closest('[data-task-queue-page]');
       if (queuePage) {
         const page = Math.max(1, Number(state.taskQueuePage || 1) + Number(queuePage.dataset.taskQueuePage || 0));

@@ -48,6 +48,7 @@ type Environment interface {
 	HasActiveTask(string, string) bool
 	TaskByID(string) (tasks.Task, bool)
 	CancelTask(string) (tasks.Task, error)
+	DeleteTask(string) error
 	ListTasks(int) []tasks.Task
 	TaskCenter(tasks.TaskCenterFilter) (tasks.TaskCenterResult, error)
 	TaskDetail(string, int, int, string) (tasks.TaskDetail, error)

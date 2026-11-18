@@ -152,6 +152,40 @@ func TestHistoryArchivePaginationFilteringAndSummaryHeader(t *testing.T) {
 	}
 }
 
+func TestDeleteTaskRemovesHistoryArchiveAndDetails(t *testing.T) {
+	manager := NewManager()
+	if err := manager.ConfigureHistory(t.TempDir(), DefaultHistoryConfig()); err != nil {
+		t.Fatal(err)
+	}
+	task := manager.Start("accounts.probe_selected", []string{"auth-1", "auth-2"}, "running", func(context.Context) (any, error) {
+		return map[string]any{"items": []map[string]any{
+			{"auth_id": "auth-1", "status": "succeeded"},
+			{"auth_id": "auth-2", "status": "failed", "error": "boom"},
+		}}, nil
+	})
+	manager.Wait()
+	archives, errGlob := filepath.Glob(filepath.Join(manager.historyDir, "archive", "*", "*.json.gz"))
+	if errGlob != nil || len(archives) != 1 {
+		t.Fatalf("archive files = %#v err=%v", archives, errGlob)
+	}
+	if errDelete := manager.DeleteTask(task.ID); errDelete != nil {
+		t.Fatal(errDelete)
+	}
+	center, errCenter := manager.ListCenter(TaskCenterFilter{})
+	if errCenter != nil {
+		t.Fatal(errCenter)
+	}
+	if center.Total != 0 || center.History.RecordCount != 0 || center.History.ArchiveBytes != 0 {
+		t.Fatalf("deleted task remained in the center: %#v", center)
+	}
+	if _, errDetail := manager.TaskDetail(task.ID, 1, 20, "all"); !errors.Is(errDetail, ErrTaskNotFound) {
+		t.Fatalf("deleted task detail error = %v, want ErrTaskNotFound", errDetail)
+	}
+	if _, errStat := os.Stat(archives[0]); !errors.Is(errStat, os.ErrNotExist) {
+		t.Fatalf("deleted archive still exists: %v", errStat)
+	}
+}
+
 func TestHistoryTruncatesPerTaskItems(t *testing.T) {
 	config := DefaultHistoryConfig()
 	config.MaxItemsPerTask = 2

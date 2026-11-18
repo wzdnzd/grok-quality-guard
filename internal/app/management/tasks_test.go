@@ -1,14 +1,77 @@
 package management
 
 import (
+	"errors"
+	"net/http"
 	"testing"
 	"time"
 
 	proxyapp "grok-quality-guard/internal/app/proxy"
 	appstate "grok-quality-guard/internal/app/state"
+	taskapp "grok-quality-guard/internal/app/tasks"
 	appconfig "grok-quality-guard/internal/config"
 	proxy "grok-quality-guard/internal/proxy"
 )
+
+type taskDeleteTestEnvironment struct {
+	Environment
+	deleted string
+	err     error
+}
+
+func (e *taskDeleteTestEnvironment) DeleteTask(taskID string) error {
+	e.deleted = taskID
+	return e.err
+}
+
+func TestTaskCenterDeleteActionMapsTaskState(t *testing.T) {
+	tests := []struct {
+		name       string
+		taskID     string
+		err        error
+		wantStatus int
+		wantError  string
+	}{
+		{name: "success", taskID: "task-1", wantStatus: http.StatusOK},
+		{name: "missing task id", wantStatus: http.StatusBadRequest, wantError: "task_id is required"},
+		{name: "not found", taskID: "missing", err: taskapp.ErrTaskNotFound, wantStatus: http.StatusNotFound, wantError: "任务不存在"},
+		{name: "active", taskID: "running", err: taskapp.ErrTaskActive, wantStatus: http.StatusConflict, wantError: "任务仍在执行中，请先取消任务并等待结束"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			env := &taskDeleteTestEnvironment{err: test.err}
+			service := NewService(env)
+			result, status, errAction := service.actionTaskCenterDelete(map[string]any{"task_id": test.taskID})
+			if status != test.wantStatus {
+				t.Fatalf("status = %d, want %d", status, test.wantStatus)
+			}
+			if test.wantError != "" {
+				if errAction == nil || errAction.Error() != test.wantError {
+					t.Fatalf("error = %v, want %q", errAction, test.wantError)
+				}
+				return
+			}
+			if errAction != nil {
+				t.Fatal(errAction)
+			}
+			deleted, _ := result.(map[string]any)
+			if deleted["deleted"] != true || deleted["task_id"] != test.taskID {
+				t.Fatalf("delete response = %#v", result)
+			}
+			if env.deleted != test.taskID {
+				t.Fatalf("deleted id = %q, want %q", env.deleted, test.taskID)
+			}
+		})
+	}
+}
+
+func TestTaskCenterDeleteActionReturnsInternalError(t *testing.T) {
+	service := NewService(&taskDeleteTestEnvironment{err: errors.New("disk unavailable")})
+	_, status, errAction := service.actionTaskCenterDelete(map[string]any{"task_id": "task-1"})
+	if status != http.StatusInternalServerError || errAction == nil {
+		t.Fatalf("unexpected delete error mapping: status=%d err=%v", status, errAction)
+	}
+}
 
 func TestResidentQueueVisibility(t *testing.T) {
 	if shouldShowAutoBindQueue(false, 0, 0, false) {

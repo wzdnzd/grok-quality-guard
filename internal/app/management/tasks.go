@@ -57,6 +57,24 @@ func (s *Service) actionTaskCenterDetail(params map[string]any) (any, int, error
 	return detail, http.StatusOK, nil
 }
 
+func (s *Service) actionTaskCenterDelete(params map[string]any) (any, int, error) {
+	taskID := strings.TrimSpace(asString(params["task_id"]))
+	if taskID == "" {
+		return nil, http.StatusBadRequest, errors.New("task_id is required")
+	}
+	if errDelete := s.deleteTask(taskID); errDelete != nil {
+		switch {
+		case errors.Is(errDelete, tasks.ErrTaskNotFound):
+			return nil, http.StatusNotFound, errors.New("任务不存在")
+		case errors.Is(errDelete, tasks.ErrTaskActive):
+			return nil, http.StatusConflict, errors.New("任务仍在执行中，请先取消任务并等待结束")
+		default:
+			return nil, http.StatusInternalServerError, errDelete
+		}
+	}
+	return map[string]any{"deleted": true, "task_id": taskID}, http.StatusOK, nil
+}
+
 func (s *Service) taskCenterResidentQueues() []map[string]any {
 	queues := make([]map[string]any, 0, 5)
 	policy := s.env.Policy()

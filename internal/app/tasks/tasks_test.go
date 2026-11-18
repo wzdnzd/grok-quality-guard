@@ -75,6 +75,50 @@ func TestManagerCancelArchivedTaskReturnsFinished(t *testing.T) {
 	}
 }
 
+func TestDeleteTaskRejectsActiveTask(t *testing.T) {
+	manager := NewManager()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	task := manager.Start("test.delete_active", nil, "running", func(context.Context) (any, error) {
+		close(started)
+		<-release
+		return map[string]any{"ok": true}, nil
+	})
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("task did not start")
+	}
+	if errDelete := manager.DeleteTask(task.ID); !errors.Is(errDelete, ErrTaskActive) {
+		t.Fatalf("delete active task error = %v, want ErrTaskActive", errDelete)
+	}
+	close(release)
+	manager.Wait()
+}
+
+func TestDeleteTaskRemovesShortLivedRecentResult(t *testing.T) {
+	manager := NewManager()
+	if err := manager.ConfigureHistory(t.TempDir(), HistoryConfig{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	task := manager.Start("test.delete_recent", nil, "running", func(context.Context) (any, error) {
+		return map[string]any{"ok": true}, nil
+	})
+	manager.Wait()
+	if _, ok := manager.ByID(task.ID); !ok {
+		t.Fatal("completed task was not retained for its waiter")
+	}
+	if errDelete := manager.DeleteTask(task.ID); errDelete != nil {
+		t.Fatal(errDelete)
+	}
+	if _, ok := manager.ByID(task.ID); ok {
+		t.Fatal("deleted task remained in the recent result cache")
+	}
+	if errDelete := manager.DeleteTask(task.ID); !errors.Is(errDelete, ErrTaskNotFound) {
+		t.Fatalf("repeat delete error = %v, want ErrTaskNotFound", errDelete)
+	}
+}
+
 func TestTaskKindsAreGroupedAndLabeledForTheTaskCenter(t *testing.T) {
 	tests := []struct {
 		kind     string

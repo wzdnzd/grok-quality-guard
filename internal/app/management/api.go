@@ -297,6 +297,8 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 		return s.actionTaskCenterDetail(request.Params)
 	case "tasks.center.cancel":
 		return s.actionTaskCancel(request.Params)
+	case "tasks.center.delete":
+		return s.actionTaskCenterDelete(request.Params)
 	default:
 		return nil, http.StatusBadRequest, fmt.Errorf("unknown action")
 	}

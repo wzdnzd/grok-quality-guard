@@ -1275,6 +1275,75 @@ test('Task detail exposes progress, queue counts, metadata and lazy item paging'
   assert.match(html, /probed: '已检测'/);
 });
 
+test('Task center places cancel beside active status and delete beside finished status', () => {
+  const { dashboard: ui, get } = harness();
+  ui.state.taskCenter = {
+    items: [
+      { task_id: 'running-1', kind: 'accounts.probe_selected', category: 'account', label: '批量检测账号', status: 'running', total: 3, completed: 1, running: 1, waiting: 1 },
+      { task_id: 'finished-1', kind: 'proxy.bind', category: 'proxy', label: '批量绑定代理', status: 'interrupted', total: 3, completed: 2 }
+    ],
+    total: 2, page: 1, page_size: 20, counts: {}, resident_queues: [],
+    history: { enabled: true, retention_days: 3, record_count: 2, archive_bytes: 10, max_bytes: 100 }
+  };
+  ui.renderTaskCenter();
+  const rows = get('taskRows').innerHTML;
+  assert.match(rows, /<span class="task-status running">执行中<\/span><button class="task-row-action" type="button" data-task-center-cancel="running-1">取消任务<\/button>/);
+  assert.match(rows, /<span class="task-status failed">已中断<\/span><button class="task-row-action" type="button" data-task-center-delete="finished-1">删除任务<\/button>/);
+  ui.state.taskCenterDetail = {
+    task: { task_id: 'running-1', label: '批量检测账号', status: 'running', total: 1, completed: 0, running: 1 },
+    items: [], total: 0, item_total: 0, page: 1, page_size: 20, source: 'active'
+  };
+  ui.state.taskCenterSelectedID = 'running-1';
+  ui.renderTaskDetail();
+  assert.doesNotMatch(get('taskDetailBody').innerHTML, /data-task-center-cancel/);
+  assert.match(html, /data-task-center-delete/);
+  assert.match(html, /tasks\.center\.delete/);
+});
+
+test('Task center row actions confirm cancel and permanent deletion without selecting the row', async () => {
+  const { dashboard: ui, get, mock, historyCalls } = harness();
+  const calls = [];
+  mock('api', async (action, params) => {
+    calls.push({ action, params });
+    if (action === 'tasks.center.list') {
+      return {
+        items: [], total: 0, page: 1, page_size: 20, counts: {}, resident_queues: [],
+        history: { enabled: true, retention_days: 3, record_count: 0, archive_bytes: 0, max_bytes: 100 }
+      };
+    }
+    return { ok: true };
+  });
+  const actionTarget = (selector, dataset) => {
+    const control = new Element();
+    Object.assign(control.dataset, dataset);
+    const target = new Element();
+    target.ancestors = new Map([[selector, control]]);
+    return target;
+  };
+
+  const cancel = get('taskRows').emit('click', {
+    target: actionTarget('[data-task-center-cancel]', { taskCenterCancel: 'running-1' })
+  });
+  await Promise.resolve();
+  assert.equal(get('confirmDialog').hidden, false);
+  await get('confirmAccept').emit('click');
+  await cancel;
+  assert.ok(calls.some((call) => call.action === 'tasks.center.cancel' && call.params.task_id === 'running-1'));
+  assert.equal(ui.state.taskCenterSelectedID, '');
+
+  ui.state.taskCenterSelectedID = 'finished-1';
+  const remove = get('taskRows').emit('click', {
+    target: actionTarget('[data-task-center-delete]', { taskCenterDelete: 'finished-1' })
+  });
+  await Promise.resolve();
+  assert.match(get('confirmDetail').textContent, /永久删除/);
+  await get('confirmAccept').emit('click');
+  await remove;
+  assert.ok(calls.some((call) => call.action === 'tasks.center.delete' && call.params.task_id === 'finished-1'));
+  assert.equal(ui.state.taskCenterSelectedID, '');
+  assert.equal(historyCalls.at(-1), '#tasks');
+});
+
 test('Task history settings explain defaults and convert MiB to bytes', () => {
   const { dashboard: ui, get } = harness();
   assert.match(html, /id="p_task_history_enabled"/);

@@ -77,6 +77,7 @@ func (s *Service) startTask(kind string, authIDs []string, progress string, fn f
 func (s *Service) hasActiveTask(kind, authID string) bool { return s.env.HasActiveTask(kind, authID) }
 func (s *Service) taskByID(taskID string) (Task, bool)    { return s.env.TaskByID(taskID) }
 func (s *Service) cancelTask(taskID string) (Task, error) { return s.env.CancelTask(taskID) }
+func (s *Service) deleteTask(taskID string) error         { return s.env.DeleteTask(taskID) }
 func (s *Service) listTasks(limit int) []Task             { return s.env.ListTasks(limit) }
 func (s *Service) taskCenter(filter tasks.TaskCenterFilter) (tasks.TaskCenterResult, error) {
 	return s.env.TaskCenter(filter)

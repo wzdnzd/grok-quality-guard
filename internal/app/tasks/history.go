@@ -614,8 +614,77 @@ func (m *Manager) cleanupHistoryLocked(now time.Time) {
 	kept = withinBytes
 	m.historyIndex = kept
 	if changed {
-		rewriteHistoryIndex(m.historyDir, kept)
+		_ = rewriteHistoryIndex(m.historyDir, kept)
 	}
+}
+
+func (m *Manager) historyBaseDir() string {
+	if m == nil {
+		return ""
+	}
+	m.historyMu.Lock()
+	defer m.historyMu.Unlock()
+	return m.historyDir
+}
+
+func removeActiveTaskFiles(dir, taskID string) error {
+	dir = strings.TrimSpace(dir)
+	base := filepath.Base(strings.TrimSpace(taskID))
+	if dir == "" || base == "" || base == "." || base == string(filepath.Separator) {
+		return nil
+	}
+	for _, suffix := range []string{".json", ".items.jsonl"} {
+		path := filepath.Join(dir, "active", base+suffix)
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager) deleteArchivedTask(taskID string) (bool, error) {
+	if m == nil {
+		return false, nil
+	}
+	m.historyWriteMu.Lock()
+	defer m.historyWriteMu.Unlock()
+	m.historyMu.Lock()
+	dir := m.historyDir
+	enabled := m.historyConfig.Enabled
+	m.historyMu.Unlock()
+	if dir == "" || !enabled {
+		return false, nil
+	}
+	entries, errLoad := m.loadHistory()
+	if errLoad != nil {
+		return false, errLoad
+	}
+	found := false
+	kept := make([]historyEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Task.ID != taskID {
+			kept = append(kept, entry)
+			continue
+		}
+		found = true
+		if errRemove := os.Remove(entry.Archive); errRemove != nil && !errors.Is(errRemove, os.ErrNotExist) {
+			return false, errRemove
+		}
+	}
+	if !found {
+		return false, nil
+	}
+	if errRewrite := rewriteHistoryIndex(dir, kept); errRewrite != nil {
+		return false, errRewrite
+	}
+	m.historyMu.Lock()
+	if m.historyDir == dir {
+		m.historyLoaded = false
+		m.historyIndex = nil
+	}
+	m.historyMu.Unlock()
+	_, _ = m.loadHistory()
+	return true, nil
 }
 
 func removeHistoryArchive(path string) bool {
@@ -626,7 +695,7 @@ func removeHistoryArchive(path string) bool {
 	return err == nil || errors.Is(err, os.ErrNotExist)
 }
 
-func rewriteHistoryIndex(dir string, entries []historyEntry) {
+func rewriteHistoryIndex(dir string, entries []historyEntry) error {
 	var builder strings.Builder
 	for _, entry := range entries {
 		raw, errMarshal := json.Marshal(entry)
@@ -637,22 +706,22 @@ func rewriteHistoryIndex(dir string, entries []historyEntry) {
 	}
 	temp, errTemp := os.CreateTemp(dir, ".index-*.tmp")
 	if errTemp != nil {
-		return
+		return errTemp
 	}
 	tempName := temp.Name()
 	if _, errWrite := temp.WriteString(builder.String()); errWrite != nil {
 		_ = temp.Close()
 		_ = os.Remove(tempName)
-		return
+		return errWrite
 	}
 	if errSync := temp.Sync(); errSync != nil {
 		_ = temp.Close()
 		_ = os.Remove(tempName)
-		return
+		return errSync
 	}
 	if errClose := temp.Close(); errClose != nil {
 		_ = os.Remove(tempName)
-		return
+		return errClose
 	}
 	indexPath := filepath.Join(dir, "index.jsonl")
 	if errRename := os.Rename(tempName, indexPath); errRename != nil {
@@ -661,12 +730,14 @@ func rewriteHistoryIndex(dir string, entries []historyEntry) {
 		// short remove-and-rename window is preferable to leaving stale limits.
 		if errRemove := os.Remove(indexPath); errRemove != nil && !errors.Is(errRemove, os.ErrNotExist) {
 			_ = os.Remove(tempName)
-			return
+			return errRemove
 		}
 		if errRetry := os.Rename(tempName, indexPath); errRetry != nil {
 			_ = os.Remove(tempName)
+			return errRetry
 		}
 	}
+	return nil
 }
 
 func historyTime(task Task) time.Time {

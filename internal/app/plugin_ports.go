@@ -151,6 +151,8 @@ func (p *Plugin) TaskByID(taskID string) (tasks.Task, bool) { return p.taskByID(
 
 func (p *Plugin) CancelTask(taskID string) (tasks.Task, error) { return p.cancelTask(taskID) }
 
+func (p *Plugin) DeleteTask(taskID string) error { return p.deleteTask(taskID) }
+
 func (p *Plugin) ListTasks(limit int) []tasks.Task { return p.listTasks(limit) }
 
 func (p *Plugin) TaskCenter(filter tasks.TaskCenterFilter) (tasks.TaskCenterResult, error) {
@@ -426,6 +428,13 @@ func (p *Plugin) cancelTask(taskID string) (tasks.Task, error) {
 		return tasks.Task{}, tasks.ErrTaskNotFound
 	}
 	return p.taskMgr.CancelTask(taskID)
+}
+
+func (p *Plugin) deleteTask(taskID string) error {
+	if p == nil || p.taskMgr == nil {
+		return tasks.ErrTaskNotFound
+	}
+	return p.taskMgr.DeleteTask(taskID)
 }
 
 func (p *Plugin) taskCenter(filter tasks.TaskCenterFilter) (tasks.TaskCenterResult, error) {
