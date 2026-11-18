@@ -4884,6 +4884,7 @@
   <script type="application/json" id="i18n-resources">{}</script>
   <script>
     const API = '/v0/management/plugins/grok-quality-guard/api';
+    const I18N_RESOURCES = '/v0/management/plugins/grok-quality-guard/locales';
 
     const I18N_STORAGE_KEY = 'grok-quality-guard.ui.locale';
     const I18N_SUPPORTED = Object.freeze(['zh-CN', 'zh-TW', 'en']);
@@ -4929,6 +4930,7 @@
       let patternRules = [];
       const sourceExact = new Map();
       let suppressMutations = false;
+      let resourceRequest = null;
       const textSources = new WeakMap();
       const attributeSources = new WeakMap();
       const translatedAttributes = ['placeholder', 'title', 'aria-label'];
@@ -5011,6 +5013,29 @@
       function t(key, values) {
         const message = catalog()[key];
         return format(message == null ? key : message, values || {});
+      }
+
+      function hasResources() {
+        return I18N_SUPPORTED.every((code) => resources[code] && typeof resources[code] === 'object' && !Array.isArray(resources[code]));
+      }
+
+      async function ensureResources() {
+        if (hasResources()) return resources;
+        if (resourceRequest) return resourceRequest;
+        resourceRequest = (async () => {
+          const response = await fetch(I18N_RESOURCES, { headers: { 'Accept-Language': locale } });
+          if (!response || !response.ok) throw new Error('i18n_resources_unavailable');
+          const payload = await response.json();
+          if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('invalid_i18n_resources');
+          resources = payload;
+          compileSourceIndex();
+          return resources;
+        })();
+        try {
+          return await resourceRequest;
+        } finally {
+          resourceRequest = null;
+        }
       }
 
       function skipNode(node) {
@@ -5119,6 +5144,8 @@
         applyLocale,
         translateTree,
         observe,
+        hasResources,
+        ensureResources,
         storageKey: I18N_STORAGE_KEY
       };
     })();
@@ -9799,6 +9826,14 @@
         }
       });
     });
+    if (!i18n.hasResources()) {
+      i18n.ensureResources().then(() => {
+        i18n.applyLocale(i18n.locale);
+        relocalizeDashboard();
+      }).catch((error) => {
+        console.error('i18n resources failed to load', error);
+      });
+    }
     i18n.observe();
     i18n.applyLocale(i18n.locale);
     applyLocationHash();

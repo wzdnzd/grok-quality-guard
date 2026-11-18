@@ -205,6 +205,9 @@ func (s *Service) HandleManagement(request []byte) ([]byte, error) {
 		}
 		locale = requestLocale(req.Headers)
 	}
+	if strings.EqualFold(req.Method, http.MethodGet) && strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/locales") {
+		return okEnvelope(managementResponse{StatusCode: http.StatusOK, Headers: jsonHeadersFor(locale), Body: i18n.ResourcesJSON()})
+	}
 	if strings.EqualFold(req.Method, http.MethodGet) && strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/dashboard") {
 		return okEnvelope(managementResponse{StatusCode: http.StatusOK, Headers: htmlHeadersFor(locale), Body: []byte(dashboard.HTML())})
 	}

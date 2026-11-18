@@ -138,7 +138,7 @@ func TestManagementResourceAndActionAccess(t *testing.T) {
 	if strings.Contains(string(response.Body), "对齐旧插件") {
 		t.Fatal("dashboard should describe the setting semantically instead of referencing the old plugin")
 	}
-	for _, expected := range []string{"ui.overview", "ui.proxy_management", "ui.settings", "i18n-resources", "proxy.sources.create", "proxy.sources.update", "proxy.auto_bind.update", "policy.routing.selection_strategy", "accounts.probe_selected", "accounts.restore_selected", "accounts.disable_selected", "tasks.center.cancel", "confirmAction", "proxySourceEnabledFilter", "proxySourceHealthFilter"} {
+	for _, expected := range []string{"ui.overview", "ui.proxy_management", "ui.settings", "i18n-resources", "I18N_RESOURCES", "ensureResources", "proxy.sources.create", "proxy.sources.update", "proxy.auto_bind.update", "policy.routing.selection_strategy", "accounts.probe_selected", "accounts.restore_selected", "accounts.disable_selected", "tasks.center.cancel", "confirmAction", "proxySourceEnabledFilter", "proxySourceHealthFilter"} {
 		if !strings.Contains(string(response.Body), expected) {
 			t.Fatalf("dashboard is missing %q", expected)
 		}

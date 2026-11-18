@@ -154,10 +154,16 @@ func (p *Plugin) ManagementRegistration() managementRegistrationResponse {
 func (p *Plugin) ManagementRegistrationForLocale(locale string) managementRegistrationResponse {
 	locale = registrationLocale(locale)
 	return managementRegistrationResponse{
-		Routes: []pluginapi.ManagementRoute{{
-			Method: "POST",
-			Path:   "/plugins/" + pluginID + "/api",
-		}},
+		Routes: []pluginapi.ManagementRoute{
+			{
+				Method: "POST",
+				Path:   "/plugins/" + pluginID + "/api",
+			},
+			{
+				Method: "GET",
+				Path:   "/plugins/" + pluginID + "/locales",
+			},
+		},
 		Resources: []pluginapi.ResourceRoute{{
 			Path:        "/dashboard",
 			Menu:        pluginName,

@@ -72,3 +72,16 @@ func containsHan(value string) bool {
 	}
 	return false
 }
+
+func TestManagementRegistrationExposesLocaleResources(t *testing.T) {
+	var plugin Plugin
+	found := false
+	for _, route := range plugin.ManagementRegistration().Routes {
+		if route.Method == "GET" && route.Path == "/plugins/grok-quality-guard/locales" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("management registration is missing GET /plugins/grok-quality-guard/locales")
+	}
+}

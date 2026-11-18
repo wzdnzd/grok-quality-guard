@@ -90,7 +90,7 @@ function harness(options = {}) {
     if (!elements.has(id)) elements.set(id, new Element(id));
     return elements.get(id);
   };
-  get('i18n-resources').textContent = JSON.stringify(localeResources);
+  get('i18n-resources').textContent = JSON.stringify(options.i18nResources ?? localeResources);
   for (const id of ['proxySourceDrawer', 'accountDrawer', 'confirmDialog']) get(id).hidden = true;
   const document = {
     body: new Element('body'),
@@ -134,7 +134,7 @@ function harness(options = {}) {
     HTMLElement: Element,
     CSS: { escape: (value) => String(value) },
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
-    fetch: async () => { throw new Error('Unexpected network request'); }
+    fetch: options.fetch || (async () => { throw new Error('Unexpected network request'); })
   });
   vm.runInContext(source + '\n globalThis.dashboard = { i18n, state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderOverview, renderAccounts, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyNodeEditor, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, collectPolicy, populatePolicyForm, applyLocationHash };', context);
   function mock(name, callback) {
@@ -211,6 +211,27 @@ test('Language switching updates document language, persistence, interpolation, 
   assert.equal(ui.i18n.t('ui.account_details'), '帳號詳情');
   assert.equal(ui.i18n.applyLocale('zh-CN'), 'zh-CN');
   assert.equal(ui.i18n.translateSource('账号详情'), '账号详情');
+});
+
+test('Missing inline locale resources hydrate from the management endpoint', async () => {
+  const requests = [];
+  const { dashboard: ui, get } = harness({
+    languages: ['en-US'],
+    language: 'en-US',
+    i18nResources: {},
+    fetch: async (url, init) => {
+      requests.push({ url, init });
+      return { ok: true, status: 200, json: async () => localeResources };
+    }
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(requests.length, 1);
+  assert.equal(ui.i18n.hasResources(), true);
+  assert.equal(requests[0].url, '/v0/management/plugins/grok-quality-guard/locales');
+  assert.equal(requests[0].init.headers['Accept-Language'], 'en');
+  assert.equal(ui.i18n.t('ui.overview'), 'Overview');
+  assert.equal(ui.i18n.t('language.zh_cn'), 'Simplified Chinese');
+  assert.equal(get('uiLanguage').value, 'en');
 });
 
 test('English rendering paths do not leak Simplified Chinese copy', () => {
