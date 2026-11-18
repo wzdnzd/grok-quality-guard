@@ -2243,6 +2243,17 @@
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--surface);
+      transition: border-color .16s, background .16s, box-shadow .16s;
+    }
+
+    .queue-card:hover {
+      border-color: var(--line-strong);
+    }
+
+    .queue-card.selected {
+      border-color: var(--line-strong);
+      background: var(--surface);
+      box-shadow: inset 3px 0 0 var(--focus);
     }
 
     .queue-card-head {
@@ -2286,6 +2297,62 @@
       margin-top: 8px;
       color: var(--bad);
       font-size: 10px;
+    }
+
+    .resident-queue-detail {
+      margin: 0 12px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .resident-queue-detail-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-muted);
+    }
+
+    .resident-queue-detail-title {
+      flex: 1 1 240px;
+      min-width: 0;
+    }
+
+    .resident-queue-detail-title h3 {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin: 0;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .resident-queue-detail-title p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .resident-queue-detail-actions {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 7px;
+      margin-left: auto;
+    }
+
+    .resident-queue-detail-body {
+      padding: 14px;
+    }
+
+    .resident-queue-detail-body .task-detail-empty {
+      min-height: 180px;
+      padding: 18px;
     }
 
     .task-detail-close {
@@ -4533,6 +4600,20 @@
             <button class="btn btn-xs btn-ghost" type="button" data-goto-tab="settings" data-open-settings="tasks">ui.configure_task_history</button>
           </div>
           <div class="queue-grid" id="residentQueues"></div>
+          <section class="resident-queue-detail" id="residentQueueDetail" aria-live="polite" hidden>
+            <div class="resident-queue-detail-head">
+              <div class="resident-queue-detail-title">
+                <h3 id="residentQueueDetailTitle"></h3>
+                <p id="residentQueueDetailSubtitle"></p>
+              </div>
+              <div class="resident-queue-detail-actions">
+                <span class="badge" id="residentQueueDetailBadge" hidden></span>
+                <button class="btn btn-xs btn-ghost icon-btn" type="button" id="residentQueueDetailClose"
+                  aria-label="ui.close_queue_details"><svg class="icon"><use href="#i-x"></use></svg></button>
+              </div>
+            </div>
+            <div class="resident-queue-detail-body" id="residentQueueDetailBody"></div>
+          </section>
         </section>
         <div class="task-center-grid">
           <section class="card task-list-card" aria-labelledby="taskListTitle">
@@ -6655,8 +6736,8 @@
       };
       state.taskCenterQueueDetail = { loading: true, mode: 'change', data: { change_id: id, page: 1, page_size: 20 } };
       state.taskQueuePage = 1;
-      document.getElementById('taskDetailCard').classList.add('mobile-open');
       renderTaskCenter();
+      revealResidentQueueDetail();
       await openTaskCenterChange(id, 1);
     }
     async function showProxyEditorError(error, source, editor) {
@@ -8357,6 +8438,7 @@
       const container = document.getElementById('residentQueues');
       if (!container) return;
       document.getElementById('taskHistorySummary').textContent = taskHistoryText(history);
+      const selectedQueueID = String(state.taskCenterSelectedQueue?.id || '');
       if (!queues || !queues.length) {
         container.innerHTML = '<div class="empty" style="grid-column:1/-1"><svg class="icon"><use href="#i-activity"></use></svg><div>' + esc(i18n.t('ui.no_active_resident_queues')) + '</div></div>';
         return;
@@ -8367,10 +8449,13 @@
         const percent = total > 0 ? Math.min(100, Math.round(completed / total * 100)) : 0;
         const stats = [queueMetric(i18n.t('ui.queue_running_label'), num(queue.running || 0)), queueMetric(i18n.t('ui.queue_waiting_label'), num(queue.waiting || 0)), queueMetric(i18n.t('ui.queue_succeeded_label'), num(queue.succeeded || 0)), queueMetric(i18n.t('ui.queue_failed_label'), num(queue.failed || 0))].join('');
         const progress = total > 0 ? '<div class="progress-track"><div class="progress-fill ' + (Number(queue.failed || 0) ? 'bad' : 'good') + '" style="width:' + percent + '%"></div></div>' : '';
-        const detailButton = ['auto_bind', 'proxy_health', 'proxy_changes', 'resin_cleanup', 'quality_probe'].includes(queue.id) ? '<button class="btn btn-xs" type="button" data-task-queue="' + esc(queue.id) + '">' + esc(i18n.t('ui.view_queue')) + '</button>' : '';
+        const queueID = String(queue.id || '');
+        const selected = queueID === selectedQueueID;
+        const buttonID = 'residentQueueView-' + queueID.replace(/[^a-zA-Z0-9_-]/g, '');
+        const detailButton = ['auto_bind', 'proxy_health', 'proxy_changes', 'resin_cleanup', 'quality_probe'].includes(queue.id) ? '<button class="btn btn-xs" type="button" id="' + esc(buttonID) + '" data-task-queue="' + esc(queueID) + '" aria-controls="residentQueueDetail" aria-expanded="' + (selected ? 'true' : 'false') + '">' + esc(i18n.t(selected ? 'ui.hide_queue' : 'ui.view_queue')) + '</button>' : '';
         const queueError = queue.last_error ? friendlyApiMessage(queue.last_error, queue.last_error_code) : '';
-        return '<article class="queue-card"><div class="queue-card-head"><div><strong>' + esc(queue.label) + '</strong><p>' + esc(i18n.translateSource(queue.description || queue.detail || '')) + '</p></div><span class="task-status ' + taskStatusClass(queue.status) + '">' + esc(taskStatusLabel(queue.status)) + '</span></div>' +
-          '<div class="queue-card-stats">' + stats + '</div>' + progress + '<div class="queue-card-actions">' + detailButton + '<button class="btn btn-xs btn-ghost" type="button" data-task-queue-refresh="' + esc(queue.id) + '">' + esc(i18n.t('ui.refresh_status')) + '</button></div>' +
+        return '<article class="queue-card' + (selected ? ' selected' : '') + '"><div class="queue-card-head"><div><strong>' + esc(queue.label) + '</strong><p>' + esc(i18n.translateSource(queue.description || queue.detail || '')) + '</p></div><span class="task-status ' + taskStatusClass(queue.status) + '">' + esc(taskStatusLabel(queue.status)) + '</span></div>' +
+          '<div class="queue-card-stats">' + stats + '</div>' + progress + '<div class="queue-card-actions">' + detailButton + '<button class="btn btn-xs btn-ghost" type="button" data-task-queue-refresh="' + esc(queueID) + '">' + esc(i18n.t('ui.refresh_status')) + '</button></div>' +
           (queueError ? '<div class="queue-card-error">' + esc(queueError) + '</div>' : '') + '</article>';
       }).join('');
     }
@@ -8379,8 +8464,6 @@
       document.getElementById('taskDetailBadge').hidden = true;
     }
     function renderTaskDetail() {
-      const selectedQueue = state.taskCenterSelectedQueue;
-      if (selectedQueue) { renderTaskQueueDetail(); return; }
       if (!state.taskCenterSelectedID) {
         document.getElementById('taskDetailTitle').innerHTML = icon('eye') + i18n.t("ui.task_details");
         document.getElementById('taskDetailSubtitle').textContent = i18n.t('ui.select_a_task_on_the_left_to_view_its');
@@ -8465,18 +8548,29 @@
       if (!total) return '';
       return '<div class="form-actions task-queue-pager"><span class="muted">' + i18n.t('ui.task_queue_pager', { page: page, pages: pages, total: total }) + '</span><span class="task-queue-pager-actions"><button class="btn btn-xs" type="button" ' + pageAttribute + '="-1" ' + (page <= 1 ? 'disabled' : '') + '>' + i18n.t('ui.previous_page') + '</button><button class="btn btn-xs" type="button" ' + pageAttribute + '="1" ' + (page >= pages ? 'disabled' : '') + '>' + i18n.t('ui.next_page') + '</button></span></div>';
     }
+    function revealResidentQueueDetail() {
+      const panel = document.getElementById('residentQueueDetail');
+      if (panel && typeof panel.scrollIntoView === 'function') panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
     async function renderTaskQueueDetail() {
+      const panel = document.getElementById('residentQueueDetail');
+      const bodyEl = document.getElementById('residentQueueDetailBody');
       const queue = state.taskCenterSelectedQueue;
-      if (!queue) { renderTaskDetail(); return; }
-      const detailBadge = document.getElementById('taskDetailBadge');
+      if (!panel || !bodyEl || !queue) {
+        if (panel) panel.hidden = true;
+        if (bodyEl) bodyEl.innerHTML = '';
+        return;
+      }
+      panel.hidden = false;
+      const detailBadge = document.getElementById('residentQueueDetailBadge');
       detailBadge.hidden = false;
       detailBadge.className = 'badge ' + (queue.status === 'failed' ? 'bad' : (queue.status === 'running' ? 'info' : (queue.status === 'succeeded' ? 'good' : '')));
       detailBadge.textContent = taskStatusLabel(queue.status);
-      document.getElementById('taskDetailTitle').innerHTML = icon('activity') + esc(queue.label || i18n.t('ui.resident_queue'));
-      document.getElementById('taskDetailSubtitle').textContent = queue.description || queue.detail || '';
+      document.getElementById('residentQueueDetailTitle').innerHTML = icon('activity') + esc(queue.label || i18n.t('ui.resident_queue'));
+      document.getElementById('residentQueueDetailSubtitle').textContent = queue.description || queue.detail || '';
       const queueDetail = state.taskCenterQueueDetail;
       if (queueDetail?.loading) {
-        document.getElementById('taskDetailBody').innerHTML = '<div class="task-detail-empty"><span class="task-empty-icon"><svg class="icon spin"><use href="#i-refresh"></use></svg></span><h3>' + i18n.t('ui.loading_queue') + '</h3><p>' + i18n.t('ui.loading_current_queue_items') + '</p></div>';
+        bodyEl.innerHTML = '<div class="task-detail-empty"><span class="task-empty-icon"><svg class="icon spin"><use href="#i-refresh"></use></svg></span><h3>' + i18n.t('ui.loading_queue') + '</h3><p>' + i18n.t('ui.loading_current_queue_items') + '</p></div>';
         return;
       }
       const stats = '<div class="task-count-grid">' +
@@ -8484,7 +8578,7 @@
         '<div class="task-count"><span>' + i18n.t('ui.completed') + '</span><strong>' + num(queue.completed || 0) + '</strong></div>' +
         '<div class="task-count"><span>' + i18n.t('ui.processing') + '</span><strong>' + num(queue.running || 0) + '</strong></div>' +
         '<div class="task-count"><span>' + i18n.t('ui.waiting_2') + '</span><strong>' + num(queue.waiting || 0) + '</strong></div></div>';
-      let body = '<div class="task-detail-hero"><div class="task-detail-hero-top"><div class="task-detail-hero-title"><strong>' + esc(queue.description || queue.label) + '</strong><p>' + esc(queue.detail || '') + '</p></div><span class="task-status ' + taskStatusClass(queue.status) + '">' + esc(taskStatusLabel(queue.status)) + '</span></div></div><div class="task-detail-section">' + stats + '</div>';
+      let body = '<div class="task-detail-section">' + stats + '</div>';
       if (queue.last_error) body += '<div class="task-detail-section"><h3>' + i18n.t('ui.latest_error') + '</h3><div class="task-result-box error">' + esc(friendlyApiMessage(queue.last_error, queue.last_error_code)) + '</div></div>';
       if (queue.id === 'proxy_changes' && queueDetail) {
         if (queueDetail.mode === 'change') {
@@ -8514,7 +8608,7 @@
         const actions = queue.id === 'auto_bind' || queue.id === 'proxy_health' ? '<button class="btn btn-xs" type="button" data-task-queue-action="auto_bind">' + i18n.t('ui.open_auto_bind_settings') + '</button><button class="btn btn-xs btn-ghost" type="button" data-task-queue-action="scan">' + i18n.t('ui.scan_now') + '</button>' : '';
         body += '<div class="task-detail-section"><h3>' + i18n.t('ui.execution_notes') + '</h3><div class="task-result-box">' + esc(queue.detail || queue.description || i18n.t('ui.no_further_description')) + '</div>' + (actions ? '<div class="task-detail-actions">' + actions + '</div>' : '') + '</div>';
       }
-      document.getElementById('taskDetailBody').innerHTML = body;
+      bodyEl.innerHTML = body;
     }
     async function loadTaskCenterDetail(taskID, page, status, silent) {
       const id = String(taskID || '').trim();
@@ -8541,9 +8635,6 @@
       }
     }
     function selectTaskCenterTask(taskID, updateHash) {
-      state.taskQueueDetailRequest++;
-      state.taskCenterSelectedQueue = null;
-      state.taskCenterQueueDetail = null;
       state.taskCenterSelectedID = String(taskID || '');
       state.taskCenterDetail = null;
       state.taskCenterDetailPage = 1;
@@ -8555,25 +8646,37 @@
         if (updateHash !== false && window.history && window.history.replaceState) window.history.replaceState(null, '', '#tasks/' + encodeURIComponent(state.taskCenterSelectedID));
       }
     }
-    async function selectTaskCenterQueue(queueID, updateHash) {
+    async function selectTaskCenterQueue(queueID) {
       const queues = state.taskCenter?.resident_queues || [];
       const queue = queues.find((item) => item.id === queueID);
       if (!queue) return;
-      state.taskCenterDetailRequest++;
-      state.taskCenterSelectedID = '';
-      state.taskCenterDetail = null;
+      if (state.taskCenterSelectedQueue?.id === queue.id) {
+        closeResidentQueueDetail(true);
+        return;
+      }
       state.taskCenterSelectedQueue = queue;
       state.taskCenterQueueDetail = { loading: true };
       state.taskQueuePage = 1;
-      document.getElementById('taskDetailCard').classList.add('mobile-open');
       renderTaskCenter();
-      if (updateHash !== false && window.history && window.history.replaceState) window.history.replaceState(null, '', '#tasks');
+      revealResidentQueueDetail();
       try {
         await loadTaskQueueDetail(queue, 1);
       } catch (error) {
         state.taskCenterQueueDetail = null;
         renderTaskQueueDetail();
         toast(error.message, 'error');
+      }
+    }
+    function closeResidentQueueDetail(returnFocus) {
+      const queueID = String(state.taskCenterSelectedQueue?.id || '');
+      state.taskQueueDetailRequest++;
+      state.taskCenterSelectedQueue = null;
+      state.taskCenterQueueDetail = null;
+      state.taskQueuePage = 1;
+      renderTaskCenter();
+      if (returnFocus && queueID) {
+        const buttonID = 'residentQueueView-' + queueID.replace(/[^a-zA-Z0-9_-]/g, '');
+        document.getElementById(buttonID)?.focus();
       }
     }
     async function loadTaskQueueDetail(queue, page) {
@@ -8626,8 +8729,8 @@
       document.getElementById('tasksEmpty').hidden = items.length > 0;
       renderTaskPager(result);
       renderResidentQueues(result.resident_queues || [], history);
-      if (state.taskCenterSelectedQueue || state.taskCenterSelectedID) renderTaskDetail();
-      else renderTaskDetail();
+      renderTaskQueueDetail();
+      renderTaskDetail();
     }
     async function refreshTaskCenter(silent) {
       if (state.taskCenterRefreshing && silent) return;
@@ -8680,9 +8783,7 @@
               await openTaskCenterChange(currentDetail.data.change_id, currentDetail.data.page || 1, true);
             }
           } else {
-            state.taskCenterSelectedQueue = null;
-            state.taskCenterQueueDetail = null;
-            renderTaskDetail();
+            closeResidentQueueDetail(false);
           }
         }
       } catch (error) {
@@ -8698,10 +8799,7 @@
     }
     function closeTaskCenterDetail(updateHash) {
       state.taskCenterDetailRequest++;
-      state.taskQueueDetailRequest++;
       state.taskCenterSelectedID = '';
-      state.taskCenterSelectedQueue = null;
-      state.taskCenterQueueDetail = null;
       state.taskCenterDetail = null;
       document.getElementById('taskDetailCard').classList.remove('mobile-open');
       renderTaskCenter();
@@ -8747,11 +8845,7 @@
     async function refreshTaskCenterQueue(queueID, announce) {
       await refreshTaskCenter(true);
       const latest = (state.taskCenter?.resident_queues || []).find((item) => item.id === queueID);
-      if (!latest) {
-        state.taskCenterSelectedQueue = null;
-        state.taskCenterQueueDetail = null;
-        renderTaskDetail();
-      }
+      if (!latest) closeResidentQueueDetail(true);
       if (announce) toast(i18n.t("ui.queue_status_refreshed"), 'success');
     }
     function watchTaskInBackground(value, label) {
@@ -9190,12 +9284,13 @@
       if (refresh) { await refreshTaskCenterQueue(refresh.dataset.taskQueueRefresh, true); }
     });
     document.getElementById('taskDetailClose').addEventListener('click', () => closeTaskCenterDetail(true));
+    document.getElementById('residentQueueDetailClose').addEventListener('click', () => closeResidentQueueDetail(true));
     document.getElementById('taskDetailBody').addEventListener('change', (event) => {
       if (event.target.id !== 'taskItemStatusFilter') return;
       state.taskCenterDetailStatus = event.target.value;
       loadTaskCenterDetail(state.taskCenterSelectedID, 1, state.taskCenterDetailStatus, false);
     });
-    document.getElementById('taskDetailBody').addEventListener('click', async (event) => {
+    async function handleTaskCenterClick(event) {
       const itemPage = event.target.closest('[data-task-item-page]');
       if (itemPage) {
         const page = Math.max(1, Number(state.taskCenterDetailPage || 1) + Number(itemPage.dataset.taskItemPage || 0));
@@ -9220,7 +9315,7 @@
       }
       const back = event.target.closest('[data-task-queue-back]');
       if (back) {
-        if (state.taskCenterSelectedQueue?.synthetic) closeTaskCenterDetail(true);
+        if (state.taskCenterSelectedQueue?.synthetic) closeResidentQueueDetail(true);
         else await loadTaskQueueDetail(state.taskCenterSelectedQueue, state.taskQueuePage || 1);
         return;
       }
@@ -9275,7 +9370,9 @@
           }
         } catch (error) { toast(error.message, 'error'); }
       }
-    });
+    }
+    document.getElementById('taskDetailBody').addEventListener('click', handleTaskCenterClick);
+    document.getElementById('residentQueueDetail').addEventListener('click', handleTaskCenterClick);
     document.getElementById('accountProbeAllBtn').addEventListener('click', async (event) => {
       const button = event.currentTarget;
       const authIDs = selectedAccountIDs();
@@ -9775,6 +9872,7 @@
       const accountDrawer = document.getElementById('accountDrawer');
       if (!proxyDrawer.hidden) { if (event.key === 'Escape') closeProxyDrawer(); else trapDialogFocus(event, proxyDrawer); }
       else if (!accountDrawer.hidden) { if (event.key === 'Escape') closeDrawer(); else trapDialogFocus(event, accountDrawer); }
+      else if (state.activeTab === 'tasks' && state.taskCenterSelectedQueue && event.key === 'Escape') { event.preventDefault(); closeResidentQueueDetail(true); }
       else if (document.getElementById('taskDetailCard').classList.contains('mobile-open') && event.key === 'Escape') { event.preventDefault(); closeTaskCenterDetail(true); }
       else if (!document.getElementById('proxyAutoBindSettings').hidden && event.key === 'Escape') { event.preventDefault(); setProxyAutoBindSettingsOpen(false); }
     });

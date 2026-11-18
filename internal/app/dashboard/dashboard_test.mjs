@@ -138,7 +138,7 @@ function harness(options = {}) {
   const runtimeSource = options.i18nResources === undefined
     ? source
     : source.replace(/const I18N_RESOURCE_DATA = [^\n]*; \/\/ i18n-resource-data/, `const I18N_RESOURCE_DATA = ${JSON.stringify(options.i18nResources)}; // i18n-resource-data`);
-  vm.runInContext(runtimeSource + '\n globalThis.dashboard = { i18n, state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderOverview, renderAccounts, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyNodeEditor, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, collectPolicy, populatePolicyForm, applyLocationHash };', context);
+  vm.runInContext(runtimeSource + '\n globalThis.dashboard = { i18n, state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderOverview, renderAccounts, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyNodeEditor, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, closeResidentQueueDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, collectPolicy, populatePolicyForm, applyLocationHash };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -740,8 +740,8 @@ test('Proxy sync details request their next page instead of expanding a million 
   assert.equal(requests[0].action, 'proxy.changes.get');
   assert.equal(requests[0].params.page, 2);
   assert.equal(requests[0].params.page_size, 20);
-  assert.equal((get('taskDetailBody').innerHTML.match(/<td class="mono">auth-/g) || []).length, 20);
-  assert.match(get('taskDetailBody').innerHTML, /第 2 \/ 50000 页/);
+  assert.equal((get('residentQueueDetailBody').innerHTML.match(/<td class="mono">auth-/g) || []).length, 20);
+  assert.match(get('residentQueueDetailBody').innerHTML, /第 2 \/ 50000 页/);
 });
 
 test('Cleanup queue pages retain bounded twenty-item responses', async () => {
@@ -758,8 +758,8 @@ test('Cleanup queue pages retain bounded twenty-item responses', async () => {
   assert.equal(requests[0].action, 'resin.cleanup.list');
   assert.equal(requests[0].params.page, 2);
   assert.equal(requests[0].params.page_size, 20);
-  assert.equal((get('taskDetailBody').innerHTML.match(/data-task-cleanup-retry=/g) || []).length, 20);
-  assert.match(get('taskDetailBody').innerHTML, /第 2 \/ 50000 页/);
+  assert.equal((get('residentQueueDetailBody').innerHTML.match(/data-task-cleanup-retry=/g) || []).length, 20);
+  assert.match(get('residentQueueDetailBody').innerHTML, /第 2 \/ 50000 页/);
 });
 test('ID-only full selection stops after one complete response', async () => {
   const { dashboard: ui, mock } = harness();
@@ -1365,7 +1365,7 @@ test('Resident queue detail is paged and proxy sync actions use the task center'
     data: { items: [{ id: 'cleanup-1', auth_id: 'auth-1', status: 'retry_wait', last_error: 'upstream timeout' }], total: 45, page: 2, page_size: 20 }
   };
   await ui.renderTaskQueueDetail();
-  const body = get('taskDetailBody').innerHTML;
+  const body = get('residentQueueDetailBody').innerHTML;
   assert.match(body, /第 2 \/ 3 页 · 共：45 项/);
   assert.match(body, /data-task-queue-page="-1"/);
   assert.match(body, /auth-1/);
@@ -1553,12 +1553,13 @@ test('Task history settings explain defaults and convert MiB to bytes', () => {
   assert.equal(policy.task_history.max_items_per_task, 20000);
 });
 
-test('Resident queues render only the returned enabled queues and detail can close', async () => {
-  const { dashboard: ui, get, historyCalls, mock } = harness();
+test('Resident queue details expand inline and close without opening task details', async () => {
+  const { dashboard: ui, get, mock } = harness();
   mock('api', async () => ({ queue_id: 'auto_bind', active: [], waiting: { items: [], total: 0, page: 1, page_size: 20 } }));
   ui.renderResidentQueues([], { enabled: false, retention_days: 3, record_count: 0, archive_bytes: 0, max_bytes: 134217728 });
   assert.match(get('taskHistorySummary').textContent, /历史记录已关闭/);
   assert.match(get('residentQueues').innerHTML, /当前没有启用中的常驻队列/);
+  assert.match(html, /id="residentQueueDetail"[\s\S]*id="residentQueueDetailBody"[\s\S]*<div class="task-center-grid">/);
   ui.state.taskCenter = {
     items: [], total: 0, page: 1, page_size: 20, counts: {},
     history: { enabled: true, retention_days: 3, record_count: 0, archive_bytes: 0, max_bytes: 134217728 },
@@ -1571,14 +1572,43 @@ test('Resident queues render only the returned enabled queues and detail can clo
   assert.match(get('residentQueues').innerHTML, /自动绑定队列/);
   assert.match(get('residentQueues').innerHTML, /质量检测队列/);
   assert.match(get('residentQueues').innerHTML, /查看队列/);
-  await ui.selectTaskCenterQueue('auto_bind', true);
-  assert.match(get('taskDetailBody').innerHTML, /打开自动绑定设置/);
-  assert.equal(get('taskDetailCard').classList.contains('mobile-open'), true);
-  ui.closeTaskCenterDetail(true);
+  assert.match(get('residentQueues').innerHTML, /id="residentQueueView-auto_bind"[^>]+aria-expanded="false"/);
+  await ui.selectTaskCenterQueue('auto_bind');
+  assert.match(get('residentQueueDetailBody').innerHTML, /打开自动绑定设置/);
+  assert.match(get('residentQueues').innerHTML, /queue-card selected/);
+  assert.match(get('residentQueues').innerHTML, /id="residentQueueView-auto_bind"[^>]+aria-expanded="true"/);
+  assert.equal(get('residentQueueDetail').hidden, false);
   assert.equal(get('taskDetailCard').classList.contains('mobile-open'), false);
-  assert.equal(historyCalls.at(-1), '#tasks');
+  ui.closeResidentQueueDetail(false);
+  assert.equal(get('residentQueueDetail').hidden, true);
+  assert.doesNotMatch(get('residentQueues').innerHTML, /queue-card selected/);
   await Promise.resolve();
 });
+test('Opening a resident queue leaves the selected task detail intact', async () => {
+  const { dashboard: ui, get, mock } = harness();
+  mock('api', async (action) => {
+    if (action === 'tasks.center.queue') return { queue_id: 'auto_bind', active: [], waiting: { items: [], total: 0, page: 1, page_size: 20 } };
+    throw new Error('unexpected API action: ' + action);
+  });
+  ui.state.taskCenter = {
+    items: [{ task_id: 'task-1', kind: 'accounts.probe_selected', category: 'account', label: '批量检测账号', status: 'succeeded', total: 1, completed: 1, succeeded: 1 }],
+    total: 1, page: 1, page_size: 20, counts: { active: 0, running_items: 0, failed_items: 0 },
+    history: { enabled: true, retention_days: 3, record_count: 1, archive_bytes: 0, max_bytes: 134217728 },
+    resident_queues: [{ id: 'auto_bind', label: '自动绑定队列', category: 'proxy', status: 'idle', description: '扫描未绑定账号', total: 0, completed: 0, running: 0, waiting: 0, succeeded: 0, failed: 0 }]
+  };
+  ui.state.taskCenterSelectedID = 'task-1';
+  ui.state.taskCenterDetail = {
+    task: { task_id: 'task-1', kind: 'accounts.probe_selected', category: 'account', label: '批量检测账号', status: 'succeeded', total: 1, completed: 1, succeeded: 1 },
+    items: [{ auth_id: 'auth-1', status: 'succeeded' }], total: 1, item_total: 1, page: 1, page_size: 20, source: 'history'
+  };
+  ui.renderTaskCenter();
+  assert.match(get('taskDetailBody').innerHTML, /task-1/);
+  await ui.selectTaskCenterQueue('auto_bind');
+  assert.equal(ui.state.taskCenterSelectedID, 'task-1');
+  assert.match(get('taskDetailBody').innerHTML, /task-1/);
+  assert.match(get('residentQueueDetailBody').innerHTML, /执行中的任务/);
+});
+
 test('Lease actions reserve a stable slot for single and paired buttons', () => {
   const { dashboard: ui } = harness();
   ui.state.proxySources = [];
@@ -1626,7 +1656,7 @@ test('Live resident queue detail renders active and waiting object IDs', async (
     const request = requests.at(-1);
     assert.equal(request.action, 'tasks.center.queue');
     assert.deepEqual(plain(request.params), { queue_id: testCase.id, page: 1, page_size: 20 });
-    const body = get('taskDetailBody').innerHTML;
+    const body = get('residentQueueDetailBody').innerHTML;
     assert.match(body, /执行中的任务/);
     assert.match(body, /等待执行的任务/);
     assert.match(body, new RegExp(testCase.id + '-active'));
