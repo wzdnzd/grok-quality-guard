@@ -1134,9 +1134,89 @@
 
     .settings-layout {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 292px;
+      grid-template-columns: minmax(0, 1fr) 276px;
       align-items: start;
-      gap: 14px;
+      gap: 12px;
+    }
+
+    .policy-settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: stretch;
+      gap: 10px;
+    }
+
+    .policy-group {
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+
+    .policy-group-quality,
+    .policy-group-probe {
+      grid-column: 1 / -1;
+    }
+
+    .policy-group>.section-title {
+      min-height: 16px;
+      margin: 0 0 9px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .policy-group .field-grid {
+      gap: 9px 10px;
+    }
+
+    .policy-group .field {
+      gap: 4px;
+    }
+
+    .policy-group .field>label:not(.check-row),
+    .policy-group .field>.hint {
+      min-height: 0;
+    }
+
+    .policy-group-quality .field-grid,
+    .policy-group-probe .field-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .policy-group-quality .check-card {
+      grid-column: span 2;
+    }
+
+    .policy-group .check-card {
+      padding: 8px 9px;
+      gap: 7px;
+      background: var(--surface);
+    }
+
+    .policy-group .check-card.compact {
+      min-height: 33px;
+      padding: 6px 9px;
+    }
+
+    .policy-actions {
+      grid-column: 1 / -1;
+      padding: 10px 2px 1px;
+      border-top: 1px solid var(--line);
+    }
+
+    .settings-summary-card .card-header {
+      padding: 12px 13px;
+    }
+
+    .settings-summary-card .card-body {
+      padding: 12px 13px;
+    }
+
+    .settings-summary-card .summary-grid {
+      gap: 10px 12px;
     }
 
     .sticky-card {
@@ -1985,6 +2065,20 @@
       overflow: hidden;
     }
 
+    @media (max-width: 1180px) {
+      .settings-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .settings-summary-card {
+        position: static;
+      }
+
+      .settings-summary-card .summary-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+    }
+
     @media (max-width: 1080px) {
       .metric-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2036,11 +2130,36 @@
       .auto-bind-form .auto-bind-group-recovery {
         grid-column: auto;
       }
+
+      .policy-settings-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .policy-group-quality,
+      .policy-group-probe,
+      .policy-actions {
+        grid-column: auto;
+      }
+
+      .policy-group-quality .field-grid,
+      .policy-group-probe .field-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .policy-group-quality .check-card {
+        grid-column: auto;
+      }
     }
 
     @media (max-width: 680px) {
       .auto-bind-form .settings-group .field-grid,
-      .auto-bind-form .settings-group .retry-grid {
+      .auto-bind-form .settings-group .retry-grid,
+      .policy-group-quality .field-grid,
+      .policy-group-probe .field-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .settings-summary-card .summary-grid {
         grid-template-columns: 1fr;
       }
 
@@ -2718,10 +2837,9 @@
       </section>
       <section class="tab-panel" id="panel-settings" role="tabpanel" aria-labelledby="tab-settings">
         <div class="tab-panel active" id="settings-panel-policy" role="tabpanel" aria-label="守护策略">
-          <form id="policyForm" class="settings-layout">
-            <div class="stack">
-              <section class="card">
-                <div class="form-section">
+          <form id="policyForm" class="settings-layout policy-settings-form">
+            <div class="policy-settings-grid">
+              <section class="policy-group policy-group-mode">
                   <h3 class="section-title"><svg class="icon">
                       <use href="#i-shield"></use>
                     </svg>运行模式与处置</h3>
@@ -2747,8 +2865,28 @@
                         placeholder="/CLIProxyAPI/plugins/data/grok-quality-guard/state.json"><span class="hint">YAML 的
                         state_file 是启动引导路径；此处保存时会把当前状态写入新路径并切换；目标文件必须尚不存在，且目录需为持久卷</span></div>
                   </div>
-                </div>
-                <div class="form-section">
+                </section>
+                <section class="policy-group policy-group-routing">
+                  <h3 class="section-title"><svg class="icon">
+                      <use href="#i-link"></use>
+                    </svg>透明鉴权选择与会话亲和</h3>
+                  <div class="field-grid">
+                    <div class="field"><label for="p_selection_strategy">层内选择策略</label><select id="p_selection_strategy">
+                        <option value="round_robin">轮询分配</option>
+                        <option value="random">随机分配</option>
+                        <option value="fill_first">顺序优先</option>
+                      </select><span class="hint">仅在同一个质量/优先级层内生效</span></div>
+                    <div class="field"><label for="p_session_affinity_ttl">会话亲和 TTL</label><input id="p_session_affinity_ttl"
+                        type="text" placeholder="1h"><span class="hint">成功请求后刷新</span></div>
+                    <label class="check-card"><input id="p_prefer_last_success" type="checkbox"><span
+                        class="check-copy"><span class="check-title">优先复用上次成功账号</span><span class="check-desc">仅在该账号健康且空闲时优先使用；并发时自动分散</span></span></label>
+                    <label class="check-card"><input id="p_session_affinity" type="checkbox"><span
+                        class="check-copy"><span class="check-title">启用会话亲和</span><span class="check-desc">同一会话在账号正常时尽量固定到同一 auth</span></span></label>
+                    <div class="field"><label for="p_session_affinity_max_entries">会话绑定上限</label><input
+                        id="p_session_affinity_max_entries" type="number" min="1" max="100000"></div>
+                  </div>
+                </section>
+                <section class="policy-group policy-group-quality">
                   <h3 class="section-title"><svg class="icon">
                       <use href="#i-gauge"></use>
                     </svg>质量阈值与思考证据</h3>
@@ -2792,28 +2930,8 @@
                     <div class="field"><label for="p_empty_cooldown">空流冷却</label><input id="p_empty_cooldown"
                         type="text" placeholder="15m"></div>
                   </div>
-                </div>
-                <div class="form-section">
-                  <h3 class="section-title"><svg class="icon">
-                      <use href="#i-link"></use>
-                    </svg>透明鉴权选择与会话亲和</h3>
-                  <div class="field-grid">
-                    <div class="field"><label for="p_selection_strategy">层内选择策略</label><select id="p_selection_strategy">
-                        <option value="round_robin">轮询分配</option>
-                        <option value="random">随机分配</option>
-                        <option value="fill_first">顺序优先</option>
-                      </select><span class="hint">仅在同一个质量/优先级层内生效</span></div>
-                    <div class="field"><label for="p_session_affinity_ttl">会话亲和 TTL</label><input id="p_session_affinity_ttl"
-                        type="text" placeholder="1h"><span class="hint">成功请求后刷新</span></div>
-                    <label class="check-card"><input id="p_prefer_last_success" type="checkbox"><span
-                        class="check-copy"><span class="check-title">优先复用上次成功账号</span><span class="check-desc">仅在该账号健康且空闲时优先使用；并发时自动分散</span></span></label>
-                    <label class="check-card"><input id="p_session_affinity" type="checkbox"><span
-                        class="check-copy"><span class="check-title">启用会话亲和</span><span class="check-desc">同一会话在账号正常时尽量固定到同一 auth</span></span></label>
-                    <div class="field"><label for="p_session_affinity_max_entries">会话绑定上限</label><input
-                        id="p_session_affinity_max_entries" type="number" min="1" max="100000"></div>
-                  </div>
-                </div>
-                <div class="form-section">
+                </section>
+                <section class="policy-group policy-group-probe">
                   <h3 class="section-title"><svg class="icon">
                       <use href="#i-eye"></use>
                     </svg>透明流保护与主动探测</h3>
@@ -2851,8 +2969,8 @@
                     <div class="field"><label for="p_probe_max_backoff">最大退避</label><input id="p_probe_max_backoff"
                         type="text" placeholder="1h"></div>
                   </div>
-                </div>
-                <div class="form-actions">
+                </section>
+                <div class="form-actions policy-actions">
                   <button class="btn btn-primary" type="submit"><svg class="icon">
                       <use href="#i-check"></use>
                     </svg>保存策略</button>
@@ -2861,9 +2979,8 @@
                     </svg>重置为 YAML 默认值</button>
                   <span class="status-line" id="policyStatus">修改后保存生效，无需重启 CPA</span>
                 </div>
-              </section>
             </div>
-            <aside class="card sticky-card">
+            <aside class="card sticky-card settings-summary-card">
               <div class="card-header compact">
                 <div>
                   <h2 class="section-title"><svg class="icon">

@@ -946,6 +946,25 @@ test('Checkbox controls reserve a label line and retry fields share one row', ()
   assert.match(html, /退避等待的最长时间/);
 });
 
+test('Policy settings use a compact grouped grid with responsive density', () => {
+  assert.match(html, /<form id="policyForm" class="settings-layout policy-settings-form">/);
+  assert.match(html, /<div class="policy-settings-grid">/);
+  for (const group of ['mode', 'quality', 'routing', 'probe']) {
+    assert.match(html, new RegExp('class="policy-group policy-group-' + group + '"'));
+  }
+  const modeStart = html.indexOf('class="policy-group policy-group-mode"');
+  const routingStart = html.indexOf('class="policy-group policy-group-routing"');
+  const qualityStart = html.indexOf('class="policy-group policy-group-quality"');
+  const probeStart = html.indexOf('class="policy-group policy-group-probe"');
+  assert.ok(modeStart < routingStart && routingStart < qualityStart && qualityStart < probeStart);
+  assert.match(html, /\.policy-settings-grid\s*\{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(html, /\.policy-group-quality \.field-grid,\s*\.policy-group-probe \.field-grid\s*\{\s*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.match(html, /\.policy-group-quality \.check-card\s*\{\s*grid-column: span 2;/);
+  assert.match(html, /@media \(max-width: 1180px\)\s*\{[\s\S]*?\.settings-summary-card \.summary-grid\s*\{\s*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.match(html, /@media \(max-width: 920px\)\s*\{[\s\S]*?\.policy-settings-grid\s*\{\s*grid-template-columns: 1fr;/);
+  assert.match(html, /class="form-actions policy-actions"/);
+});
+
 test('Template variable generation controls share one roomy row', () => {
   assert.match(html, /\.proxy-generation-grid\s*\{\s*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
   assert.match(html, /\.proxy-variable-body \.field\s*\{\s*gap: 7px;/);
