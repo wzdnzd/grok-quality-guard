@@ -2227,7 +2227,7 @@
     }
 
     .task-queue-card {
-      margin-top: 14px;
+      margin-bottom: 14px;
     }
 
     .queue-grid {
@@ -4465,6 +4465,16 @@
       </section>
       <section class="tab-panel" id="panel-tasks" role="tabpanel" aria-labelledby="tab-tasks">
         <div class="metric-grid" id="taskMetrics"></div>
+        <section class="card task-queue-card" aria-labelledby="residentQueuesTitle">
+          <div class="card-header compact">
+            <div>
+              <h2 id="residentQueuesTitle"><svg class="icon"><use href="#i-activity"></use></svg>常驻队列</h2>
+              <p id="taskHistorySummary">仅显示当前实际启用或仍有工作的队列</p>
+            </div>
+            <button class="btn btn-xs btn-ghost" type="button" data-goto-tab="settings" data-open-settings="tasks">配置任务历史</button>
+          </div>
+          <div class="queue-grid" id="residentQueues"></div>
+        </section>
         <div class="task-center-grid">
           <section class="card task-list-card" aria-labelledby="taskListTitle">
             <div class="card-header">
@@ -4524,16 +4534,6 @@
             </div>
           </section>
         </div>
-        <section class="card task-queue-card" aria-labelledby="residentQueuesTitle">
-          <div class="card-header compact">
-            <div>
-              <h2 id="residentQueuesTitle"><svg class="icon"><use href="#i-activity"></use></svg>常驻队列</h2>
-              <p id="taskHistorySummary">仅显示当前实际启用或仍有工作的队列</p>
-            </div>
-            <button class="btn btn-xs btn-ghost" type="button" data-goto-tab="settings" data-open-settings="tasks">配置任务历史</button>
-          </div>
-          <div class="queue-grid" id="residentQueues"></div>
-        </section>
       </section>
       <section class="tab-panel" id="panel-events" role="tabpanel" aria-labelledby="tab-events">
         <section class="card" aria-labelledby="eventsTitle">
