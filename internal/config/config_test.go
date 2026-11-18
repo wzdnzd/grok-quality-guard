@@ -33,6 +33,26 @@ func TestDecodeConfigPartialKeepsDefaults(t *testing.T) {
 	}
 }
 
+func TestDecodeConfigAcceptsHostManagedStoreMetadata(t *testing.T) {
+	raw := []byte(`enabled: true
+priority: 10
+store:
+  schema-version: 2
+  id: grok-quality-guard
+  version: 0.2.9
+  release-tag: v0.2.9
+  source-id: source-example
+  install:
+    type: github-release
+`)
+	cfg, errDecode := Decode(raw)
+	if errDecode != nil {
+		t.Fatalf("host-managed store metadata was rejected: %v", errDecode)
+	}
+	if !cfg.Enabled || cfg.Priority != 10 {
+		t.Fatalf("host-managed config was not decoded: enabled=%v priority=%d", cfg.Enabled, cfg.Priority)
+	}
+}
 func TestDecodeConfigRejectsRemovedResinBlock(t *testing.T) {
 	_, errDecode := Decode([]byte("resin:\n  enabled: true\n"))
 	if errDecode == nil || !strings.Contains(errDecode.Error(), "field resin not found") {

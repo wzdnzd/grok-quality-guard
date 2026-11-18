@@ -137,6 +137,10 @@ type Config struct {
 	Proxy       ProxyConfig `yaml:"proxy" json:"proxy"`
 	StateFile   string      `yaml:"state_file" json:"state_file"`
 	EventsLimit int         `yaml:"events_limit" json:"events_limit"`
+	// Store is injected by CLIProxyAPI under plugins.configs.<plugin-id> when a
+	// plugin is installed from the plugin store. It is host-owned metadata, not
+	// plugin policy, but it must pass the strict decoder during registration.
+	Store map[string]any `yaml:"store,omitempty" json:"-"`
 }
 
 // Policy is the runtime-editable subset persisted in state.json
