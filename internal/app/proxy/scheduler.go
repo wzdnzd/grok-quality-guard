@@ -128,8 +128,42 @@ func (s *Service) proxyAutoBindLoop(ctx context.Context) {
 	}
 }
 
-func (s *Service) manualProxyTaskActive() bool {
-	return s.env.ProxyHasActivePrefix("proxy.", "resin.")
+type proxyManualTaskScope struct {
+	all     bool
+	authIDs map[string]struct{}
+}
+
+func (scope proxyManualTaskScope) contains(authID string) bool {
+	if scope.all {
+		return true
+	}
+	_, ok := scope.authIDs[authID]
+	return ok
+}
+
+func proxyTaskUsesAuthIDs(kind string) bool {
+	switch kind {
+	case "proxy.bind", "proxy.clear", "proxy.rotate", "proxy.adopt", "proxy.auto_rotate":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) manualProxyTaskScope() proxyManualTaskScope {
+	scope := proxyManualTaskScope{authIDs: make(map[string]struct{})}
+	for _, task := range s.env.ProxyActiveTasks("proxy.", "resin.") {
+		if !proxyTaskUsesAuthIDs(task.Kind) || len(task.AuthIDs) == 0 {
+			scope.all = true
+			continue
+		}
+		for _, authID := range task.AuthIDs {
+			if authID = strings.TrimSpace(authID); authID != "" {
+				scope.authIDs[authID] = struct{}{}
+			}
+		}
+	}
+	return scope
 }
 
 func (s *Service) proxyAutoBindScan(ctx context.Context) {
@@ -147,7 +181,8 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 		s.setProxyWaiting("catalog_unknown", err)
 		return
 	}
-	if s.manualProxyTaskActive() {
+	manualScope := s.manualProxyTaskScope()
+	if manualScope.all {
 		s.setProxyWaiting("manual_task", nil)
 		return
 	}
@@ -176,6 +211,9 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 	observations := make([]proxyObservation, len(window))
 	unknown := make([]int, 0, min(32, len(window)))
 	for i, a := range window {
+		if manualScope.contains(a.ID) {
+			continue
+		}
 		observations[i] = s.proxyObservationFor(a)
 		accountState := states[i]
 		if accountState.AutoBind.Excluded || accountState.AutoBind.NextAttemptAt.After(time.Now()) || !proxyAccountAllowedAuto(a, accountState.State, accountState.DisableKind, config) {
@@ -197,6 +235,9 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 		visited++
 		accountState := states[i]
 		observation := observations[i]
+		if manualScope.contains(a.ID) {
+			continue
+		}
 		if !observation.Known || observation.URL != "" || accountState.AutoBind.Excluded || accountState.AutoBind.NextAttemptAt.After(time.Now()) || !proxyAccountAllowedAuto(a, accountState.State, accountState.DisableKind, config) {
 			continue
 		}
@@ -239,7 +280,8 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 			delete(s.mgr.inFlight, id)
 			s.mgr.mu.Unlock()
 		}()
-		if !s.env.ProxyStore().ProxyAutoBindConfig().Enabled || s.manualProxyTaskActive() {
+		scope := s.manualProxyTaskScope()
+		if !s.env.ProxyStore().ProxyAutoBindConfig().Enabled || scope.contains(id) {
 			return
 		}
 		s.mgr.mu.Lock()

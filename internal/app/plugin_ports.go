@@ -232,6 +232,13 @@ func (p *Plugin) ProxyHasActivePrefix(prefixes ...string) bool {
 	return p != nil && p.taskMgr != nil && p.taskMgr.HasActivePrefix(prefixes...)
 }
 
+func (p *Plugin) ProxyActiveTasks(prefixes ...string) []tasks.ActiveTask {
+	if p == nil || p.taskMgr == nil {
+		return nil
+	}
+	return p.taskMgr.Active(prefixes...)
+}
+
 func (p *Plugin) ProxyConfigSnapshot() (appconfig.ProxyConfig, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

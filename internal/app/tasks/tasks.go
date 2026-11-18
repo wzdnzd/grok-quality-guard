@@ -62,6 +62,13 @@ type Task struct {
 	ErrorStatus    int       `json:"error_status,omitempty"`
 }
 
+// ActiveTask is the scheduling view of a queued or running task. AuthIDs are
+// only meaningful for task kinds that operate on auth files.
+type ActiveTask struct {
+	Kind    string
+	AuthIDs []string
+}
+
 type record struct {
 	task            Task
 	cancel          context.CancelFunc
@@ -575,6 +582,44 @@ func (m *Manager) HasActivePrefix(prefixes ...string) bool {
 		}
 	}
 	return false
+}
+
+// Active returns queued and running tasks matching any prefix. The returned
+// auth IDs are copied so callers can use the snapshot without locking the
+// manager or observing later task mutations.
+func (m *Manager) Active(prefixes ...string) []ActiveTask {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var active []ActiveTask
+	for _, entry := range m.tasks {
+		if entry == nil || (entry.task.Status != taskStatusQueued && entry.task.Status != taskStatusRunning) {
+			continue
+		}
+		matched := false
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(entry.task.Kind, prefix) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		active = append(active, ActiveTask{
+			Kind:    entry.task.Kind,
+			AuthIDs: append([]string(nil), entry.task.AuthIDs...),
+		})
+	}
+	sort.Slice(active, func(i, j int) bool {
+		if active[i].Kind == active[j].Kind {
+			return strings.Join(active[i].AuthIDs, "\x00") < strings.Join(active[j].AuthIDs, "\x00")
+		}
+		return active[i].Kind < active[j].Kind
+	})
+	return active
 }
 
 // SetStage updates the human-readable stage shown while a task is running.

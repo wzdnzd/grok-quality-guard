@@ -29,6 +29,7 @@ type Environment interface {
 	ProxyRecordEvent(*state.State, string, string, string, string, string)
 	ProxyStartTask(string, []string, string, func(context.Context) (any, error)) tasks.Task
 	ProxyHasActivePrefix(...string) bool
+	ProxyActiveTasks(...string) []tasks.ActiveTask
 	ProxyConfigSnapshot() (config.ProxyConfig, bool)
 	ProxyApplyConfig(config.ProxyConfig, bool)
 }

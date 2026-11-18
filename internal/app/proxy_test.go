@@ -289,6 +289,102 @@ func TestProxyAutoBindSkipsExternalAndBindsEmptyAuth(t *testing.T) {
 	}
 }
 
+func TestProxyAutoBindSkipsOnlyAccountsInActiveManualTask(t *testing.T) {
+	entries := []pluginapi.HostAuthFileEntry{
+		{ID: "auth-1", AuthIndex: "auth-1", Name: "auth-1", Type: "xai", Provider: "xai", Email: "[EMAIL]", Label: "[EMAIL]"},
+		{ID: "auth-2", AuthIndex: "auth-2", Name: "auth-2", Type: "xai", Provider: "xai", Email: "[EMAIL]", Label: "[EMAIL]"},
+	}
+	auths := map[string]json.RawMessage{
+		"auth-1": makeAuthJSON(t, map[string]any{"type": "xai", "email": "[EMAIL]", "access_token": "a", "refresh_token": "a"}),
+		"auth-2": makeAuthJSON(t, map[string]any{"type": "xai", "email": "[EMAIL]", "access_token": "b", "refresh_token": "b"}),
+	}
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	if _, errCreate := plugin.createProxyNode(proxyapp.NodeInput{URL: "http://u:p@proxy.example:8080"}); errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	if _, _, errConfig := plugin.updateProxyAutoBind(map[string]any{"enabled": true, "scan_interval": "1s", "retry_initial": "1s", "retry_max": "2s"}); errConfig != nil {
+		t.Fatal(errConfig)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	plugin.startTask("proxy.clear", []string{"auth-1"}, "manual clear in progress", func(ctx context.Context) (any, error) {
+		close(started)
+		select {
+		case <-release:
+			return nil, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("manual task did not start")
+	}
+
+	plugin.proxyAutoBindScan(context.Background())
+	first, _ := plugin.stateAccount("auth-1")
+	second, _ := plugin.stateAccount("auth-2")
+	if first.Proxy.SourceID != "" {
+		t.Fatal("auto bind changed an account owned by the active manual task")
+	}
+	if second.Proxy.SourceID == "" {
+		t.Fatal("auto bind was globally blocked by an unrelated account in the active manual task")
+	}
+
+	close(release)
+	plugin.taskMgr.Wait()
+	plugin.proxyAutoBindScan(context.Background())
+	first, _ = plugin.stateAccount("auth-1")
+	if first.Proxy.SourceID == "" {
+		t.Fatal("auto bind did not resume for the account after the manual task finished")
+	}
+}
+
+func TestProxyAutoBindWaitsForUnscopedManualBindingTask(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	if _, errCreate := plugin.createProxyNode(proxyapp.NodeInput{URL: "http://u:p@proxy.example:8080"}); errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	if _, _, errConfig := plugin.updateProxyAutoBind(map[string]any{"enabled": true, "scan_interval": "1s", "retry_initial": "1s", "retry_max": "2s"}); errConfig != nil {
+		t.Fatal(errConfig)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	plugin.startTask("proxy.bind_unbound", nil, "manual bind in progress", func(ctx context.Context) (any, error) {
+		close(started)
+		select {
+		case <-release:
+			return nil, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("manual task did not start")
+	}
+
+	plugin.proxyAutoBindScan(context.Background())
+	account, _ := plugin.stateAccount("auth-1")
+	if account.Proxy.SourceID != "" {
+		t.Fatal("auto bind ran while a task without an account-scoped auth set was active")
+	}
+
+	close(release)
+	plugin.taskMgr.Wait()
+	plugin.proxyAutoBindScan(context.Background())
+	account, _ = plugin.stateAccount("auth-1")
+	if account.Proxy.SourceID == "" {
+		t.Fatal("auto bind did not resume after the unscoped manual task finished")
+	}
+}
+
 func TestProxyAutoBindRejectsUnknownSourceID(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
 	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
