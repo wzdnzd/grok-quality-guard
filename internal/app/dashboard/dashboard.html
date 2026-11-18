@@ -7981,7 +7981,7 @@
         const percent = total > 0 ? Math.min(100, Math.round(completed / total * 100)) : 0;
         const stats = [queueMetric('运行', num(queue.running || 0)), queueMetric('等待', num(queue.waiting || 0)), queueMetric('成功', num(queue.succeeded || 0)), queueMetric('失败', num(queue.failed || 0))].join('');
         const progress = total > 0 ? '<div class="progress-track"><div class="progress-fill ' + (Number(queue.failed || 0) ? 'bad' : 'good') + '" style="width:' + percent + '%"></div></div>' : '';
-        const detailButton = ['auto_bind', 'proxy_health', 'proxy_changes', 'resin_cleanup'].includes(queue.id) ? '<button class="btn btn-xs" type="button" data-task-queue="' + esc(queue.id) + '">查看队列</button>' : '';
+        const detailButton = ['auto_bind', 'proxy_health', 'proxy_changes', 'resin_cleanup', 'quality_probe'].includes(queue.id) ? '<button class="btn btn-xs" type="button" data-task-queue="' + esc(queue.id) + '">查看队列</button>' : '';
         return '<article class="queue-card"><div class="queue-card-head"><div><strong>' + esc(queue.label) + '</strong><p>' + esc(queue.description || queue.detail || '') + '</p></div><span class="task-status ' + taskStatusClass(queue.status) + '">' + esc(taskStatusLabel(queue.status)) + '</span></div>' +
           '<div class="queue-card-stats">' + stats + '</div>' + progress + '<div class="queue-card-actions">' + detailButton + '<button class="btn btn-xs btn-ghost" type="button" data-task-queue-refresh="' + esc(queue.id) + '">刷新状态</button></div>' +
           (queue.last_error ? '<div class="queue-card-error">' + esc(queue.last_error) + '</div>' : '') + '</article>';

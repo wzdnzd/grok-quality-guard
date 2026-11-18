@@ -7,6 +7,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
 	"grok-quality-guard/internal/app/model"
+	probeapp "grok-quality-guard/internal/app/probe"
 	proxyapp "grok-quality-guard/internal/app/proxy"
 	qualityapp "grok-quality-guard/internal/app/quality"
 	appstate "grok-quality-guard/internal/app/state"
@@ -24,6 +25,7 @@ type State = appstate.State
 type Store = appstate.Store
 type Policy = config.Policy
 type Task = tasks.Task
+type ProbeQueueSnapshot = probeapp.QueueSnapshot
 
 type Environment interface {
 	Store() *appstate.Store
@@ -39,6 +41,7 @@ type Environment interface {
 	SetPolicy(config.Policy)
 	WakeProbeWaiters()
 	ProbeAccount(context.Context, string, bool, string) error
+	ProbeQueueSnapshot() ProbeQueueSnapshot
 	ProbeQueueSize() int
 	ProbeConcurrency() int
 	StartTask(string, []string, string, func(context.Context) (any, error)) tasks.Task

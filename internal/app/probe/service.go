@@ -27,6 +27,19 @@ type QualityVerdict = domain.QualityVerdict
 type VerdictResult = qualityapp.VerdictResult
 type Signals = domain.Signals
 
+// QueueSnapshot is the management-facing view of the automatic probe
+// scheduler. It intentionally excludes auth IDs and probe payloads.
+type QueueSnapshot struct {
+	Started       bool      `json:"started"`
+	Waiting       int       `json:"waiting"`
+	Active        int       `json:"active"`
+	Succeeded     int       `json:"succeeded"`
+	Failed        int       `json:"failed"`
+	LastScanAt    time.Time `json:"last_scan_at,omitempty"`
+	LastSuccessAt time.Time `json:"last_success_at,omitempty"`
+	LastError     string    `json:"last_error,omitempty"`
+}
+
 const (
 	ClassNone                  = domain.ClassNone
 	ClassIgnored               = domain.ClassIgnored
@@ -79,6 +92,8 @@ type Environment interface {
 type Service struct {
 	env Environment
 
+	schedulerMu          sync.RWMutex
+	scheduler            *probeScheduler
 	probeGate            sync.Mutex
 	probeCond            *sync.Cond
 	probeActive          int

@@ -48,6 +48,8 @@ func (s *Scheduler) QueueEntries() []string {
 	if s == nil {
 		return nil
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return append([]string(nil), s.queue...)
 }
 

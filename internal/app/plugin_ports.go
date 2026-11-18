@@ -15,6 +15,7 @@ import (
 	appauth "grok-quality-guard/internal/app/auth"
 	execapp "grok-quality-guard/internal/app/executor"
 	"grok-quality-guard/internal/app/model"
+	probeapp "grok-quality-guard/internal/app/probe"
 	proxyapp "grok-quality-guard/internal/app/proxy"
 	qualityapp "grok-quality-guard/internal/app/quality"
 	appredact "grok-quality-guard/internal/app/redact"
@@ -374,8 +375,9 @@ func (p *Plugin) SetPolicy(policy appconfig.Policy) {
 	}
 }
 
-func (p *Plugin) WakeProbeWaiters()   { p.probeSvc.WakeWaiters() }
-func (p *Plugin) ProbeQueueSize() int { return p.probeSvc.ProbeQueueSize() }
+func (p *Plugin) WakeProbeWaiters()                          { p.probeSvc.WakeWaiters() }
+func (p *Plugin) ProbeQueueSnapshot() probeapp.QueueSnapshot { return p.probeSvc.QueueSnapshot() }
+func (p *Plugin) ProbeQueueSize() int                        { return p.probeSvc.ProbeQueueSize() }
 func (p *Plugin) ProbeConcurrency() int {
 	return p.probeSvc.ProbeConcurrency()
 }

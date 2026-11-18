@@ -1305,10 +1305,14 @@ test('Resident queues render only the returned enabled queues and detail can clo
   ui.state.taskCenter = {
     items: [], total: 0, page: 1, page_size: 20, counts: {},
     history: { enabled: true, retention_days: 3, record_count: 0, archive_bytes: 0, max_bytes: 134217728 },
-    resident_queues: [{ id: 'auto_bind', label: '自动绑定队列', category: 'proxy', status: 'running', description: '扫描未绑定账号', total: 8, completed: 5, running: 1, waiting: 2, succeeded: 5, failed: 0 }]
+    resident_queues: [
+      { id: 'auto_bind', label: '自动绑定队列', category: 'proxy', status: 'running', description: '扫描未绑定账号', total: 8, completed: 5, running: 1, waiting: 2, succeeded: 5, failed: 0 },
+      { id: 'quality_probe', label: '质量检测队列', category: 'quality', status: 'running', description: '扫描到期账号', total: 8, completed: 5, running: 1, waiting: 2, succeeded: 5, failed: 0 }
+    ]
   };
   ui.renderTaskCenter();
   assert.match(get('residentQueues').innerHTML, /自动绑定队列/);
+  assert.match(get('residentQueues').innerHTML, /质量检测队列/);
   assert.match(get('residentQueues').innerHTML, /查看队列/);
   ui.selectTaskCenterQueue('auto_bind', true);
   assert.match(get('taskDetailBody').innerHTML, /打开自动绑定设置/);

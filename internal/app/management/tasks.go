@@ -2,6 +2,7 @@ package management
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -57,14 +58,45 @@ func (s *Service) actionTaskCenterDetail(params map[string]any) (any, int, error
 }
 
 func (s *Service) taskCenterResidentQueues() []map[string]any {
-	store := s.stateStore()
-	if store == nil || s.env.Proxy() == nil {
-		return nil
+	queues := make([]map[string]any, 0, 5)
+	policy := s.env.Policy()
+	probeQueue := s.env.ProbeQueueSnapshot()
+	guardEnabled := s.env.ConfigEnabled() && (policy.PassiveGuard || policy.TransparentGuard)
+	if shouldShowQualityProbeQueue(guardEnabled, probeQueue) {
+		completed := probeQueue.Succeeded + probeQueue.Failed
+		total := completed + probeQueue.Waiting + probeQueue.Active
+		status := "idle"
+		if probeQueue.Active > 0 || probeQueue.Waiting > 0 {
+			status = "running"
+		}
+		queues = append(queues, map[string]any{
+			"id":              "quality_probe",
+			"label":           "质量检测队列",
+			"category":        "quality",
+			"status":          status,
+			"description":     "扫描到期账号并逐项执行主动质量探测",
+			"total":           total,
+			"completed":       completed,
+			"running":         probeQueue.Active,
+			"waiting":         probeQueue.Waiting,
+			"succeeded":       probeQueue.Succeeded,
+			"failed":          probeQueue.Failed,
+			"skipped":         0,
+			"last_scan_at":    probeQueue.LastScanAt,
+			"last_success_at": probeQueue.LastSuccessAt,
+			"last_error":      probeQueue.LastError,
+			"updated_at":      latestTime(probeQueue.LastScanAt, probeQueue.LastSuccessAt),
+			"detail":          fmt.Sprintf("自动探测并发 %d，队列容量 %d；只处理到期的非健康账号。实时进度在此汇总，单账号结果写入事件日志。", policy.Probe.Concurrency, policy.Probe.QueueSize),
+		})
 	}
+
+	store := s.stateStore()
 	proxyService := s.env.Proxy()
+	if store == nil || proxyService == nil {
+		return queues
+	}
 	runtime := proxyService.AutoBindRuntime()
 	autoConfig := store.ProxyAutoBindConfig()
-	queues := make([]map[string]any, 0, 4)
 
 	if shouldShowAutoBindQueue(autoConfig.Enabled, runtime.QueueDepth, runtime.InFlight, runtime.Running) {
 		completed := int(runtime.BoundTotal + runtime.FailedTotal + runtime.SkippedTotal)
@@ -217,6 +249,10 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 		})
 	}
 	return queues
+}
+
+func shouldShowQualityProbeQueue(enabled bool, snapshot ProbeQueueSnapshot) bool {
+	return enabled || snapshot.Waiting > 0 || snapshot.Active > 0
 }
 
 func shouldShowAutoBindQueue(enabled bool, queueDepth, inFlight int, running bool) bool {

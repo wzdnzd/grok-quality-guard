@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+	"grok-quality-guard/internal/app/redact"
 	"grok-quality-guard/internal/config"
 )
 
@@ -29,7 +30,11 @@ func (s *Service) probeLoop(ctx context.Context) {
 	}
 	_ = s.env.Reconcile(ctx)
 	scheduler := newProbeScheduler(s, ctx)
-	defer scheduler.wait()
+	s.setScheduler(scheduler)
+	defer func() {
+		scheduler.wait()
+		s.clearScheduler(scheduler)
+	}()
 	scheduler.scanAndDispatch()
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -43,24 +48,35 @@ func (s *Service) probeLoop(ctx context.Context) {
 			scheduler.scanAndDispatch()
 		case <-reconcileTicker.C:
 			_ = s.env.Reconcile(ctx)
-		case authID := <-scheduler.done:
-			scheduler.finish(authID)
+		case result := <-scheduler.done:
+			scheduler.finish(result)
 			scheduler.dispatch()
 		}
 	}
 }
 
 // probeScheduler bounds pending work while keeping active probe goroutines at
-// the configured concurrency
+// the configured concurrency.
 type probeScheduler struct {
 	plugin *Service
 	ctx    context.Context
-	done   chan string
+	done   chan probeCompletion
 
-	queue  []string
-	queued map[string]struct{}
-	active int
-	wg     sync.WaitGroup
+	mu            sync.Mutex
+	queue         []string
+	queued        map[string]struct{}
+	active        int
+	succeeded     int
+	failed        int
+	lastScanAt    time.Time
+	lastSuccessAt time.Time
+	lastError     string
+	wg            sync.WaitGroup
+}
+
+type probeCompletion struct {
+	authID string
+	err    error
 }
 
 func newProbeScheduler(plugin *Service, ctx context.Context) *probeScheduler {
@@ -70,7 +86,7 @@ func newProbeScheduler(plugin *Service, ctx context.Context) *probeScheduler {
 	return &probeScheduler{
 		plugin: plugin,
 		ctx:    ctx,
-		done:   make(chan string),
+		done:   make(chan probeCompletion),
 		queued: make(map[string]struct{}),
 	}
 }
@@ -81,6 +97,7 @@ func (s *probeScheduler) scanAndDispatch() {
 	}
 	policy := s.plugin.env.Policy()
 	if !policy.PassiveGuard && !policy.TransparentGuard {
+		s.dispatch()
 		return
 	}
 	accounts := s.plugin.env.CatalogSnapshot()
@@ -117,6 +134,9 @@ func (s *probeScheduler) enqueueDue(accounts []Account, state State, policy Poli
 		limit = config.MaxProbeQueueSize
 	}
 	added := 0
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastScanAt = now
 	for _, account := range accounts {
 		if len(s.queue) >= limit {
 			break
@@ -140,33 +160,50 @@ func (s *probeScheduler) dispatch() {
 		return
 	}
 	limit := s.plugin.probeConcurrency()
-	for s.active < limit && len(s.queue) > 0 {
+	for {
+		s.mu.Lock()
+		if s.active >= limit || len(s.queue) == 0 {
+			s.mu.Unlock()
+			return
+		}
 		authID := s.queue[0]
 		copy(s.queue, s.queue[1:])
 		s.queue = s.queue[:len(s.queue)-1]
 		s.active++
+		s.mu.Unlock()
+
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
-			if errProbe := s.plugin.ProbeAccount(s.ctx, authID, false, ""); errProbe != nil && s.ctx.Err() == nil {
+			errProbe := s.plugin.ProbeAccount(s.ctx, authID, false, "")
+			if errProbe != nil && s.ctx.Err() == nil {
 				_ = s.plugin.env.RecordInternalError(authID, errProbe)
 			}
 			select {
-			case s.done <- authID:
+			case s.done <- probeCompletion{authID: authID, err: errProbe}:
 			case <-s.ctx.Done():
 			}
 		}()
 	}
 }
 
-func (s *probeScheduler) finish(authID string) {
+func (s *probeScheduler) finish(result probeCompletion) {
 	if s == nil {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.active > 0 {
 		s.active--
 	}
-	delete(s.queued, authID)
+	delete(s.queued, result.authID)
+	if result.err != nil {
+		s.failed++
+		s.lastError = redact.SanitizeError(result.err)
+		return
+	}
+	s.succeeded++
+	s.lastSuccessAt = time.Now().UTC()
 }
 
 func (s *probeScheduler) wait() {
@@ -187,18 +224,74 @@ func (s *probeScheduler) waitIdle() {
 		default:
 		}
 		s.dispatch()
-		if s.active == 0 && len(s.queue) == 0 {
+		s.mu.Lock()
+		idle := s.active == 0 && len(s.queue) == 0
+		s.mu.Unlock()
+		if idle {
 			return
 		}
 		select {
-		case authID := <-s.done:
-			s.finish(authID)
+		case result := <-s.done:
+			s.finish(result)
 		case <-s.ctx.Done():
 			s.wg.Wait()
 			return
 		}
 	}
 }
+
+func (s *probeScheduler) snapshot() QueueSnapshot {
+	if s == nil {
+		return QueueSnapshot{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return QueueSnapshot{
+		Started:       true,
+		Waiting:       len(s.queue),
+		Active:        s.active,
+		Succeeded:     s.succeeded,
+		Failed:        s.failed,
+		LastScanAt:    s.lastScanAt,
+		LastSuccessAt: s.lastSuccessAt,
+		LastError:     s.lastError,
+	}
+}
+
+func (s *Service) setScheduler(scheduler *probeScheduler) {
+	if s == nil {
+		return
+	}
+	s.schedulerMu.Lock()
+	s.scheduler = scheduler
+	s.schedulerMu.Unlock()
+}
+
+func (s *Service) clearScheduler(scheduler *probeScheduler) {
+	if s == nil {
+		return
+	}
+	s.schedulerMu.Lock()
+	if s.scheduler == scheduler {
+		s.scheduler = nil
+	}
+	s.schedulerMu.Unlock()
+}
+
+// QueueSnapshot returns a concurrency-safe view of the automatic probe queue.
+func (s *Service) QueueSnapshot() QueueSnapshot {
+	if s == nil {
+		return QueueSnapshot{}
+	}
+	s.schedulerMu.RLock()
+	scheduler := s.scheduler
+	s.schedulerMu.RUnlock()
+	if scheduler == nil {
+		return QueueSnapshot{}
+	}
+	return scheduler.snapshot()
+}
+
 func (s *Service) probeDue(authID string, force bool) (bool, error) {
 	if force {
 		return true, nil
