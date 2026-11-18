@@ -12,7 +12,6 @@ import (
 )
 
 func proxyURLHash(value string) string { return proxyapp.URLHash(value) }
-func maskProxyURL(value string) string { return proxyapp.MaskProxyURL(value) }
 
 func proxyBindOptionsFromParams(params map[string]any) (proxyapp.BindOptions, error) {
 	return proxyapp.BindOptionsFromParams(params)

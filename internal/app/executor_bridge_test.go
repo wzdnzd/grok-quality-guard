@@ -23,9 +23,7 @@ func (p *Plugin) runTransparentStreamBridge(ctx context.Context, req execapp.Req
 func (p *Plugin) startTransparentStreamBridge(req execapp.Request, streamID string) {
 	p.executorSvc.StartTransparentStreamBridge(req, streamID)
 }
-func (p *Plugin) rotateAfterFailure(ctx context.Context, authID, class string) (bool, error) {
-	return p.executorSvc.RotateAfterFailure(ctx, authID, class)
-}
+
 func (p *Plugin) recordAttemptError(authID, class string, errValue error) error {
 	return p.executorSvc.RecordAttemptError(authID, class, errValue)
 }
