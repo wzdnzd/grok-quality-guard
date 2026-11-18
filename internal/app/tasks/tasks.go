@@ -506,26 +506,35 @@ func (m *Manager) CancelTask(taskID string) (Task, error) {
 		return Task{}, ErrTaskNotFound
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	entry := m.tasks[taskID]
-	if entry == nil {
-		if recent, ok := m.recent[taskID]; ok {
-			return Clone(recent.task), ErrTaskFinished
+	if entry != nil {
+		if entry.task.Status != taskStatusQueued && entry.task.Status != taskStatusRunning {
+			task := Clone(entry.task)
+			m.mu.Unlock()
+			return task, ErrTaskFinished
 		}
-		return Task{}, ErrTaskNotFound
+		entry.cancelRequested = true
+		entry.task.Progress = "正在取消任务"
+		entry.task.CurrentStage = "正在取消任务"
+		entry.task.UpdatedAt = time.Now().UTC()
+		m.persistActiveMetadataLocked(entry, true)
+		if entry.cancel != nil {
+			entry.cancel()
+		}
+		task := Clone(entry.task)
+		m.mu.Unlock()
+		return task, nil
 	}
-	if entry.task.Status != taskStatusQueued && entry.task.Status != taskStatusRunning {
-		return Clone(entry.task), ErrTaskFinished
+	if recent, ok := m.recent[taskID]; ok {
+		task := Clone(recent.task)
+		m.mu.Unlock()
+		return task, ErrTaskFinished
 	}
-	entry.cancelRequested = true
-	entry.task.Progress = "正在取消任务"
-	entry.task.CurrentStage = "正在取消任务"
-	entry.task.UpdatedAt = time.Now().UTC()
-	m.persistActiveMetadataLocked(entry, true)
-	if entry.cancel != nil {
-		entry.cancel()
+	m.mu.Unlock()
+	if task, ok := m.historyTask(taskID); ok {
+		return task, ErrTaskFinished
 	}
-	return Clone(entry.task), nil
+	return Task{}, ErrTaskNotFound
 }
 
 func (m *Manager) Cancel() {

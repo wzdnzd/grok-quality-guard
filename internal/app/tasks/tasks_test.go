@@ -58,6 +58,23 @@ func TestManagerCancelUnknownTask(t *testing.T) {
 	}
 }
 
+func TestManagerCancelArchivedTaskReturnsFinished(t *testing.T) {
+	manager := NewManager()
+	if errConfigure := manager.ConfigureHistory(t.TempDir(), DefaultHistoryConfig()); errConfigure != nil {
+		t.Fatal(errConfigure)
+	}
+	task := manager.Start("test.archived", nil, "running", func(context.Context) (any, error) {
+		return map[string]any{"ok": true}, nil
+	})
+	manager.Wait()
+	if _, ok := manager.historyTask(task.ID); !ok {
+		t.Fatal("task was not archived")
+	}
+	if _, errCancel := manager.CancelTask(task.ID); !errors.Is(errCancel, ErrTaskFinished) {
+		t.Fatalf("archived cancel error = %v, want ErrTaskFinished", errCancel)
+	}
+}
+
 func TestTaskKindsAreGroupedAndLabeledForTheTaskCenter(t *testing.T) {
 	tests := []struct {
 		kind     string
