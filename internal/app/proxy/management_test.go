@@ -3,6 +3,7 @@ package proxy
 import (
 	"testing"
 
+	appstate "grok-quality-guard/internal/app/state"
 	coreproxy "grok-quality-guard/internal/proxy"
 )
 
@@ -35,5 +36,51 @@ func TestProxySourceViewsUseStandardMaskedEndpointFormat(t *testing.T) {
 	view := proxyTemplateView(template, 0)
 	if view.Endpoint != "socks5h://user-{account}:******@proxy.example:1080" {
 		t.Fatalf("template endpoint = %q", view.Endpoint)
+	}
+}
+
+type proxyViewTestEnvironment struct {
+	Environment
+	store *appstate.Store
+}
+
+func (e proxyViewTestEnvironment) ProxyStore() *appstate.Store { return e.store }
+
+func TestResinSourceEndpointsUseTemplateDisplayAndReveal(t *testing.T) {
+	template, err := coreproxy.ParseTemplateURL("socks5h://resin-platform.rn-{region}-{account}:proxy-token@resin.example:2260")
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.ID = "resin-1"
+	template.Kind = coreproxy.TemplateResin
+	template.Name = "Resin A"
+	template.Enabled = true
+	store := appstate.NewStore("")
+	store.SetStateForTest(appstate.State{Proxy: coreproxy.ProxyState{
+		Templates: []coreproxy.Template{template},
+		ResinSources: map[string]coreproxy.ResinSourceConfig{
+			"resin-1": {
+				Platform: "resin-platform", PlatformID: "platform-1",
+				AdminURL: "https://resin.example:2260", AccountFormat: "rn-{region}-{account}",
+				AdminToken: "admin-token",
+			},
+		},
+	}})
+	service := NewService(proxyViewTestEnvironment{store: store})
+	views := service.proxySourcesView()
+	if len(views) != 1 {
+		t.Fatalf("views = %d, want 1", len(views))
+	}
+	wantMasked := "socks5h://resin-platform.rn-{region}-{account}:******@resin.example:2260"
+	if views[0].Endpoint != wantMasked {
+		t.Fatalf("masked endpoint = %q, want %q", views[0].Endpoint, wantMasked)
+	}
+	full, err := service.proxySourceEndpoint("resin-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFull := "socks5h://resin-platform.rn-{region}-{account}:proxy-token@resin.example:2260"
+	if full != wantFull {
+		t.Fatalf("revealed endpoint = %q, want %q", full, wantFull)
 	}
 }

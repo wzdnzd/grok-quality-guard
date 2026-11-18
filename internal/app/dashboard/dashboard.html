@@ -2997,6 +2997,10 @@
       'credential rejected': '凭据被拒绝', quota_exhausted: '额度耗尽',
       'proxy authentication required': '代理认证失败', 'quota exhausted': '额度耗尽'
     };
+    const PROXY_DETAIL_FIELDS = { source: '来源代理', account: '租约账户', remote_lease: '远端租约' };
+    const REMOTE_LEASE_LABELS = {
+      delete_queued: '已排队删除', skipped_local_only: '仅本地，未调用 Resin API', not_queued: '未排队'
+    };
     const ACTION_LABELS = {
       observe: '被动观测', probe: '主动探测', guard_disable: '自动处置', external_disable: '外部禁用',
       restore: '恢复账号', proxy_bind: '绑定代理', proxy_rotate: '轮换代理', proxy_clear: '清除代理', proxy_adopt: '接管代理',
@@ -3021,7 +3025,7 @@
     const QUALITY_ACTION_LABELS = { wait: '等待更多证据', deliver: '放行', withhold: '扣留' };
     const PROTOCOL_LABELS = { chat: 'Chat Completions', responses: 'Responses', anthropic: 'Anthropic Messages' };
     const sourceLabel = (value) => SOURCE_LABELS[value] || (/[\u3400-\u9fff]/.test(String(value || '')) ? String(value) : '其他来源');
-    const reasonText = (value) => {
+    const reasonText = (value, unknown = '其他上游错误') => {
       const text = String(value == null ? '' : value).trim();
       if (!text) return '';
       if (REASON_LABELS[text]) return REASON_LABELS[text];
@@ -3036,7 +3040,7 @@
       if (match) return '探测质量检查失败：' + reasonText(match[1]);
       match = text.match(/^host_call_failed:\s*(.+)$/i);
       if (match) return '宿主调用失败：' + reasonText(match[1]);
-      return /[\u3400-\u9fff]/.test(text) ? text : '其他上游错误';
+      return /[\u3400-\u9fff]/.test(text) ? text : unknown;
     };
     const localizeDetail = (value) => String(value == null ? '' : value).split(' · ').map((part) => {
       const text = part.trim();
@@ -3044,7 +3048,16 @@
       if (SOURCE_LABELS[text]) return SOURCE_LABELS[text];
       if (text === 'permanent_eligible=true') return '永久禁用候选：是';
       if (text === 'permanent_eligible=false') return '永久禁用候选：否';
-      return reasonText(text);
+      const fields = [];
+      for (const field of text.matchAll(/(?:^|\s)(\w+)=([^=]*?)(?=\s+\w+=|$)/g)) {
+        const label = PROXY_DETAIL_FIELDS[field[1]];
+        if (!label) continue;
+        const raw = field[2].trim();
+        const value = field[1] === 'remote_lease' ? (REMOTE_LEASE_LABELS[raw] || raw) : raw;
+        fields.push(label + '：' + value);
+      }
+      if (fields.length) return fields.join(' · ');
+      return reasonText(text, '') || text;
     }).filter(Boolean).join(' · ');
     const attemptLabel = (attempt, options) => {
       if (!attempt) return '暂无尝试';
@@ -3973,7 +3986,7 @@
       actions.push('<button class="btn btn-xs btn-danger" type="button" data-proxy-source-delete="' + sourceID + '" data-kind="' + esc(source.kind) + '">' + icon('x') + '删除</button>');
       const endpoint = endpointCell(source.endpoint, state.sourceProxyDetails.get(source.id), 'data-source-endpoint', sourceID);
       return '<tr><td class="select-cell"><input type="checkbox" data-source-select="' + sourceID + '" aria-label="选择代理" ' + (selected ? 'checked' : '') + '></td><td><div class="account-name">' + esc(source.name || '未命名代理') + '</div></td>' +
-        '<td>' + badge(proxySourceLabel(source.kind), source.kind === 'resin' ? 'info' : '') + (source.kind === 'resin' ? '<div class="subline">' + (source.local_only ? '本地轮换' : 'API 轮换') + '</div>' : '') + '</td>' +
+        '<td>' + badge(proxySourceLabel(source.kind), source.kind === 'resin' ? 'info' : '') + '</td>' +
         '<td>' + endpoint + '</td>' +
         '<td>' + proxySourceEnabledState(source) + '</td><td>' + proxySourceConnectivity(source) + '</td><td class="nowrap">' + proxySourceCheckedAt(source) + '</td><td class="mono">' + esc(source.binding_count || 0) + '</td>' +
         '<td class="mono" title="v：标准端点内容版本，仅 schema://用户名:密码@主机:端口 变化时增加；r：生成配置版本，模板生成内容变化时增加">v' + esc(source.config_version || 1) + ' / r' + esc(source.revision || 1) + '</td>' +

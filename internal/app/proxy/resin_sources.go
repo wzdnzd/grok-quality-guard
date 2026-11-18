@@ -389,26 +389,15 @@ func (s *Service) resinSourceView(template proxy.Template, config proxy.ResinSou
 		ID: template.ID, Kind: proxy.SourceResin, Name: template.Name, Enabled: template.Enabled,
 		Valid: true, ValidatedAt: template.ValidatedAt, ConfigVersion: template.ConfigVersion,
 		Revision: template.Revision, Priority: template.Priority, MaxBindings: template.MaxBindings,
-		BindingCount: count, UsernamePattern: config.AccountFormat, PasswordSet: template.HasPassword,
-		UpdatePolicy: template.UpdatePolicy, PlaceholderCount: len(template.Placeholders),
-		GroupCount: len(template.ValueGroups), LocalOnly: config.LocalOnly, Configured: true,
+		BindingCount: count, Endpoint: template.URLForDisplay(), UsernamePattern: config.AccountFormat,
+		PasswordSet: template.HasPassword, UpdatePolicy: template.UpdatePolicy,
+		PlaceholderCount: len(template.Placeholders), GroupCount: len(template.ValueGroups),
+		LocalOnly: config.LocalOnly, Configured: true,
 	}
-	if config.LocalOnly {
-		return view
-	}
-	if provider, err := resinProviderForSource(template, config); err != nil {
-		view.Valid = false
-		view.LastError = err.Error()
-	} else {
-		preview, errRender := provider.Generate(context.Background(), proxy.GenerateRequest{
-			SourceID: template.ID, SourceKind: proxy.SourceResin, Revision: template.Revision,
-			AccountBase: "preview",
-		})
-		if errRender != nil {
+	if !config.LocalOnly {
+		if _, err := resinProviderForSource(template, config); err != nil {
 			view.Valid = false
-			view.LastError = errRender.Error()
-		} else {
-			view.Endpoint = preview.MaskedURL
+			view.LastError = err.Error()
 		}
 	}
 	return view

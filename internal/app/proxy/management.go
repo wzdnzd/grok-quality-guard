@@ -978,20 +978,10 @@ func (s *Service) proxySourceEndpoint(id string) (string, error) {
 		}
 		return entry.Template.URLForReveal(), nil
 	case proxy.SourceResin:
-		if entry.Template == nil || entry.ResinConfig == nil {
+		if entry.Template == nil {
 			return "", proxyError("proxy_source_not_found", 404, "Resin source not found")
 		}
-		if entry.ResinConfig.LocalOnly {
-			return "", proxyError("proxy_test_unavailable", 409, "local Resin rotation has no independent endpoint")
-		}
-		if entry.Provider == nil {
-			return "", proxyError("proxy_source_invalid", 409, "Resin source cannot generate a preview endpoint")
-		}
-		rendered, err := entry.Provider.Generate(context.Background(), proxy.GenerateRequest{SourceID: entry.ID, SourceKind: entry.Kind, Revision: entry.Revision, AccountBase: "preview"})
-		if err != nil {
-			return "", err
-		}
-		return rendered.URL, nil
+		return entry.Template.URLForReveal(), nil
 	default:
 		return "", proxyError("proxy_source_not_found", 404, "proxy source not found")
 	}

@@ -114,7 +114,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, renderEvents, api, friendlyApiMessage, proxyImportLine, parseProxyImportText };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -781,7 +781,7 @@ test('Proxy source selection enables batch test and delete actions', () => {
   assert.match(get('proxySourceRows').innerHTML, /data-source-select="node-1" aria-label="选择代理" checked/);
 });
 
-test('Resin rows use the unified edit, delete, and mode presentation', () => {
+test('Resin rows use the unified edit, delete, and single-line type presentation', () => {
   const { dashboard: ui, get } = harness();
   ui.state.proxySources = [];
   const row = ui.proxySourceRow({ id: 'resin-1', kind: 'resin', name: 'Resin A', enabled: true, valid: true, local_only: true, config_version: 2, revision: 3 });
@@ -789,6 +789,9 @@ test('Resin rows use the unified edit, delete, and mode presentation', () => {
   assert.match(row, /data-proxy-source-delete="resin-1" data-kind="resin"/);
   assert.match(row, /本地轮换/);
   assert.match(row, /本地轮换没有独立端点/);
+  const apiRow = ui.proxySourceRow({ id: 'resin-2', kind: 'resin', name: 'Resin B', enabled: true, valid: true, local_only: false, config_version: 2, revision: 3 });
+  assert.doesNotMatch(row, /<div class=.subline.>(?:API|本地)轮换<\/div>/);
+  assert.doesNotMatch(apiRow, /<div class=.subline.>(?:API|本地)轮换<\/div>/);
   assert.doesNotMatch(row, /data-open-resin|配置 Resin/);
 });
 
@@ -986,6 +989,19 @@ test('Bulk proxy import supports host-port-at-credentials fallback', () => {
   assert.equal(ui.proxyImportLine('http://proxy.example:8080@user:pass').valid, true);
   assert.equal(ui.proxyImportLine('http://[2001:db8::1]:1080@user:pass').valid, true);
   assert.equal(ui.proxyImportLine('http://2001:db8::1:1080@user:pass').valid, false);
+});
+
+test('Proxy bind event shows binding details instead of an upstream error', () => {
+  const { dashboard: ui, get } = harness();
+  ui.state.events = [{ time: '2026-11-18T08:00:00Z', auth_id: 'xai-auth-1', action: 'proxy_bind', result: 'bound', detail: 'source=node-a account=lease-1 remote_lease=delete_queued' }];
+  ui.renderEvents();
+  const rendered = get('eventRows').innerHTML;
+  assert.match(rendered, /绑定代理/);
+  assert.match(rendered, /已绑定/);
+  assert.match(rendered, /来源代理：node-a/);
+  assert.match(rendered, /租约账户：lease-1/);
+  assert.match(rendered, /远端租约：已排队删除/);
+  assert.doesNotMatch(rendered, /其他上游错误/);
 });
 
 for (const { name, run } of cases) {
