@@ -201,14 +201,26 @@ func proxyErrorStatus(err error) int {
 	}
 	return 500
 }
+func proxyErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	var local *proxyManagementError
+	if errors.As(err, &local) {
+		return local.Code
+	}
+	var domain *proxy.ManagementError
+	if errors.As(err, &domain) {
+		return domain.Code
+	}
+	return ""
+}
+
 func failedProxyResult(authID, status string, err error) proxyBindingResult {
 	result := proxyBindingResult{AuthID: authID, Status: status}
 	if err != nil {
 		result.Error = redact.SanitizeError(err)
-		var typed *proxyManagementError
-		if errors.As(err, &typed) {
-			result.Code = typed.Code
-		}
+		result.Code = proxyErrorCode(err)
 	}
 	return result
 }

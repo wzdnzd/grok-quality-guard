@@ -90,6 +90,7 @@ func (s *Service) dropProxyAutoQueue() {
 	s.mgr.queueHead = 0
 	s.mgr.runtime.Running = false
 	s.mgr.runtime.WaitingReason = "disabled"
+	s.mgr.runtime.LastError = ""
 }
 
 func (s *Service) proxyAutoBindLoop(ctx context.Context) {
@@ -202,6 +203,9 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 	offset := s.mgr.scanOffset
 	s.mgr.runtime.LastScanAt = time.Now().UTC()
 	s.mgr.runtime.WaitingReason = ""
+	if proxyAutoBindTransientMessage(s.mgr.runtime.LastError) {
+		s.mgr.runtime.LastError = ""
+	}
 	s.mgr.mu.Unlock()
 	window := make([]Account, budget)
 	for i := range window {
@@ -298,30 +302,117 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 	s.mgr.mu.Unlock()
 }
 
+// Availability can change between source selection and the final save. These
+// outcomes release the account for the next scan instead of burning its retry backoff.
+var proxyAutoBindReselectCodes = map[string]struct{}{
+	"auto_bind_source_unavailable":  {},
+	"auto_bind_scope_changed":       {},
+	"no_available_sources":          {},
+	"proxy_source_not_found":        {},
+	"proxy_source_disabled":         {},
+	"proxy_source_capacity":         {},
+	"proxy_source_version_conflict": {},
+	"proxy_source_busy":             {},
+}
+
+var proxyAutoBindReselectMessages = []string{
+	"automatic source availability changed",
+	"automatic source selection changed",
+	"automatic source scope changed",
+	"no available proxy source",
+	"proxy source no longer exists",
+	"source was disabled before proxy prepare",
+	"source binding limit was reached before prepare",
+	"source change is still in progress",
+}
+
+func proxyAutoBindNeedsReselection(result proxyBindingResult, err error) bool {
+	code := strings.ToLower(strings.TrimSpace(result.Code))
+	if code == "" {
+		code = strings.ToLower(strings.TrimSpace(proxyErrorCode(err)))
+	}
+	_, ok := proxyAutoBindReselectCodes[code]
+	return ok
+}
+
+func proxyAutoBindTransientMessage(value string) bool {
+	text := strings.ToLower(strings.TrimSpace(value))
+	if text == "" {
+		return false
+	}
+	if _, ok := proxyAutoBindReselectCodes[text]; ok {
+		return true
+	}
+	for _, fragment := range proxyAutoBindReselectMessages {
+		if strings.Contains(text, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) resetProxyAutoBindForReselection(id, sourceID string) {
+	lock := s.env.ProxyAccountLock(id)
+	lock.Lock()
+	defer lock.Unlock()
+	state := s.env.ProxyStore().ProxyAccount(id)
+	if _, bound := proxyBindingSource(state); bound {
+		return
+	}
+	next := state.AutoBind
+	next.Attempts = 0
+	next.NextAttemptAt = time.Time{}
+	next.LastError = ""
+	if sourceID != "" {
+		next.LastSourceID = sourceID
+	}
+	if next == state.AutoBind {
+		return
+	}
+	state.AutoBind = next
+	_ = s.env.ProxyStore().CommitProxy(proxyCommit{Account: &proxyAccountCommit{AuthID: id, Binding: state.Proxy, AutoBind: state.AutoBind}})
+}
+
 func (s *Service) setProxyWaiting(reason string, err error) {
 	s.mgr.mu.Lock()
 	s.mgr.runtime.WaitingReason = reason
 	s.mgr.runtime.Running = false
 	if err != nil {
 		s.mgr.runtime.LastError = redact.SanitizeError(err)
+	} else if proxyAutoBindTransientMessage(s.mgr.runtime.LastError) {
+		s.mgr.runtime.LastError = ""
 	}
 	s.mgr.mu.Unlock()
 }
 
 func (s *Service) recordProxyAutoResult(id string, result proxyBindingResult, err error) {
+	reselection := proxyAutoBindNeedsReselection(result, err)
 	s.mgr.mu.Lock()
-	if result.Committed {
+	switch {
+	case result.Committed:
 		s.mgr.runtime.BoundTotal++
 		s.mgr.runtime.LastSuccessAt = time.Now().UTC()
 		s.mgr.runtime.LastError = ""
-	} else if err != nil {
+	case reselection:
+		s.mgr.runtime.SkippedTotal++
+		if proxyAutoBindTransientMessage(s.mgr.runtime.LastError) {
+			s.mgr.runtime.LastError = ""
+		}
+	case err != nil:
 		s.mgr.runtime.FailedTotal++
 		s.mgr.runtime.LastError = redact.SanitizeError(err)
-	} else {
+	default:
 		s.mgr.runtime.SkippedTotal++
 	}
 	s.mgr.mu.Unlock()
-	if err == nil || result.Committed || errors.Is(err, context.Canceled) {
+	if result.Committed {
+		return
+	}
+	if reselection {
+		s.resetProxyAutoBindForReselection(id, result.SourceID)
+		return
+	}
+	if err == nil || errors.Is(err, context.Canceled) {
 		return
 	}
 	lock := s.env.ProxyAccountLock(id)

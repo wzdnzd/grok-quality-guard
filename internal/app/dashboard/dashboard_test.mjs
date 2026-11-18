@@ -417,10 +417,42 @@ test('Auto-bind scan runtime is shown in the status bar instead of settings', ()
   ui.renderProxyAutoBind();
   assert.match(get('proxyAutoBindText').textContent, /最近扫描：2026\/11\/17/);
   assert.match(get('proxyAutoBindText').title, /累计成功：2 · 失败：1 · 跳过：3 · 排除：4 个账号/);
-  assert.match(get('proxyAutoBindText').title, /最近错误：catalog unavailable/);
+  assert.match(get('proxyAutoBindText').title, /最近错误：账号目录暂时不可用/);
+  assert.doesNotMatch(get('proxyAutoBindText').title, /catalog unavailable/);
   assert.doesNotMatch(html, /id="proxyAutoBindDetails"/);
 });
 
+test('Recoverable auto-bind source errors use Chinese copy and disappear when cleared', () => {
+  const { dashboard: ui, get } = harness();
+  const expected = '自动绑定使用的代理已变化，将重新选择代理';
+  assert.equal(ui.friendlyApiMessage('automatic source availability changed', 'auto_bind_source_unavailable'), expected);
+  assert.equal(ui.friendlyApiMessage('', 'auto_bind_source_unavailable'), expected);
+  assert.equal(ui.friendlyApiMessage('auto_bind_source_unavailable', ''), expected);
+
+  ui.state.proxy = {
+    auto_bind: { enabled: true },
+    auto_bind_runtime: { last_error: 'automatic source availability changed' }
+  };
+  ui.renderProxyAutoBind();
+  assert.match(get('proxyAutoBindText').title, new RegExp(expected));
+  assert.doesNotMatch(get('proxyAutoBindText').title, /automatic source availability changed|auto_bind_source_unavailable/);
+
+  ui.state.proxy.auto_bind_runtime.last_error = '';
+  ui.renderProxyAutoBind();
+  assert.doesNotMatch(get('proxyAutoBindText').title, /最近错误/);
+});
+
+test('Resident queue cards localize technical source errors', () => {
+  const { dashboard: ui, get } = harness();
+  ui.renderResidentQueues([{
+    id: 'auto_bind', label: '自动绑定队列', status: 'idle', total: 0, completed: 0,
+    running: 0, waiting: 0, succeeded: 0, failed: 0,
+    last_error: 'automatic source availability changed'
+  }], {});
+  const rendered = get('residentQueues').innerHTML;
+  assert.match(rendered, /自动绑定使用的代理已变化，将重新选择代理/);
+  assert.doesNotMatch(rendered, /automatic source availability changed|auto_bind_source_unavailable/);
+});
 test('Auto-bind scheduler waiting reasons are localized', () => {
   const { dashboard: ui, get } = harness();
   const cases = [
@@ -1078,6 +1110,17 @@ test('Network and management API failures use actionable Chinese copy', async ()
   const { dashboard: ui, context, mock, get } = harness();
   context.fetch = async () => { throw new TypeError('Failed to fetch'); };
   await assert.rejects(ui.api('overview'), /无法连接管理接口，请检查 CPA 服务和插件状态/);
+  context.fetch = async () => ({
+    ok: false,
+    status: 409,
+    json: async () => ({ ok: false, error: { code: 'auto_bind_source_unavailable', message: 'automatic source availability changed' } })
+  });
+  await assert.rejects(ui.api('proxy.auto_bind.run'), (error) => {
+    assert.equal(error.code, 'auto_bind_source_unavailable');
+    assert.match(error.message, /自动绑定使用的代理已变化，将重新选择代理/);
+    assert.doesNotMatch(error.message, /auto_bind_source_unavailable|automatic source availability changed/);
+    return true;
+  });
   await ui.openProxyResinEditor(null);
   assert.equal(get('proxySourceDrawer').hidden, false);
   assert.match(get('proxySourceEditor').innerHTML, /Resin 连接/);
@@ -1271,7 +1314,8 @@ test('Task detail exposes progress, queue counts, metadata and lazy item paging'
   assert.match(body, /正在处理/);
   assert.match(body, /等待中/);
   assert.match(body, /历史归档/);
-  assert.match(body, /upstream failed/);
+  assert.match(body, /操作失败，请稍后重试/);
+  assert.doesNotMatch(body, /upstream failed/);
   assert.match(body, /已截断/);
   assert.match(html, /skipped: '已跳过'/);
   assert.match(html, /probed: '已检测'/);

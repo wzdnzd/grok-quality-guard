@@ -5288,9 +5288,39 @@
       setProxyEditorMeta(null);
       return state.proxyEditing;
     }
-    function friendlyApiMessage(message) {
+    const apiErrorTranslations = Object.freeze({
+      network_error: '无法连接管理接口，请检查 CPA 服务和插件状态',
+      auto_bind_source_unavailable: '自动绑定使用的代理已变化，将重新选择代理',
+      'automatic source availability changed': '自动绑定使用的代理已变化，将重新选择代理',
+      auto_bind_scope_changed: '自动绑定代理范围已变化，将重新选择代理',
+      'automatic source selection changed': '自动绑定代理范围已变化，将重新选择代理',
+      'automatic source scope changed': '自动绑定代理范围已变化，将重新选择代理',
+      no_available_sources: '当前没有可用的自动绑定代理',
+      'no available proxy source': '当前没有可用的自动绑定代理',
+      catalog_unknown: '账号目录暂时不可用',
+      'catalog unavailable': '账号目录暂时不可用',
+      auth_read_unknown: '账号读取失败，将稍后重试',
+      proxy_source_not_found: '代理已不存在，将重新选择代理',
+      proxy_source_disabled: '代理已停用，将重新选择代理',
+      proxy_source_capacity: '代理容量已满，将重新选择代理',
+      proxy_source_version_conflict: '代理配置已变化，将重新选择代理',
+      proxy_source_busy: '代理正在更新，将稍后重试',
+      proxy_reconcile_required: '存在未完成的代理操作，请先完成同步',
+      external_proxy_present: '账号已有代理，需要先确认如何处理',
+      proxy_binding_conflict: '账号代理在保存前已变化',
+      auto_bind_disabled: '自动绑定已关闭',
+      auto_bind_ineligible: '账号状态已变化，已跳过自动绑定',
+      auth_proxy_unknown: '账号已不存在'
+    });
+    function friendlyApiMessage(message, code) {
       const text = String(message || '').trim();
-      if (/failed to fetch|networkerror|load failed|network request failed/i.test(text)) return '无法连接管理接口，请检查 CPA 服务和插件状态';
+      const key = String(code || '').trim().toLowerCase();
+      if (key && apiErrorTranslations[key]) return apiErrorTranslations[key];
+      const lower = text.toLowerCase();
+      if (lower && apiErrorTranslations[lower]) return apiErrorTranslations[lower];
+      if (/failed to fetch|networkerror|load failed|network request failed/i.test(text)) return apiErrorTranslations.network_error;
+      if (!text) return '操作失败，请稍后重试';
+      if (!/[\u3400-\u9fff]/.test(text)) return '操作失败，请稍后重试';
       return text;
     }
     async function api(action, params) {
@@ -5315,9 +5345,10 @@
         throw error;
       }
       if (!payload || !payload.ok) {
+        const rawCode = payload && payload.error && payload.error.code;
         const rawMessage = payload && payload.error && payload.error.message ? payload.error.message : ('请求失败，HTTP ' + response.status);
-        const error = new Error(friendlyApiMessage(rawMessage));
-        error.code = payload && payload.error && payload.error.code;
+        const error = new Error(friendlyApiMessage(rawMessage, rawCode));
+        error.code = rawCode;
         error.status = response.status;
         error.details = payload && payload.error && payload.error.details;
         error.path = payload && payload.error && payload.error.path;
@@ -6210,7 +6241,8 @@
       const statusText = '自动绑定：' + (enabled ? (runtime.running ? '运行中' : '已开启') : '已关闭') +
         (enabled ? (' · 队列：' + queue + ' · 执行中：' + inFlight + waiting) : '') +
         (lastScanAt ? ' · 最近扫描：' + lastScanAt : '');
-      const scanDetails = '最近扫描：' + (lastScanAt || '尚未扫描') + ' · 累计成功：' + Number(runtime.bound_total || 0) + ' · 失败：' + Number(runtime.failed_total || 0) + ' · 跳过：' + Number(runtime.skipped_total || 0) + ' · 排除：' + Number(runtime.excluded_count || summary.excluded_count || 0) + ' 个账号' + (runtime.last_error ? ' · 最近错误：' + runtime.last_error : '');
+      const lastError = runtime.last_error ? friendlyApiMessage(runtime.last_error, runtime.last_error_code) : '';
+      const scanDetails = '最近扫描：' + (lastScanAt || '尚未扫描') + ' · 累计成功：' + Number(runtime.bound_total || 0) + ' · 失败：' + Number(runtime.failed_total || 0) + ' · 跳过：' + Number(runtime.skipped_total || 0) + ' · 排除：' + Number(runtime.excluded_count || summary.excluded_count || 0) + ' 个账号' + (lastError ? ' · 最近错误：' + lastError : '');
       const statusEl = document.getElementById('proxyAutoBindText');
       statusEl.textContent = statusText;
       statusEl.title = scanDetails;
@@ -8044,9 +8076,10 @@
         const stats = [queueMetric('运行', num(queue.running || 0)), queueMetric('等待', num(queue.waiting || 0)), queueMetric('成功', num(queue.succeeded || 0)), queueMetric('失败', num(queue.failed || 0))].join('');
         const progress = total > 0 ? '<div class="progress-track"><div class="progress-fill ' + (Number(queue.failed || 0) ? 'bad' : 'good') + '" style="width:' + percent + '%"></div></div>' : '';
         const detailButton = ['auto_bind', 'proxy_health', 'proxy_changes', 'resin_cleanup', 'quality_probe'].includes(queue.id) ? '<button class="btn btn-xs" type="button" data-task-queue="' + esc(queue.id) + '">查看队列</button>' : '';
+        const queueError = queue.last_error ? friendlyApiMessage(queue.last_error, queue.last_error_code) : '';
         return '<article class="queue-card"><div class="queue-card-head"><div><strong>' + esc(queue.label) + '</strong><p>' + esc(queue.description || queue.detail || '') + '</p></div><span class="task-status ' + taskStatusClass(queue.status) + '">' + esc(taskStatusLabel(queue.status)) + '</span></div>' +
           '<div class="queue-card-stats">' + stats + '</div>' + progress + '<div class="queue-card-actions">' + detailButton + '<button class="btn btn-xs btn-ghost" type="button" data-task-queue-refresh="' + esc(queue.id) + '">刷新状态</button></div>' +
-          (queue.last_error ? '<div class="queue-card-error">' + esc(queue.last_error) + '</div>' : '') + '</article>';
+          (queueError ? '<div class="queue-card-error">' + esc(queueError) + '</div>' : '') + '</article>';
       }).join('');
     }
     function renderTaskDetailEmpty(title, detail) {
@@ -8109,14 +8142,17 @@
         (Array.isArray(task.auth_ids) && task.auth_ids.length ? '<div class="task-meta-item task-meta-wide">涉及账号<strong>' + esc(task.auth_ids.join('、')) + (Number(task.auth_count || 0) > task.auth_ids.length ? ' 等 ' + num(task.auth_count) + ' 个' : '') + '</strong></div>' : '') +
         '</div>';
       const resultSummary = taskResultSummary(task);
-      const resultHTML = (task.error || resultSummary) ? '<div class="task-result-box ' + (task.error ? 'error' : '') + '">' + esc(resultSummary || task.error) + '</div>' : '';
+      const resultMessage = resultSummary || task.error;
+      const resultText = resultMessage ? friendlyApiMessage(resultMessage, task.error_code) : '';
+      const resultHTML = resultText ? '<div class="task-result-box ' + (task.error ? 'error' : '') + '">' + esc(resultText) + '</div>' : '';
       const items = Array.isArray(detail.items) ? detail.items : [];
       const itemTotal = Number(detail.item_total ?? detail.total ?? items.length);
       const itemRows = items.map((item) => {
         const value = item && typeof item === 'object' ? item : { result: item };
         const identity = value.auth_id || value.source_id || value.account || value.id || value.name || '-';
         const statusValue = value.status || value.result || '-';
-        const reason = value.error || value.message || value.reason || value.detail || (value.endpoint ? '端点：' + value.endpoint : '') || (value.next_attempt_at ? '下次尝试：' + formatFullTime(value.next_attempt_at) : '-');
+        const rawReason = value.error || value.message || value.reason || value.detail || (value.endpoint ? '端点：' + value.endpoint : '') || (value.next_attempt_at ? '下次尝试：' + formatFullTime(value.next_attempt_at) : '-');
+        const reason = rawReason && rawReason !== '-' ? friendlyApiMessage(rawReason, value.code) : '-';
         return '<tr><td class="mono">' + esc(identity) + '</td><td><span class="task-status ' + taskStatusClass(value.status) + '">' + esc(taskStatusLabel(statusValue)) + '</span></td><td class="task-item-json">' + esc(reason) + '</td></tr>';
       }).join('');
       const itemPagination = '<div class="task-item-toolbar"><span class="muted">匹配 ' + num(detail.total || 0) + ' 条 · 共保留 ' + num(itemTotal) + ' 条' + (detail.items_truncated ? '（超出上限，已截断）' : '') + '</span><span class="muted">第 ' + Number(detail.page || 1) + ' / ' + Math.max(1, Math.ceil(Number(detail.total || 0) / Number(detail.page_size || 20))) + ' 页</span></div>';
@@ -8157,19 +8193,19 @@
         '<div class="task-count"><span>处理中</span><strong>' + num(queue.running || 0) + '</strong></div>' +
         '<div class="task-count"><span>等待</span><strong>' + num(queue.waiting || 0) + '</strong></div></div>';
       let body = '<div class="task-detail-hero"><div class="task-detail-hero-top"><div class="task-detail-hero-title"><strong>' + esc(queue.description || queue.label) + '</strong><p>' + esc(queue.detail || '') + '</p></div><span class="task-status ' + taskStatusClass(queue.status) + '">' + esc(taskStatusLabel(queue.status)) + '</span></div></div><div class="task-detail-section">' + stats + '</div>';
-      if (queue.last_error) body += '<div class="task-detail-section"><h3>最近错误</h3><div class="task-result-box error">' + esc(queue.last_error) + '</div></div>';
+      if (queue.last_error) body += '<div class="task-detail-section"><h3>最近错误</h3><div class="task-result-box error">' + esc(friendlyApiMessage(queue.last_error, queue.last_error_code)) + '</div></div>';
       if (queue.id === 'proxy_changes' && queueDetail) {
         if (queueDetail.mode === 'change') {
           const change = queueDetail.data || {};
           const items = Array.isArray(change.items) ? change.items : [];
-          body += '<div class="task-detail-section"><div class="task-item-toolbar"><h3>同步明细：' + esc(change.change_id || '') + '</h3><button class="btn btn-xs" type="button" data-task-queue-back="1">' + (queue?.synthetic ? '返回任务中心' : '返回队列') + '</button></div><div class="table-wrap task-item-table"><table><thead><tr><th>账号</th><th>结果</th><th>原因</th></tr></thead><tbody>' + (items.map((item) => '<tr><td class="mono">' + esc(item.auth_id || '-') + '</td><td>' + esc(taskStatusLabel(item.status)) + '</td><td class="task-item-json">' + esc(item.error || '-') + '</td></tr>').join('') || '<tr><td colspan="3" class="muted">暂无明细</td></tr>') + '</tbody></table></div>' + taskQueuePager(change, 'data-task-change-page') + '</div>';
+          body += '<div class="task-detail-section"><div class="task-item-toolbar"><h3>同步明细：' + esc(change.change_id || '') + '</h3><button class="btn btn-xs" type="button" data-task-queue-back="1">' + (queue?.synthetic ? '返回任务中心' : '返回队列') + '</button></div><div class="table-wrap task-item-table"><table><thead><tr><th>账号</th><th>结果</th><th>原因</th></tr></thead><tbody>' + (items.map((item) => '<tr><td class="mono">' + esc(item.auth_id || '-') + '</td><td>' + esc(taskStatusLabel(item.status)) + '</td><td class="task-item-json">' + esc(item.error ? friendlyApiMessage(item.error, item.code) : '-') + '</td></tr>').join('') || '<tr><td colspan="3" class="muted">暂无明细</td></tr>') + '</tbody></table></div>' + taskQueuePager(change, 'data-task-change-page') + '</div>';
         } else {
           const items = Array.isArray(queueDetail.data?.items) ? queueDetail.data.items : [];
           body += '<div class="task-detail-section"><h3>代理同步记录</h3><div class="table-wrap task-item-table"><table><thead><tr><th>代理</th><th>状态</th><th>进度</th><th>操作</th></tr></thead><tbody>' + (items.map((item) => '<tr><td class="mono">' + esc(item.source_id || item.id || '-') + '</td><td>' + esc(taskStatusLabel(item.status)) + '</td><td>' + esc('成功 ' + Number(item.counts?.succeeded || 0) + ' · 失败 ' + Number(item.counts?.failed || 0) + ' · 待同步 ' + Number(item.counts?.pending || 0)) + '</td><td><button class="btn btn-xs" type="button" data-task-change-detail="' + esc(item.id || item.change_id) + '">详情</button>' + (Number(item.counts?.failed || 0) ? ' <button class="btn btn-xs" type="button" data-task-change-retry="' + esc(item.id || item.change_id) + '">重试失败项</button>' : '') + '</td></tr>').join('') || '<tr><td colspan="4" class="muted">暂无同步记录</td></tr>') + '</tbody></table></div>' + taskQueuePager(queueDetail.data, 'data-task-queue-page') + '</div>';
         }
       } else if (queue.id === 'resin_cleanup' && queueDetail) {
         const items = Array.isArray(queueDetail.data?.items) ? queueDetail.data.items : [];
-        body += '<div class="task-detail-section"><h3>待清理租约</h3><div class="table-wrap task-item-table"><table><thead><tr><th>账号</th><th>状态</th><th>下次尝试 / 错误</th><th>操作</th></tr></thead><tbody>' + (items.map((item) => '<tr><td class="mono">' + esc(item.auth_id || '-') + '</td><td>' + esc(item.paused ? '已暂停' : taskStatusLabel(item.status)) + '</td><td class="task-item-json">' + esc(item.last_error || (item.next_attempt_at ? formatFullTime(item.next_attempt_at) : '等待清理')) + '</td><td><button class="btn btn-xs" type="button" data-task-cleanup-retry="' + esc(item.id) + '" ' + (item.paused ? 'disabled' : '') + '>重试</button> <button class="btn btn-xs btn-ghost" type="button" data-task-cleanup-pause="' + esc(item.id) + '" data-paused="' + (item.paused ? 'false' : 'true') + '">' + (item.paused ? '恢复' : '暂停') + '</button></td></tr>').join('') || '<tr><td colspan="4" class="muted">当前没有待清理租约</td></tr>') + '</tbody></table></div>' + taskQueuePager(queueDetail.data, 'data-task-queue-page') + '</div>';
+        body += '<div class="task-detail-section"><h3>待清理租约</h3><div class="table-wrap task-item-table"><table><thead><tr><th>账号</th><th>状态</th><th>下次尝试 / 错误</th><th>操作</th></tr></thead><tbody>' + (items.map((item) => '<tr><td class="mono">' + esc(item.auth_id || '-') + '</td><td>' + esc(item.paused ? '已暂停' : taskStatusLabel(item.status)) + '</td><td class="task-item-json">' + esc(item.last_error ? friendlyApiMessage(item.last_error, item.code) : (item.next_attempt_at ? formatFullTime(item.next_attempt_at) : '等待清理')) + '</td><td><button class="btn btn-xs" type="button" data-task-cleanup-retry="' + esc(item.id) + '" ' + (item.paused ? 'disabled' : '') + '>重试</button> <button class="btn btn-xs btn-ghost" type="button" data-task-cleanup-pause="' + esc(item.id) + '" data-paused="' + (item.paused ? 'false' : 'true') + '">' + (item.paused ? '恢复' : '暂停') + '</button></td></tr>').join('') || '<tr><td colspan="4" class="muted">当前没有待清理租约</td></tr>') + '</tbody></table></div>' + taskQueuePager(queueDetail.data, 'data-task-queue-page') + '</div>';
       } else {
         const actions = queue.id === 'auto_bind' || queue.id === 'proxy_health' ? '<button class="btn btn-xs" type="button" data-task-queue-action="auto_bind">打开自动绑定设置</button><button class="btn btn-xs btn-ghost" type="button" data-task-queue-action="scan">立即扫描</button>' : '';
         body += '<div class="task-detail-section"><h3>执行说明</h3><div class="task-result-box">' + esc(queue.detail || queue.description || '暂无更多说明') + '</div>' + (actions ? '<div class="task-detail-actions">' + actions + '</div>' : '') + '</div>';

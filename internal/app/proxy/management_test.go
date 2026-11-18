@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"path/filepath"
+	"sync"
 	"testing"
 
 	appstate "grok-quality-guard/internal/app/state"
@@ -44,7 +46,19 @@ type proxyViewTestEnvironment struct {
 	store *appstate.Store
 }
 
+var proxyViewTestAccountLocks sync.Map
+
 func (e proxyViewTestEnvironment) ProxyStore() *appstate.Store { return e.store }
+
+func (e proxyViewTestEnvironment) ProxyAccountLock(id string) *sync.Mutex {
+	lock, _ := proxyViewTestAccountLocks.LoadOrStore(id, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+func newProxyTestStore(t *testing.T) *appstate.Store {
+	t.Helper()
+	return appstate.NewStore(filepath.Join(t.TempDir(), "state.json"))
+}
 
 func TestResinSourceEndpointsUseTemplateDisplayAndReveal(t *testing.T) {
 	template, err := coreproxy.ParseTemplateURL("socks5h://resin-platform.rn-{region}-{account}:proxy-token@resin.example:2260")
@@ -55,7 +69,7 @@ func TestResinSourceEndpointsUseTemplateDisplayAndReveal(t *testing.T) {
 	template.Kind = coreproxy.TemplateResin
 	template.Name = "Resin A"
 	template.Enabled = true
-	store := appstate.NewStore("")
+	store := newProxyTestStore(t)
 	store.SetStateForTest(appstate.State{Proxy: coreproxy.ProxyState{
 		Templates: []coreproxy.Template{template},
 		ResinSources: map[string]coreproxy.ResinSourceConfig{
@@ -86,7 +100,7 @@ func TestResinSourceEndpointsUseTemplateDisplayAndReveal(t *testing.T) {
 }
 
 func TestProxySourceInfoReturnsNameAndKind(t *testing.T) {
-	store := appstate.NewStore("")
+	store := newProxyTestStore(t)
 	store.SetStateForTest(appstate.State{Proxy: coreproxy.ProxyState{
 		Nodes: []coreproxy.Node{{ID: "node-1", Name: "香港节点", Enabled: true}},
 	}})
@@ -101,7 +115,7 @@ func TestProxySourceInfoReturnsNameAndKind(t *testing.T) {
 	}
 }
 func TestAutoBindRuntimeClearsLastErrorAfterSuccess(t *testing.T) {
-	service := NewService(proxyViewTestEnvironment{store: appstate.NewStore("")})
+	service := NewService(proxyViewTestEnvironment{store: newProxyTestStore(t)})
 	service.mgr.runtime.LastError = "automatic source availability changed"
 	service.recordProxyAutoResult("auth-1", proxyBindingResult{Committed: true}, nil)
 	if got := service.mgr.runtime.LastError; got != "" {
@@ -109,5 +123,74 @@ func TestAutoBindRuntimeClearsLastErrorAfterSuccess(t *testing.T) {
 	}
 	if service.mgr.runtime.BoundTotal != 1 || service.mgr.runtime.LastSuccessAt.IsZero() {
 		t.Fatalf("success runtime was not updated: %#v", service.mgr.runtime)
+	}
+}
+
+func TestFailedProxyResultPreservesSourceDomainErrorCode(t *testing.T) {
+	err := coreproxy.NewError("proxy_source_disabled", 409, "source was disabled before proxy prepare")
+	result := failedProxyResult("auth-1", "failed", err)
+	if result.Code != "proxy_source_disabled" {
+		t.Fatalf("result code = %q, want proxy_source_disabled", result.Code)
+	}
+}
+
+func TestAutoBindRecoverableSourceChangeResetsForReselection(t *testing.T) {
+	store := newProxyTestStore(t)
+	store.SetStateForTest(appstate.State{Proxy: coreproxy.ProxyState{AutoBind: coreproxy.AutoBindConfig{
+		Enabled: true, RetryInitial: "1m", RetryMax: "1h",
+	}}})
+	service := NewService(proxyViewTestEnvironment{store: store})
+	service.mgr.runtime.LastError = "automatic source availability changed"
+	service.mgr.runtime.FailedTotal = 3
+	service.mgr.runtime.SkippedTotal = 2
+	err := proxyError("auto_bind_source_unavailable", 409, "automatic source availability changed")
+	result := failedProxyResult("auth-1", "failed", err)
+	service.recordProxyAutoResult("auth-1", result, err)
+
+	state := store.ProxyAccount("auth-1")
+	if state.AutoBind.LastError != "" {
+		t.Fatalf("account last error = %q, want cleared for reselection", state.AutoBind.LastError)
+	}
+	if !state.AutoBind.NextAttemptAt.IsZero() || state.AutoBind.Attempts != 0 {
+		t.Fatalf("recoverable retry state = %#v, want immediately eligible for the next scan", state.AutoBind)
+	}
+	if service.mgr.runtime.LastError != "" {
+		t.Fatalf("runtime last error = %q, want recoverable source change hidden", service.mgr.runtime.LastError)
+	}
+	if service.mgr.runtime.FailedTotal != 3 || service.mgr.runtime.SkippedTotal != 3 {
+		t.Fatalf("runtime counters = failed %d skipped %d, want recoverable result counted as skipped", service.mgr.runtime.FailedTotal, service.mgr.runtime.SkippedTotal)
+	}
+}
+
+func TestProxyWaitingWithoutErrorClearsStaleRuntimeError(t *testing.T) {
+	service := NewService(proxyViewTestEnvironment{store: newProxyTestStore(t)})
+	service.mgr.runtime.LastError = "automatic source availability changed"
+	service.setProxyWaiting("waiting_sources", nil)
+	if service.mgr.runtime.LastError != "" {
+		t.Fatalf("last error = %q, want cleared while waiting for sources", service.mgr.runtime.LastError)
+	}
+	if service.mgr.runtime.WaitingReason != "waiting_sources" {
+		t.Fatalf("waiting reason = %q", service.mgr.runtime.WaitingReason)
+	}
+}
+
+func TestAutoBindNoAvailableSourcesClearsStaleRetryState(t *testing.T) {
+	store := newProxyTestStore(t)
+	store.SetStateForTest(appstate.State{
+		Accounts: map[string]*appstate.AccountState{
+			"auth-1": {AuthID: "auth-1", AutoBind: coreproxy.AutoBindAccountState{Attempts: 4, LastError: "no available proxy source"}},
+		},
+		Proxy: coreproxy.ProxyState{AutoBind: coreproxy.AutoBindConfig{Enabled: true, RetryInitial: "1m", RetryMax: "1h"}},
+	})
+	service := NewService(proxyViewTestEnvironment{store: store})
+	service.mgr.runtime.LastError = "no available proxy source"
+	service.recordProxyAutoResult("auth-1", proxyBindingResult{Status: "unavailable", Code: "no_available_sources", Error: "no available proxy source"}, nil)
+
+	state := store.ProxyAccount("auth-1")
+	if state.AutoBind.LastError != "" || state.AutoBind.Attempts != 0 {
+		t.Fatalf("auto-bind state = %#v, want stale unavailable state cleared", state.AutoBind)
+	}
+	if service.mgr.runtime.LastError != "" {
+		t.Fatalf("runtime last error = %q, want cleared for source waiting", service.mgr.runtime.LastError)
 	}
 }
