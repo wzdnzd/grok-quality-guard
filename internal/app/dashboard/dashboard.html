@@ -3395,12 +3395,12 @@
             <table class="accounts-table">
               <colgroup>
                 <col style="width:36px">
-                <col style="width:16%">
+                <col style="width:15%">
                 <col style="width:76px">
-                <col style="width:25%">
+                <col style="width:20%">
                 <col style="width:11%">
                 <col style="width:16%">
-                <col style="width:10%">
+                <col style="width:16%">
                 <col style="width:160px">
               </colgroup>
               <thead>
@@ -3410,8 +3410,8 @@
                   <th>状态</th>
                   <th>最近判定 / 禁用原因</th>
                   <th>质量指标</th>
-                  <th title="代理类型与名称">代理</th>
-                  <th title="冷却截止与探测退避">冷却 / 探测</th>
+                  <th title="代理绑定状态与轮换代数">绑定状态</th>
+                  <th title="冷却截止时间">冷却</th>
                   <th style="text-align:right">操作</th>
                 </tr>
               </thead>
@@ -4180,7 +4180,7 @@
       if (!items.length) return '<p class="proxy-preview-empty">暂无预览样本</p>';
       return '<div class="proxy-preview-summary">' + esc(intro || '验证通过') + '<span class="proxy-preview-badge">密码已脱敏</span></div><div class="proxy-preview-list">' + items.map((sample, index) => {
         const values = Object.entries(sample.values || {});
-        return '<article class="proxy-preview-card"><div class="proxy-preview-card-head"><span class="proxy-preview-index">样本 ' + String(index + 1).padStart(2, '0') + '</span><span class="proxy-preview-badge">标准代理 URL</span></div><div class="proxy-preview-url mono">' + esc(sample.display_url || sample.masked_url || sample.endpoint || '-') + '</div>' + (values.length ? '<div class="proxy-preview-values">' + values.map(([name, value]) => '<span class="proxy-preview-value"><b>' + esc(name) + '</b>' + esc(value) + '</span>').join('') + '</div>' : '') + '</article>';
+        return '<article class="proxy-preview-card"><div class="proxy-preview-card-head"><span class="proxy-preview-index">样本 ' + String(index + 1).padStart(2, '0') + '</span><span class="proxy-preview-badge">标准代理 URL</span></div><div class="proxy-preview-url mono">' + esc(sample.display_url || sample.masked_url || sample.endpoint || '-') + '</div>' + (values.length ? '<div class="proxy-preview-values">' + values.map(([name, value]) => '<span class="proxy-preview-value"><b>' + esc(name) + ':</b>' + esc(value) + '</span>').join('') + '</div>' : '') + '</article>';
       }).join('') + '</div>';
     }
     const num = (value, digits) => new Intl.NumberFormat('zh-CN', { maximumFractionDigits: digits == null ? 0 : digits }).format(Number(value || 0));
@@ -4919,13 +4919,9 @@
       else if (proxyStatus === 'reconcile_required') proxyBadge = badge('待核对', 'bad');
       else if (proxyStatus === 'external') proxyBadge = badge('外部配置', '');
       else if (proxyStatus === 'unknown') proxyBadge = badge('读取失败', 'bad');
-      const proxyIdentity = proxySourceIdentity(account);
-      const proxySourceText = [proxyIdentity.kindLabel, proxyIdentity.name].filter(Boolean).join(' · ');
       const proxyGeneration = Number(account.proxy_generation || 0) > 0 ? '<span class="proxy-generation">第 ' + esc(account.proxy_generation) + ' 代</span>' : '';
-      const proxyDetail = proxySourceText ? '<div class="proxy-source-line truncate-line" title="' + esc(proxySourceText) + '">' + esc(proxySourceText) + '</div>' : '';
-      const proxyCell = '<div class="proxy-summary"><div class="proxy-summary-head">' + proxyBadge + proxyGeneration + '</div>' + proxyDetail + '</div>';
+      const proxyCell = '<div class="proxy-summary"><div class="proxy-summary-head">' + proxyBadge + proxyGeneration + '</div></div>';
       const cooldown = account.cooldown_until ? '冷却至：' + formatFullTime(account.cooldown_until) : '无冷却';
-      const probe = account.probe_backoff_until ? '探测退避至：' + formatFullTime(account.probe_backoff_until) : '可立即探测';
       const metricDetail = '输出：' + num(account.output_tokens) + ' · 推理：' + num(account.reasoning_tokens) + ' · 密文：' + formatBytes(account.encrypted_bytes);
       const isolatedByGuard = ['cooling', 'quota_exhausted', 'credential_invalid', 'disabled_by_guard'].includes(account.state);
       const disableReason = account.disable_reason ? reasonLabel(account.disable_reason) : '';
@@ -4935,7 +4931,7 @@
       const displayName = account.display_full || account.display || account.label || '未命名账号';
       const displayID = account.auth_id_display || account.auth_id;
       return '<tr><td class="select-cell"><input type="checkbox" data-account-select="' + authID + '" aria-label="选择账号" ' + (selected ? 'checked' : '') + '></td>' +
-        '<td><div class="account-name truncate-line" title="' + esc(displayName) + '">' + esc(account.display || account.label || '未命名账号') + '</div><div class="subline truncate-line" title="' + esc(account.auth_id) + '">' + esc(displayID) + '</div></td><td class="status-cell nowrap">' + badge(stateLabel(account.state), stateTone(account.state)) + '</td><td><div class="truncate-line" title="' + esc(reasonSummary) + '">' + esc(reasonSummary) + '</div><div class="subline truncate-line" title="' + esc(attemptDetail) + '">' + esc(attemptDetail) + '</div>' + disableReasonDetail + '</td><td><div class="metric-inline"><strong>' + esc(num(account.tps, 1)) + '</strong><span class="muted">TPS</span></div><div class="subline truncate-line" title="' + esc(metricDetail) + '">' + esc(metricDetail) + '</div></td><td class="proxy-cell">' + proxyCell + '</td><td class="time-cell"><div class="cell-primary truncate-line" title="' + esc(cooldown) + '">' + esc(cooldown) + '</div><div class="subline truncate-line" title="' + esc(probe) + '">' + esc(probe) + '</div></td><td class="actions-cell"><div class="actions"><button class="btn btn-xs" type="button" data-account-action="accounts.probe" data-auth="' + authID + '">' + icon('play') + '检测</button><button class="btn btn-xs" type="button" data-open-account="' + authID + '">' + icon('eye') + '详情</button></div></td></tr>';
+        '<td><div class="account-name truncate-line" title="' + esc(displayName) + '">' + esc(account.display || account.label || '未命名账号') + '</div><div class="subline truncate-line" title="' + esc(account.auth_id) + '">' + esc(displayID) + '</div></td><td class="status-cell nowrap">' + badge(stateLabel(account.state), stateTone(account.state)) + '</td><td><div class="truncate-line" title="' + esc(reasonSummary) + '">' + esc(reasonSummary) + '</div><div class="subline truncate-line" title="' + esc(attemptDetail) + '">' + esc(attemptDetail) + '</div>' + disableReasonDetail + '</td><td><div class="metric-inline"><strong>' + esc(num(account.tps, 1)) + '</strong><span class="muted">TPS</span></div><div class="subline truncate-line" title="' + esc(metricDetail) + '">' + esc(metricDetail) + '</div></td><td class="proxy-cell">' + proxyCell + '</td><td class="time-cell"><div class="cell-primary truncate-line" title="' + esc(cooldown) + '">' + esc(cooldown) + '</div></td>' + '<td class="actions-cell"><div class="actions"><button class="btn btn-xs" type="button" data-account-action="accounts.probe" data-auth="' + authID + '">' + icon('play') + '检测</button><button class="btn btn-xs" type="button" data-open-account="' + authID + '">' + icon('eye') + '详情</button></div></td></tr>';
     }
 
     function leaseStatus(account) {

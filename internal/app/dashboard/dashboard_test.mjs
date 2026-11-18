@@ -114,7 +114,7 @@ function harness() {
     Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
     fetch: async () => { throw new Error('Unexpected network request'); }
   });
-  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML };', context);
+  vm.runInContext(source + '\n globalThis.dashboard = { state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, renderProxyTaskDrawer, refreshProxyTasks, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, loadProxyTaskDetail, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -282,7 +282,23 @@ test('A large relation table displays twenty rows without creating a whole tree'
   assert.equal((card.querySelector('[data-group-body]').innerHTML.match(/data-group-drill-value=/g) || []).length, 50);
 });
 
-test('A stale condition preview cannot overwrite newer inputs or validation state', async () => {
+test('Account rows show binding status and truncate full cooldown labels', () => {
+  const { dashboard: ui } = harness();
+  assert.match(html, /<th title="代理绑定状态与轮换代数">绑定状态<\/th>/);
+  assert.match(html, /<th title="冷却截止时间">冷却<\/th>/);
+  assert.doesNotMatch(html, /\.time-cell \.cell-primary,\s*\.time-cell \.subline/);
+  const cooling = ui.accountRow({
+    auth_id: 'auth-cooling', display: 'cooling@example.com', state: 'cooling',
+    cooldown_until: '2026-11-18T10:00:00Z', probe_backoff_until: '2026-11-18T11:00:00Z',
+    proxy_status: 'bound', proxy_generation: 2, proxy_source_kind: 'template', proxy_source_name: 'Hidden source'
+  });
+  assert.match(cooling, /<td class="time-cell"><div class="cell-primary truncate-line" title="冷却至：/);
+  assert.match(cooling, /title="冷却至：2026\/11\/18[^"]*"/);
+  assert.doesNotMatch(cooling, /可立即探测|探测退避至|Hidden source|模板/);
+  const ready = ui.accountRow({ auth_id: 'auth-ready', display: 'ready@example.com', state: 'healthy', cooldown_until: '', probe_backoff_until: '2026-11-18T11:00:00Z' });
+  assert.match(ready, /<td class="time-cell"><div class="cell-primary truncate-line" title="无冷却">无冷却<\/div><\/td>/);
+  assert.doesNotMatch(ready, /可立即探测|探测退避至/);
+});test('A stale condition preview cannot overwrite newer inputs or validation state', async () => {
   const { dashboard: ui, get, mock } = harness();
   const response = deferred();
   const editor = { kind: 'template', revision: 1, assignments: { vendor: 'A' } };
@@ -299,7 +315,8 @@ test('A stale condition preview cannot overwrite newer inputs or validation stat
   mock('api', async () => ({ valid: true, samples: [{ display_url: 'socks5h://preview-b:******@proxy.example:1080', masked_url: 'socks5h://proxy.example:1080', values: { vendor: 'B', profile: '<unsafe>' } }] }));
   await ui.previewProxyTemplate(editor, null, {}, new Element());
   assert.match(get('proxyTemplatePreviewResults').innerHTML, /socks5h:\/\/preview-b:\*\*\*\*\*\*@proxy\.example:1080/);
-  assert.match(get('proxyTemplatePreviewResults').innerHTML, /vendor/);
+  assert.match(get('proxyTemplatePreviewResults').innerHTML, /<b>vendor:<\/b>B<\/span>/);
+  assert.match(get('proxyTemplatePreviewResults').innerHTML, /<b>profile:<\/b>&lt;unsafe&gt;<\/span>/);
   assert.match(get('proxyTemplatePreviewResults').innerHTML, /&lt;unsafe&gt;/);
 });
 
@@ -758,7 +775,7 @@ test('Proxy source connectivity and check time use separate compact columns', ()
   assert.doesNotMatch(row, /检测：|尚未检测|检测时生成临时端点/);
   assert.doesNotMatch(row, />可用</);
   assert.match(row, /仅表示最近一次通过网络代理建立测试目标隧道的检测结果/);
-  assert.match(html, /网络连通性<\/th><th title="最近一次网络连通性检测时间">检测时间<\/th>/);
+  assert.match(html, /网络连通性<\/th>\s*<th title="最近一次网络连通性检测时间">检测时间<\/th>/);
 
   const templateRow = ui.proxySourceRow({
     id: 'template-1', kind: 'template', name: 'Region template', enabled: true, valid: true,
