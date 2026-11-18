@@ -633,6 +633,26 @@ test('Binding status metrics use canonical names only', () => {
   assert.equal(counts.unknown, 4);
 });
 
+test('Binding summary separates account coverage from proxy availability', () => {
+  const { dashboard: ui, get } = harness();
+  ui.state.proxy = {
+    binding_counts: { bound: 3092, unbound: 0, external: 0, drifted: 0, unknown: 0, reconcile_required: 0 },
+    binding_total: 3092,
+    source_count: 2,
+    available_source_count: 2,
+    auto_bind: {},
+    auto_bind_runtime: {}
+  };
+  ui.state.proxySources = [];
+  ui.state.leases = [];
+  ui.state.leaseList = { total: 3092, page: 1, page_size: 50 };
+  ui.renderResin();
+  const rendered = get('resinMetrics').innerHTML;
+  assert.match(rendered, /绑定覆盖率：100%/);
+  assert.match(rendered, /可用：2 \/ 2/);
+  assert.doesNotMatch(rendered, /可绑定代理：2/);
+});
+
 test('A flat source detail response preserves existing template relations', async () => {
   const { dashboard: ui, get, mock } = harness();
   let editFields;

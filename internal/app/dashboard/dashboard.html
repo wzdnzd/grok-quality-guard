@@ -2370,7 +2370,6 @@
                 </svg>24 小时统计</h2>
               <p>只统计当前保留的事件，自动探测和真实请求都会计入</p>
             </div>
-            <span class="badge info" id="overviewModeBadge">被动观测</span>
           </div>
           <div class="stats-grid" id="overviewStats"></div>
         </section>
@@ -3670,10 +3669,9 @@
       const quarantined = Number(states.cooling || 0) + Number(states.disabled_by_guard || 0);
       const attention = Number(states.suspect || 0) + Number(states.degraded || 0) + quarantined;
       const enabled = overview.enabled !== false;
-      document.getElementById('overviewModeBadge').textContent = modeLabel(policy);
       document.getElementById('overviewMetrics').innerHTML = [
         metricCard(enabled ? 'shield' : 'power', enabled ? '运行中' : '已停用', enabled ? '守护服务' : '插件已停用', enabled ? '正在接收质量事件' : '请在 CPA 配置中启用插件', enabled ? 'good' : 'bad'),
-        metricCard('activity', modeLabel(policy), '检测模式', policy.transparent_guard ? '可在首个可见块前换号' : '仅观测真实请求'),
+        metricCard('activity', modeLabel(policy), '检测模式', policy.transparent_guard ? '可在首个可见块前换号' : (policy.passive_guard ? '仅观测真实请求' : '仅管理账号与代理')),
         metricCard('users', num(total), '已管理账号', num(healthy) + ' 个健康账号', 'info'),
         metricCard('alert', num(attention), '需关注账号', num(quarantined) + ' 个已隔离', attention ? 'warn' : 'good')
       ].join('');
@@ -3774,7 +3772,7 @@
       const states = overview.states || state.stateCounts || {};
       const bound = proxySummaryCounts(state.proxy).bound;
       document.getElementById('accountMetrics').innerHTML = [
-        metricCard('users', num(state.accountsTotal || state.accounts.length), '账号总数', '来自当前 Grok 账号目录'),
+        metricCard('users', num(state.accountsTotal || state.accounts.length), '账号总数', '来自 xAI 订阅'),
         metricCard('shield', num(states.healthy || 0), '健康账号', '最近一次质量判定通过', 'good'),
         metricCard('alert', num(Number(states.suspect || 0) + Number(states.degraded || 0)), '可疑 / 降智', '需要关注或确认', (Number(states.suspect || 0) + Number(states.degraded || 0)) ? 'warn' : 'good'),
         metricCard('database', num(bound), '代理已管理', '由通用代理模块记录并可核对', 'info')
@@ -3858,11 +3856,16 @@
       const sourceTotal = Number(proxy.source_count ?? state.proxySourceList?.total ?? sources.length);
       const configured = sourceTotal > 0;
       const available = Number(proxy.available_source_count ?? sources.filter((source) => source.enabled && source.valid).length);
+      const statusTotal = ['bound', 'unbound', 'external', 'drifted', 'unknown', 'reconcile_required'].reduce((sum, key) => sum + Number(counts[key] || 0), 0);
+      const reportedBindingTotal = Number(proxy.binding_total);
+      const bindingTotal = Number.isFinite(reportedBindingTotal) && reportedBindingTotal > 0 ? reportedBindingTotal : statusTotal;
+      const bindingCoverage = bindingTotal ? Math.min(100, Math.round(Number(counts.bound || 0) / bindingTotal * 100)) : 0;
+      const bindingCoverageDetail = bindingTotal ? '绑定覆盖率：' + num(bindingCoverage) + '%' : '暂无账号';
       document.getElementById('resinMetrics').innerHTML = [
-        metricCard('database', num(counts.bound || 0), '已绑定账号', '可绑定代理：' + available, 'info'),
+        metricCard('database', num(counts.bound || 0), '已绑定账号', bindingCoverageDetail, 'info'),
         metricCard('users', num(counts.unbound || 0), '未绑定账号', '实际代理为空', ''),
         metricCard('alert', num(Number(counts.external || 0) + Number(counts.unknown || 0) + Number(counts.drifted || 0) + Number(counts.reconcile_required || 0)), '需核对', '外部配置、漂移或读取失败', Number(counts.external || 0) + Number(counts.drifted || 0) + Number(counts.unknown || 0) ? 'warn' : 'good'),
-        metricCard('check', num(sourceTotal), '代理', '可绑定代理：' + available, available ? 'good' : 'warn')
+        metricCard('check', num(sourceTotal), '代理', '可用：' + num(available) + ' / ' + num(sourceTotal), available ? 'good' : 'warn')
       ].join('');
       document.getElementById('resinConfigState').textContent = !configured ? '未配置代理' : (available ? '有可绑定代理' : '无可绑定代理');
       const notice = document.getElementById('resinNotice');

@@ -127,7 +127,7 @@ func TestManagementResourceAndActionAccess(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(response.Body), "/plugins/grok-quality-guard/api") {
 		t.Fatalf("unexpected dashboard response: status=%d body=%s", response.StatusCode, response.Body)
 	}
-	for _, removed := range []string{"代理（脱敏）", "选择全部筛选结果", "const strikeBadge = strikes.length", "badge('连续 ' + strikes.join", "id=\"refreshBtn\"", "window.confirm("} {
+	for _, removed := range []string{"代理（脱敏）", "选择全部筛选结果", "const strikeBadge = strikes.length", "badge('连续 ' + strikes.join", "id=\"refreshBtn\"", "id=\"overviewModeBadge\"", "window.confirm("} {
 		if strings.Contains(string(response.Body), removed) {
 			t.Fatalf("dashboard still contains obsolete label %q", removed)
 		}
