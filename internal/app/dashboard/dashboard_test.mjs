@@ -1011,6 +1011,12 @@ test('Checkbox controls reserve a label line and retry fields share one row', ()
   assert.match(html, /退避等待的最长时间/);
 });
 
+test('Task history checkbox keeps its hint below the control and matches field height', () => {
+  assert.match(html, /<div class="field task-history-field">\s*<label class="check-row"><input id="p_task_history_enabled" type="checkbox"><span>保存历史任务<\/span><\/label>\s*<span class="hint">关闭后不再保存新任务记录<\/span>/);
+  assert.match(html, /\.policy-group-task-history \.field > \.check-row,\s*\.policy-group-task-history \.field > input\s*\{\s*height: 33px;\s*min-height: 33px;/);
+  assert.doesNotMatch(html, /task-history-switch/);
+});
+
 test('Overview cards pair into equal-height rows', () => {
   assert.doesNotMatch(html, /<div class="overview-grid">\s*<div class="stack">/);
   assert.match(html, /<div class="overview-grid">\s*<section class="card overview-card" aria-labelledby="qualityTitle">[\s\S]*?aria-labelledby="policySummaryTitle"[\s\S]*?aria-labelledby="recentTitle"[\s\S]*?aria-labelledby="resinSummaryTitle"/);

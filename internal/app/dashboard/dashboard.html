@@ -1746,8 +1746,10 @@
       grid-template-columns: minmax(180px, 1.15fr) repeat(4, minmax(120px, 1fr));
     }
 
-    .policy-group-task-history .task-history-switch {
-      min-height: 100%;
+    .policy-group-task-history .field > .check-row,
+    .policy-group-task-history .field > input {
+      height: 33px;
+      min-height: 33px;
     }
 
     .task-center-grid {
@@ -4573,9 +4575,10 @@
               <section class="policy-group policy-group-task-history">
                 <h3 class="section-title"><svg class="icon"><use href="#i-terminal"></use></svg>任务中心与历史记录</h3>
                 <div class="field-grid">
-                  <label class="check-card task-history-switch"><input id="p_task_history_enabled" type="checkbox"><span
-                      class="check-copy"><span class="check-title">保存历史任务</span><span
-                        class="check-desc">关闭后只显示当前任务，不再保留新完成记录</span></span></label>
+                  <div class="field task-history-field">
+                    <label class="check-row"><input id="p_task_history_enabled" type="checkbox"><span>保存历史任务</span></label>
+                    <span class="hint">关闭后不再保存新任务记录</span>
+                  </div>
                   <div class="field"><label for="p_task_history_retention_days">保留天数</label><input
                       id="p_task_history_retention_days" type="number" min="1" max="365"><span
                       class="hint">从任务完成时间开始计算，默认：3 天</span></div>
