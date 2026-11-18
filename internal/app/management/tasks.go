@@ -12,6 +12,30 @@ import (
 	proxy "grok-quality-guard/internal/proxy"
 )
 
+type taskCenterQueueItem struct {
+	ID        string    `json:"id"`
+	AuthID    string    `json:"auth_id,omitempty"`
+	SourceID  string    `json:"source_id,omitempty"`
+	Label     string    `json:"label"`
+	Status    string    `json:"status"`
+	Position  int       `json:"position,omitempty"`
+	QueuedAt  time.Time `json:"queued_at,omitempty"`
+	StartedAt time.Time `json:"started_at,omitempty"`
+}
+
+type taskCenterQueuePage struct {
+	Items    []taskCenterQueueItem `json:"items"`
+	Total    int                   `json:"total"`
+	Page     int                   `json:"page"`
+	PageSize int                   `json:"page_size"`
+}
+
+type taskCenterQueueDetail struct {
+	QueueID string                `json:"queue_id"`
+	Active  []taskCenterQueueItem `json:"active"`
+	Waiting taskCenterQueuePage   `json:"waiting"`
+}
+
 func (s *Service) actionTaskCenterList(params map[string]any) (any, int, error) {
 	filter := tasks.TaskCenterFilter{
 		Page:     action.Int(params, "page", 1),
@@ -35,6 +59,99 @@ func (s *Service) actionTaskCenterList(params map[string]any) (any, int, error) 
 	}, http.StatusOK, nil
 }
 
+func (s *Service) actionTaskCenterQueue(params map[string]any) (any, int, error) {
+	queueID := strings.TrimSpace(asString(params["queue_id"]))
+	page := max(1, action.Int(params, "page", 1))
+	pageSize := action.Int(params, "page_size", 20)
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 20
+	}
+	switch queueID {
+	case "quality_probe":
+		detail := s.env.ProbeQueueDetail()
+		active := make([]taskCenterQueueItem, 0, len(detail.Active))
+		for _, entry := range detail.Active {
+			status := strings.TrimSpace(entry.Status)
+			if status == "" {
+				status = "running"
+			}
+			active = append(active, taskCenterQueueItem{ID: entry.AuthID, AuthID: entry.AuthID, Label: entry.AuthID, Status: status, QueuedAt: entry.QueuedAt, StartedAt: entry.StartedAt})
+		}
+		waiting := make([]taskCenterQueueItem, 0, len(detail.Waiting))
+		for index, entry := range detail.Waiting {
+			status := strings.TrimSpace(entry.Status)
+			if status == "" {
+				status = "waiting"
+			}
+			waiting = append(waiting, taskCenterQueueItem{ID: entry.AuthID, AuthID: entry.AuthID, Label: entry.AuthID, Status: status, Position: index + 1, QueuedAt: entry.QueuedAt})
+		}
+		return taskCenterQueueDetail{QueueID: queueID, Active: active, Waiting: paginateTaskCenterQueue(waiting, page, pageSize)}, http.StatusOK, nil
+	case "auto_bind", "proxy_health":
+		detail, ok := s.env.ProxyQueueDetail(queueID)
+		if !ok {
+			return nil, http.StatusBadRequest, errors.New("unknown queue_id")
+		}
+		active := make([]taskCenterQueueItem, 0, len(detail.Active))
+		for _, entry := range detail.Active {
+			status := strings.TrimSpace(entry.Status)
+			if status == "" {
+				status = "running"
+			}
+			item := taskCenterQueueItem{ID: entry.ID, Label: entry.ID, Status: status, QueuedAt: entry.QueuedAt, StartedAt: entry.StartedAt}
+			if queueID == "auto_bind" {
+				item.AuthID = entry.ID
+				item.Label = entry.ID
+			} else {
+				item.SourceID = entry.ID
+				if name, _ := s.proxySourceInfo(entry.ID); name != "" {
+					item.Label = name
+				}
+			}
+			active = append(active, item)
+		}
+		waiting := make([]taskCenterQueueItem, 0, len(detail.Waiting))
+		for index, entry := range detail.Waiting {
+			status := strings.TrimSpace(entry.Status)
+			if status == "" {
+				status = "waiting"
+			}
+			item := taskCenterQueueItem{ID: entry.ID, Label: entry.ID, Status: status, Position: index + 1, QueuedAt: entry.QueuedAt}
+			if queueID == "auto_bind" {
+				item.AuthID = entry.ID
+			} else {
+				item.SourceID = entry.ID
+				if name, _ := s.proxySourceInfo(entry.ID); name != "" {
+					item.Label = name
+				}
+			}
+			waiting = append(waiting, item)
+		}
+		return taskCenterQueueDetail{QueueID: queueID, Active: active, Waiting: paginateTaskCenterQueue(waiting, page, pageSize)}, http.StatusOK, nil
+	default:
+		return nil, http.StatusBadRequest, errors.New("unknown queue_id")
+	}
+}
+
+func paginateTaskCenterQueue(items []taskCenterQueueItem, page, pageSize int) taskCenterQueuePage {
+	total := len(items)
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 20
+	}
+	start := total
+	if page-1 <= total/pageSize {
+		start = (page - 1) * pageSize
+	}
+	end := min(total, start+pageSize)
+	return taskCenterQueuePage{
+		Items:    append([]taskCenterQueueItem(nil), items[start:end]...),
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}
+}
 func (s *Service) actionTaskCenterDetail(params map[string]any) (any, int, error) {
 	taskID := strings.TrimSpace(asString(params["task_id"]))
 	if taskID == "" {
@@ -123,14 +240,19 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 	}
 	runtime := proxyService.AutoBindRuntime()
 	autoConfig := store.ProxyAutoBindConfig()
+	autoRunning, autoWaiting := runtime.InFlight, runtime.QueueDepth
+	if detail, ok := s.env.ProxyQueueDetail("auto_bind"); ok {
+		autoRunning = len(detail.Active)
+		autoWaiting = len(detail.Waiting)
+	}
 
-	if shouldShowAutoBindQueue(autoConfig.Enabled, runtime.QueueDepth, runtime.InFlight, runtime.Running) {
+	if shouldShowAutoBindQueue(autoConfig.Enabled, autoWaiting, autoRunning, runtime.Running) {
 		completed := int(runtime.BoundTotal + runtime.FailedTotal + runtime.SkippedTotal)
 		status := "idle"
-		if runtime.QueueDepth > 0 || runtime.InFlight > 0 || runtime.Running {
+		if autoWaiting > 0 || autoRunning > 0 || runtime.Running {
 			status = "running"
 		}
-		if !autoConfig.Enabled && runtime.QueueDepth == 0 && runtime.InFlight == 0 {
+		if !autoConfig.Enabled && autoWaiting == 0 && autoRunning == 0 {
 			status = "paused"
 		}
 		queues = append(queues, map[string]any{
@@ -139,10 +261,10 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 			"category":        "proxy",
 			"status":          status,
 			"description":     autoBindQueueDescription(autoConfig.Enabled, runtime.WaitingReason),
-			"total":           completed + runtime.QueueDepth + runtime.InFlight,
+			"total":           completed + autoWaiting + autoRunning,
 			"completed":       completed,
-			"running":         runtime.InFlight,
-			"waiting":         runtime.QueueDepth,
+			"running":         autoRunning,
+			"waiting":         autoWaiting,
 			"succeeded":       runtime.BoundTotal,
 			"failed":          runtime.FailedTotal,
 			"skipped":         runtime.SkippedTotal,
@@ -155,16 +277,22 @@ func (s *Service) taskCenterResidentQueues() []map[string]any {
 	}
 
 	if shouldShowProxyHealthQueue(autoConfig.Enabled, autoConfig.RequireHealthy) {
+		healthDetail, _ := s.env.ProxyQueueDetail("proxy_health")
+		healthRunning, healthWaiting := len(healthDetail.Active), len(healthDetail.Waiting)
+		healthStatus := "idle"
+		if healthRunning > 0 || healthWaiting > 0 {
+			healthStatus = "running"
+		}
 		queues = append(queues, map[string]any{
 			"id":          "proxy_health",
 			"label":       "代理健康检查",
 			"category":    "proxy",
-			"status":      "running",
+			"status":      healthStatus,
 			"description": "自动绑定要求代理保持新鲜健康状态",
-			"total":       0,
+			"total":       healthRunning + healthWaiting,
 			"completed":   0,
-			"running":     0,
-			"waiting":     0,
+			"running":     healthRunning,
+			"waiting":     healthWaiting,
 			"succeeded":   0,
 			"failed":      0,
 			"skipped":     0,

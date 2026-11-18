@@ -103,11 +103,13 @@ func TestResidentQueueVisibility(t *testing.T) {
 
 type taskCenterQueueTestEnvironment struct {
 	Environment
-	store      *appstate.Store
-	policy     appconfig.Policy
-	enabled    bool
-	probeQueue ProbeQueueSnapshot
-	proxy      *proxyapp.Service
+	store        *appstate.Store
+	policy       appconfig.Policy
+	enabled      bool
+	probeQueue   ProbeQueueSnapshot
+	probeDetail  ProbeQueueDetail
+	proxy        *proxyapp.Service
+	proxyDetails map[string]proxyapp.ResidentQueueDetail
 }
 
 func (e taskCenterQueueTestEnvironment) Store() *appstate.Store   { return e.store }
@@ -115,6 +117,18 @@ func (e taskCenterQueueTestEnvironment) Policy() appconfig.Policy { return e.pol
 func (e taskCenterQueueTestEnvironment) ConfigEnabled() bool      { return e.enabled }
 func (e taskCenterQueueTestEnvironment) ProbeQueueSnapshot() ProbeQueueSnapshot {
 	return e.probeQueue
+}
+func (e taskCenterQueueTestEnvironment) ProbeQueueDetail() ProbeQueueDetail {
+	return e.probeDetail
+}
+func (e taskCenterQueueTestEnvironment) ProxyQueueDetail(queueID string) (proxyapp.ResidentQueueDetail, bool) {
+	if detail, ok := e.proxyDetails[queueID]; ok {
+		return detail, true
+	}
+	if e.proxy == nil {
+		return proxyapp.ResidentQueueDetail{}, false
+	}
+	return e.proxy.QueueDetail(queueID)
 }
 func (e taskCenterQueueTestEnvironment) Proxy() *proxyapp.Service { return e.proxy }
 
@@ -191,6 +205,48 @@ type residentQueueProxyTestEnvironment struct {
 
 func (e residentQueueProxyTestEnvironment) ProxyStore() *appstate.Store { return e.store }
 
+func TestResidentQueueCardsUseLiveProxyWorkCounts(t *testing.T) {
+	now := time.Now().UTC()
+	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
+	store := appstate.NewStore("")
+	store.UpdateStateForTest(func(value *appstate.State) {
+		value.Proxy.AutoBind.Enabled = true
+		value.Proxy.AutoBind.RequireHealthy = true
+	})
+	proxyService := proxyapp.NewService(residentQueueProxyTestEnvironment{store: store})
+	service := NewService(taskCenterQueueTestEnvironment{
+		store:   store,
+		policy:  policy,
+		enabled: true,
+		proxy:   proxyService,
+		proxyDetails: map[string]proxyapp.ResidentQueueDetail{
+			"auto_bind": {
+				Active:  []proxyapp.ResidentQueueEntry{{ID: "auth-run", StartedAt: now}},
+				Waiting: []proxyapp.ResidentQueueEntry{{ID: "auth-wait", QueuedAt: now}},
+			},
+			"proxy_health": {
+				Active:  []proxyapp.ResidentQueueEntry{{ID: "source-run", StartedAt: now}},
+				Waiting: []proxyapp.ResidentQueueEntry{{ID: "source-wait", QueuedAt: now}},
+			},
+		},
+	})
+	queues := service.taskCenterResidentQueues()
+	byID := make(map[string]map[string]any, len(queues))
+	for _, queue := range queues {
+		id, _ := queue["id"].(string)
+		byID[id] = queue
+	}
+	for _, id := range []string{"auto_bind", "proxy_health"} {
+		queue, ok := byID[id]
+		if !ok {
+			t.Fatalf("%s queue missing from %#v", id, queues)
+		}
+		if queue["status"] != "running" || queue["running"] != 1 || queue["waiting"] != 1 || queue["total"] != 2 {
+			t.Fatalf("%s live counts = %#v", id, queue)
+		}
+	}
+}
+
 func TestResidentQueueCopyHasNoTerminalPunctuation(t *testing.T) {
 	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
 	policy.TransparentGuard = true
@@ -244,4 +300,83 @@ func residentQueueCopyEndsWithPunctuation(value string) bool {
 		last = char
 	}
 	return strings.ContainsRune("。！？…；：，、,.!?;:", last)
+}
+func TestTaskCenterQueueDetailPagesQualityProbeWork(t *testing.T) {
+	now := time.Now().UTC()
+	service := NewService(taskCenterQueueTestEnvironment{
+		store: appstate.NewStore(""),
+		probeDetail: ProbeQueueDetail{
+			Active: []ProbeQueueEntry{{AuthID: "oauth-active", Status: "running", StartedAt: now}},
+			Waiting: []ProbeQueueEntry{
+				{AuthID: "oauth-wait-1", Status: "waiting", QueuedAt: now.Add(time.Second)},
+				{AuthID: "oauth-wait-2", Status: "waiting", QueuedAt: now.Add(2 * time.Second)},
+				{AuthID: "oauth-wait-3", Status: "waiting", QueuedAt: now.Add(3 * time.Second)},
+			},
+		},
+	})
+	result, status, err := service.actionTaskCenterQueue(map[string]any{"queue_id": "quality_probe", "page": 2, "page_size": 1})
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("queue detail status = %d err=%v", status, err)
+	}
+	detail, ok := result.(taskCenterQueueDetail)
+	if !ok {
+		t.Fatalf("queue detail type = %T", result)
+	}
+	if detail.QueueID != "quality_probe" || len(detail.Active) != 1 || detail.Active[0].AuthID != "oauth-active" {
+		t.Fatalf("active queue detail = %#v", detail)
+	}
+	if detail.Waiting.Total != 3 || detail.Waiting.Page != 2 || len(detail.Waiting.Items) != 1 || detail.Waiting.Items[0].AuthID != "oauth-wait-2" {
+		t.Fatalf("waiting queue page = %#v", detail.Waiting)
+	}
+}
+
+func TestTaskCenterQueueDetailIncludesAutoBindAndProxyHealthWork(t *testing.T) {
+	now := time.Now().UTC()
+	store := appstate.NewStore("")
+	proxyService := proxyapp.NewService(residentQueueProxyTestEnvironment{store: store})
+	service := NewService(taskCenterQueueTestEnvironment{
+		store: store,
+		proxy: proxyService,
+		proxyDetails: map[string]proxyapp.ResidentQueueDetail{
+			"auto_bind": {
+				Active:  []proxyapp.ResidentQueueEntry{{ID: "auth-run", Status: "running", StartedAt: now}},
+				Waiting: []proxyapp.ResidentQueueEntry{{ID: "auth-wait", Status: "waiting", QueuedAt: now.Add(-time.Second)}},
+			},
+			"proxy_health": {
+				Active:  []proxyapp.ResidentQueueEntry{{ID: "source-run", Status: "running", StartedAt: now}},
+				Waiting: []proxyapp.ResidentQueueEntry{{ID: "source-wait", Status: "waiting", QueuedAt: now.Add(-time.Second)}},
+			},
+		},
+	})
+	tests := []struct {
+		queueID   string
+		activeID  string
+		waitingID string
+		sourceID  bool
+	}{
+		{queueID: "auto_bind", activeID: "auth-run", waitingID: "auth-wait"},
+		{queueID: "proxy_health", activeID: "source-run", waitingID: "source-wait", sourceID: true},
+	}
+	for _, test := range tests {
+		result, status, err := service.actionTaskCenterQueue(map[string]any{"queue_id": test.queueID})
+		if err != nil || status != http.StatusOK {
+			t.Fatalf("%s queue detail status = %d err=%v", test.queueID, status, err)
+		}
+		detail, ok := result.(taskCenterQueueDetail)
+		if !ok {
+			t.Fatalf("%s queue detail type = %T", test.queueID, result)
+		}
+		if len(detail.Active) != 1 || detail.Active[0].ID != test.activeID {
+			t.Fatalf("%s active detail = %#v", test.queueID, detail.Active)
+		}
+		if len(detail.Waiting.Items) != 1 || detail.Waiting.Items[0].ID != test.waitingID {
+			t.Fatalf("%s waiting detail = %#v", test.queueID, detail.Waiting)
+		}
+		if test.sourceID && detail.Active[0].SourceID != test.activeID {
+			t.Fatalf("%s active source_id = %#v", test.queueID, detail.Active[0])
+		}
+		if !test.sourceID && detail.Active[0].AuthID != test.activeID {
+			t.Fatalf("%s active auth_id = %#v", test.queueID, detail.Active[0])
+		}
+	}
 }

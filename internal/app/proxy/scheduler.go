@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -71,7 +72,7 @@ func (s *Service) updateProxyAutoBind(params map[string]any) (proxy.AutoBindConf
 func (s *Service) proxyAutoBindRuntime() proxy.AutoBindRuntime {
 	s.mgr.mu.Lock()
 	runtime := s.mgr.runtime
-	runtime.QueueDepth = len(s.mgr.queue) - s.mgr.queueHead
+	runtime.QueueDepth = len(s.mgr.queue) - s.mgr.queueHead + len(s.mgr.pending)
 	runtime.InFlight = len(s.mgr.inFlight)
 	s.mgr.mu.Unlock()
 	runtime.Enabled = s.env.ProxyStore().ProxyAutoBindConfig().Enabled
@@ -85,6 +86,8 @@ func (s *Service) dropProxyAutoQueue() {
 		if _, running := s.mgr.inFlight[id]; !running {
 			delete(s.mgr.queued, id)
 		}
+		delete(s.mgr.queuedAt, id)
+		delete(s.mgr.pending, id)
 	}
 	s.mgr.queue = nil
 	s.mgr.queueHead = 0
@@ -256,6 +259,7 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 		}
 		if _, exists := s.mgr.queued[a.ID]; !exists {
 			s.mgr.queued[a.ID] = struct{}{}
+			s.mgr.queuedAt[a.ID] = time.Now().UTC()
 			s.mgr.queue = append(s.mgr.queue, a.ID)
 		}
 		s.mgr.mu.Unlock()
@@ -274,6 +278,14 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 		s.mgr.queue = append([]string(nil), s.mgr.queue[s.mgr.queueHead:]...)
 		s.mgr.queueHead = 0
 	}
+	for _, id := range jobs {
+		queuedAt := s.mgr.queuedAt[id]
+		if queuedAt.IsZero() {
+			queuedAt = time.Now().UTC()
+			s.mgr.queuedAt[id] = queuedAt
+		}
+		s.mgr.pending[id] = queuedAt
+	}
 	s.mgr.runtime.Running = count > 0
 	s.mgr.mu.Unlock()
 	opts.DryRun = false
@@ -281,6 +293,8 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 		defer func() {
 			s.mgr.mu.Lock()
 			delete(s.mgr.queued, id)
+			delete(s.mgr.queuedAt, id)
+			delete(s.mgr.pending, id)
 			delete(s.mgr.inFlight, id)
 			s.mgr.mu.Unlock()
 		}()
@@ -289,7 +303,8 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 			return
 		}
 		s.mgr.mu.Lock()
-		s.mgr.inFlight[id] = struct{}{}
+		delete(s.mgr.pending, id)
+		s.mgr.inFlight[id] = time.Now().UTC()
 		s.mgr.mu.Unlock()
 		result, err := s.bindProxy(jobCtx, id, opts)
 		s.recordProxyAutoResult(id, result, err)
@@ -297,6 +312,9 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 	s.mgr.mu.Lock()
 	for _, id := range jobs {
 		delete(s.mgr.queued, id)
+		delete(s.mgr.queuedAt, id)
+		delete(s.mgr.pending, id)
+		delete(s.mgr.inFlight, id)
 	}
 	s.mgr.runtime.Running = false
 	s.mgr.mu.Unlock()
@@ -537,9 +555,92 @@ func (s *Service) refreshProxySourceHealth(ctx context.Context) {
 		}
 		jobs = append(jobs, entry.ID)
 	}
-	_ = tasks.RunBoundedQueue(ctx, jobs, 8, 2, func(jobCtx context.Context, id string) { _, _ = s.testProxySource(jobCtx, id, "") })
+	if len(jobs) == 0 {
+		return
+	}
+	queuedAt := time.Now().UTC()
+	s.mgr.mu.Lock()
+	for _, id := range jobs {
+		s.mgr.healthQueuedAt[id] = queuedAt
+	}
+	s.mgr.mu.Unlock()
+	_ = tasks.RunBoundedQueue(ctx, jobs, 8, 2, func(jobCtx context.Context, id string) {
+		s.mgr.mu.Lock()
+		delete(s.mgr.healthQueuedAt, id)
+		s.mgr.healthActive[id] = time.Now().UTC()
+		s.mgr.mu.Unlock()
+		defer func() {
+			s.mgr.mu.Lock()
+			delete(s.mgr.healthActive, id)
+			s.mgr.mu.Unlock()
+		}()
+		_, _ = s.testProxySource(jobCtx, id, "")
+	})
+	s.mgr.mu.Lock()
+	for _, id := range jobs {
+		delete(s.mgr.healthQueuedAt, id)
+		delete(s.mgr.healthActive, id)
+	}
+	s.mgr.mu.Unlock()
 }
 
+func (s *Service) QueueDetail(queueID string) (ResidentQueueDetail, bool) {
+	if s == nil {
+		return ResidentQueueDetail{}, false
+	}
+	s.mgr.mu.Lock()
+	defer s.mgr.mu.Unlock()
+	var waiting map[string]time.Time
+	active := make(map[string]time.Time)
+	switch queueID {
+	case "auto_bind":
+		waiting = make(map[string]time.Time, len(s.mgr.pending)+len(s.mgr.queue)-s.mgr.queueHead)
+		for _, id := range s.mgr.queue[s.mgr.queueHead:] {
+			waiting[id] = s.mgr.queuedAt[id]
+		}
+		for id, at := range s.mgr.pending {
+			waiting[id] = at
+		}
+		for id, at := range s.mgr.inFlight {
+			active[id] = at
+		}
+	case "proxy_health":
+		waiting = s.mgr.healthQueuedAt
+		for id, at := range s.mgr.healthActive {
+			active[id] = at
+		}
+	default:
+		return ResidentQueueDetail{}, false
+	}
+	return ResidentQueueDetail{
+		Active:  residentQueueEntries(active, "running", false),
+		Waiting: residentQueueEntries(waiting, "waiting", true),
+	}, true
+}
+
+func residentQueueEntries(values map[string]time.Time, status string, queued bool) []ResidentQueueEntry {
+	entries := make([]ResidentQueueEntry, 0, len(values))
+	for id, at := range values {
+		entry := ResidentQueueEntry{ID: id, Status: status}
+		if queued {
+			entry.QueuedAt = at
+		} else {
+			entry.StartedAt = at
+		}
+		entries = append(entries, entry)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		left, right := entries[i].QueuedAt, entries[j].QueuedAt
+		if !queued {
+			left, right = entries[i].StartedAt, entries[j].StartedAt
+		}
+		if left.Equal(right) {
+			return entries[i].ID < entries[j].ID
+		}
+		return left.Before(right)
+	})
+	return entries
+}
 func proxyCandidateEnabled(entry proxySourceCandidate) bool {
 	return entry.Node != nil && entry.Node.Enabled || entry.Template != nil && entry.Template.Enabled
 }

@@ -493,6 +493,7 @@ curl -X POST \
 | `state_file.update` | 写入并切换状态文件路径；目标文件必须不存在 |
 | `events.list` | 查看质量事件日志 |
 | `tasks.center.list` | 按类型、状态、关键词和分页查询任务中心 |
+| `tasks.center.queue` | 按 `queue_id` 分页读取质量检测、自动绑定和代理健康检查队列的执行中与等待项 |
 | `tasks.center.get` | 按页懒加载任务逐项明细；历史任务从归档读取 |
 | `tasks.center.cancel` | 请求取消等待中或执行中的任务 |
 | `tasks.center.delete` | 永久删除已结束任务的历史索引、归档和逐项明细 |

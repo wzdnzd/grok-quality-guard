@@ -390,11 +390,15 @@ func (p *Plugin) SetPolicy(policy appconfig.Policy) {
 
 func (p *Plugin) WakeProbeWaiters()                          { p.probeSvc.WakeWaiters() }
 func (p *Plugin) ProbeQueueSnapshot() probeapp.QueueSnapshot { return p.probeSvc.QueueSnapshot() }
+func (p *Plugin) ProbeQueueDetail() probeapp.QueueDetail     { return p.probeSvc.QueueDetail() }
 func (p *Plugin) ProbeQueueSize() int                        { return p.probeSvc.ProbeQueueSize() }
 func (p *Plugin) ProbeConcurrency() int {
 	return p.probeSvc.ProbeConcurrency()
 }
 
+func (p *Plugin) ProxyQueueDetail(queueID string) (proxyapp.ResidentQueueDetail, bool) {
+	return p.proxySvc.QueueDetail(queueID)
+}
 func (p *Plugin) Proxy() *proxyapp.Service { return p.proxySvc }
 
 func (p *Plugin) Quality() *qualityapp.Service { return p.qualitySvc }

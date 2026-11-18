@@ -159,3 +159,36 @@ func TestProbeScanIntervalUsesPolicy(t *testing.T) {
 		t.Fatalf("probe scan interval = %s, want 7s", got)
 	}
 }
+func TestServiceQueueDetailReportsActiveAndWaitingAuthIDs(t *testing.T) {
+	now := time.Now().UTC()
+	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
+	service := &Service{}
+	scheduler := newProbeScheduler(nil, context.Background())
+	service.setScheduler(scheduler)
+	accounts := []Account{{ID: "auth-active"}, {ID: "auth-wait-1"}, {ID: "auth-wait-2"}}
+	state := State{Accounts: map[string]*AccountState{
+		"auth-active": {AuthID: "auth-active", State: StateUnknown, FirstSeenAt: now.Add(-time.Hour)},
+		"auth-wait-1": {AuthID: "auth-wait-1", State: StateUnknown, FirstSeenAt: now.Add(-time.Hour)},
+		"auth-wait-2": {AuthID: "auth-wait-2", State: StateUnknown, FirstSeenAt: now.Add(-time.Hour)},
+	}}
+	if added := scheduler.enqueueDue(accounts, state, policy, now); added != 3 {
+		t.Fatalf("enqueued = %d, want 3", added)
+	}
+	scheduler.mu.Lock()
+	active := scheduler.queue[0]
+	scheduler.queue = scheduler.queue[1:]
+	scheduler.active = 1
+	scheduler.activeIDs[active] = now
+	scheduler.mu.Unlock()
+
+	detail := service.QueueDetail()
+	if len(detail.Active) != 1 || detail.Active[0].AuthID != "auth-active" {
+		t.Fatalf("active detail = %#v, want auth-active", detail.Active)
+	}
+	if len(detail.Waiting) != 2 || detail.Waiting[0].AuthID != "auth-wait-1" || detail.Waiting[1].AuthID != "auth-wait-2" {
+		t.Fatalf("waiting detail = %#v, want wait order", detail.Waiting)
+	}
+	if detail.Active[0].StartedAt.IsZero() || detail.Waiting[0].QueuedAt.IsZero() {
+		t.Fatalf("detail timestamps missing: %#v", detail)
+	}
+}

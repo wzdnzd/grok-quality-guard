@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -86,7 +87,9 @@ type probeScheduler struct {
 	queue         []string
 	queued        map[string]struct{}
 	queueKeys     map[string]string
+	queuedAt      map[string]time.Time
 	active        int
+	activeIDs     map[string]time.Time
 	succeeded     int
 	failed        int
 	lastScanAt    time.Time
@@ -111,6 +114,8 @@ func newProbeScheduler(plugin *Service, ctx context.Context) *probeScheduler {
 		done:      make(chan probeCompletion),
 		queued:    make(map[string]struct{}),
 		queueKeys: make(map[string]string),
+		queuedAt:  make(map[string]time.Time),
+		activeIDs: make(map[string]time.Time),
 	}
 }
 
@@ -177,6 +182,7 @@ func (s *probeScheduler) enqueueDue(accounts []Account, state State, policy Poli
 		}
 		s.queued[accountKey] = struct{}{}
 		s.queueKeys[account.ID] = accountKey
+		s.queuedAt[account.ID] = now
 		s.queue = append(s.queue, account.ID)
 		added++
 	}
@@ -206,6 +212,7 @@ func (s *probeScheduler) dispatch() {
 		copy(s.queue, s.queue[1:])
 		s.queue = s.queue[:len(s.queue)-1]
 		s.active++
+		s.activeIDs[authID] = time.Now().UTC()
 		s.mu.Unlock()
 
 		s.wg.Add(1)
@@ -238,6 +245,8 @@ func (s *probeScheduler) finish(result probeCompletion) {
 	}
 	delete(s.queued, queueKey)
 	delete(s.queueKeys, result.authID)
+	delete(s.queuedAt, result.authID)
+	delete(s.activeIDs, result.authID)
 	if result.err != nil {
 		s.failed++
 		s.lastError = redact.SanitizeError(result.err)
@@ -281,6 +290,39 @@ func (s *probeScheduler) waitIdle() {
 	}
 }
 
+func (s *probeScheduler) detail() QueueDetail {
+	if s == nil {
+		return QueueDetail{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	detail := QueueDetail{
+		Active:  make([]QueueEntry, 0, len(s.activeIDs)),
+		Waiting: make([]QueueEntry, 0, len(s.queue)),
+	}
+	for authID, startedAt := range s.activeIDs {
+		detail.Active = append(detail.Active, QueueEntry{
+			AuthID:    authID,
+			Status:    "running",
+			QueuedAt:  s.queuedAt[authID],
+			StartedAt: startedAt,
+		})
+	}
+	sort.Slice(detail.Active, func(i, j int) bool {
+		if detail.Active[i].StartedAt.Equal(detail.Active[j].StartedAt) {
+			return detail.Active[i].AuthID < detail.Active[j].AuthID
+		}
+		return detail.Active[i].StartedAt.Before(detail.Active[j].StartedAt)
+	})
+	for _, authID := range s.queue {
+		detail.Waiting = append(detail.Waiting, QueueEntry{
+			AuthID:   authID,
+			Status:   "waiting",
+			QueuedAt: s.queuedAt[authID],
+		})
+	}
+	return detail
+}
 func (s *probeScheduler) snapshot() QueueSnapshot {
 	if s == nil {
 		return QueueSnapshot{}
@@ -317,6 +359,20 @@ func (s *Service) clearScheduler(scheduler *probeScheduler) {
 		s.scheduler = nil
 	}
 	s.schedulerMu.Unlock()
+}
+
+// QueueDetail returns the explicit auth IDs currently running or waiting.
+func (s *Service) QueueDetail() QueueDetail {
+	if s == nil {
+		return QueueDetail{}
+	}
+	s.schedulerMu.RLock()
+	scheduler := s.scheduler
+	s.schedulerMu.RUnlock()
+	if scheduler == nil {
+		return QueueDetail{}
+	}
+	return scheduler.detail()
 }
 
 // QueueSnapshot returns a concurrency-safe view of the automatic probe queue.

@@ -8206,6 +8206,18 @@
       } else if (queue.id === 'resin_cleanup' && queueDetail) {
         const items = Array.isArray(queueDetail.data?.items) ? queueDetail.data.items : [];
         body += '<div class="task-detail-section"><h3>待清理租约</h3><div class="table-wrap task-item-table"><table><thead><tr><th>账号</th><th>状态</th><th>下次尝试 / 错误</th><th>操作</th></tr></thead><tbody>' + (items.map((item) => '<tr><td class="mono">' + esc(item.auth_id || '-') + '</td><td>' + esc(item.paused ? '已暂停' : taskStatusLabel(item.status)) + '</td><td class="task-item-json">' + esc(item.last_error ? friendlyApiMessage(item.last_error, item.code) : (item.next_attempt_at ? formatFullTime(item.next_attempt_at) : '等待清理')) + '</td><td><button class="btn btn-xs" type="button" data-task-cleanup-retry="' + esc(item.id) + '" ' + (item.paused ? 'disabled' : '') + '>重试</button> <button class="btn btn-xs btn-ghost" type="button" data-task-cleanup-pause="' + esc(item.id) + '" data-paused="' + (item.paused ? 'false' : 'true') + '">' + (item.paused ? '恢复' : '暂停') + '</button></td></tr>').join('') || '<tr><td colspan="4" class="muted">当前没有待清理租约</td></tr>') + '</tbody></table></div>' + taskQueuePager(queueDetail.data, 'data-task-queue-page') + '</div>';
+      } else if (['quality_probe', 'auto_bind', 'proxy_health'].includes(queue.id) && queueDetail) {
+        const data = queueDetail.data || {};
+        const active = Array.isArray(data.active) ? data.active : [];
+        const waiting = data.waiting || {};
+        const waitingItems = Array.isArray(waiting.items) ? waiting.items : [];
+        const objectLabel = queue.id === 'proxy_health' ? '代理' : '账号';
+        const itemIdentity = (item) => item.label || item.auth_id || item.source_id || item.id || '-';
+        const activeRows = active.map((item) => '<tr><td class="mono">' + esc(itemIdentity(item)) + '</td><td><span class="task-status ' + taskStatusClass(item.status) + '">' + esc(taskStatusLabel(item.status)) + '</span></td><td>' + esc(formatFullTime(item.started_at)) + '</td></tr>').join('') || '<tr><td colspan="3" class="muted">当前没有执行中的任务</td></tr>';
+        const waitingRows = waitingItems.map((item) => '<tr><td class="mono">' + esc(item.position || '-') + '</td><td class="mono">' + esc(itemIdentity(item)) + '</td><td><span class="task-status ' + taskStatusClass(item.status) + '">' + esc(taskStatusLabel(item.status)) + '</span></td><td>' + esc(formatFullTime(item.queued_at)) + '</td></tr>').join('') || '<tr><td colspan="4" class="muted">当前没有等待执行的任务</td></tr>';
+        const actions = queue.id === 'auto_bind' || queue.id === 'proxy_health' ? '<div class="task-detail-actions"><button class="btn btn-xs" type="button" data-task-queue-action="auto_bind">打开自动绑定设置</button><button class="btn btn-xs btn-ghost" type="button" data-task-queue-action="scan">立即扫描</button></div>' : '';
+        body += '<div class="task-detail-section"><h3>执行中的任务</h3><div class="table-wrap task-item-table"><table><thead><tr><th>' + esc(objectLabel) + '</th><th>状态</th><th>开始时间</th></tr></thead><tbody>' + activeRows + '</tbody></table></div></div>';
+        body += '<div class="task-detail-section"><div class="task-item-toolbar"><h3>等待执行的任务</h3><span class="muted">共 ' + num(waiting.total || 0) + ' 项</span></div><div class="table-wrap task-item-table"><table><thead><tr><th>序号</th><th>' + esc(objectLabel) + '</th><th>状态</th><th>入队时间</th></tr></thead><tbody>' + waitingRows + '</tbody></table></div>' + taskQueuePager(waiting, 'data-task-queue-page') + '</div>' + actions;
       } else {
         const actions = queue.id === 'auto_bind' || queue.id === 'proxy_health' ? '<button class="btn btn-xs" type="button" data-task-queue-action="auto_bind">打开自动绑定设置</button><button class="btn btn-xs btn-ghost" type="button" data-task-queue-action="scan">立即扫描</button>' : '';
         body += '<div class="task-detail-section"><h3>执行说明</h3><div class="task-result-box">' + esc(queue.detail || queue.description || '暂无更多说明') + '</div>' + (actions ? '<div class="task-detail-actions">' + actions + '</div>' : '') + '</div>';
@@ -8277,7 +8289,7 @@
       const queueID = String(queue.id || '');
       const pageNo = Math.max(1, Number(page || 1));
       const request = ++state.taskQueueDetailRequest;
-      if (queue.id !== 'proxy_changes' && queue.id !== 'resin_cleanup') {
+      if (!['proxy_changes', 'resin_cleanup', 'quality_probe', 'auto_bind', 'proxy_health'].includes(queue.id)) {
         if (state.taskCenterSelectedQueue?.id !== queueID) return;
         state.taskCenterQueueDetail = { loading: false, mode: 'summary', data: queue };
         state.taskQueuePage = 1;
@@ -8285,16 +8297,18 @@
         return;
       }
       const current = state.taskCenterQueueDetail;
-      const preserve = current && !current.loading && current.mode === 'list' && state.taskCenterSelectedQueue?.id === queueID;
+      const preserve = current && !current.loading && ['list', 'live'].includes(current.mode) && state.taskCenterSelectedQueue?.id === queueID;
       if (!preserve) {
         state.taskCenterQueueDetail = { loading: true, mode: 'list' };
         renderTaskQueueDetail();
       }
       try {
-        const action = queue.id === 'proxy_changes' ? 'proxy.changes.list' : 'resin.cleanup.list';
-        const data = await api(action, { page: pageNo, page_size: 20 });
+        const live = ['quality_probe', 'auto_bind', 'proxy_health'].includes(queue.id);
+        const action = live ? 'tasks.center.queue' : (queue.id === 'proxy_changes' ? 'proxy.changes.list' : 'resin.cleanup.list');
+        const params = live ? { queue_id: queue.id, page: pageNo, page_size: 20 } : { page: pageNo, page_size: 20 };
+        const data = await api(action, params);
         if (request !== state.taskQueueDetailRequest || state.taskCenterSelectedQueue?.id !== queueID) return;
-        state.taskCenterQueueDetail = { loading: false, mode: 'list', data: data };
+        state.taskCenterQueueDetail = { loading: false, mode: live ? 'live' : 'list', data: data };
         state.taskQueuePage = Number(data?.page || pageNo);
         renderTaskQueueDetail();
       } catch (error) {

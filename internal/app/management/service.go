@@ -26,6 +26,8 @@ type Store = appstate.Store
 type Policy = config.Policy
 type Task = tasks.Task
 type ProbeQueueSnapshot = probeapp.QueueSnapshot
+type ProbeQueueDetail = probeapp.QueueDetail
+type ProbeQueueEntry = probeapp.QueueEntry
 
 type Environment interface {
 	Store() *appstate.Store
@@ -42,6 +44,8 @@ type Environment interface {
 	WakeProbeWaiters()
 	ProbeAccount(context.Context, string, bool, string) error
 	ProbeQueueSnapshot() ProbeQueueSnapshot
+	ProbeQueueDetail() ProbeQueueDetail
+	ProxyQueueDetail(string) (proxyapp.ResidentQueueDetail, bool)
 	ProbeQueueSize() int
 	ProbeConcurrency() int
 	StartTask(string, []string, string, func(context.Context) (any, error)) tasks.Task

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
@@ -32,6 +33,21 @@ type Environment interface {
 	ProxyActiveTasks(...string) []tasks.ActiveTask
 	ProxyConfigSnapshot() (config.ProxyConfig, bool)
 	ProxyApplyConfig(config.ProxyConfig, bool)
+}
+
+// ResidentQueueEntry identifies one account or source currently owned by a
+// resident proxy queue.
+type ResidentQueueEntry struct {
+	ID        string
+	Status    string
+	QueuedAt  time.Time
+	StartedAt time.Time
+}
+
+// ResidentQueueDetail separates running work from work waiting to start.
+type ResidentQueueDetail struct {
+	Active  []ResidentQueueEntry
+	Waiting []ResidentQueueEntry
 }
 
 // Service owns proxy binding, source management, scheduling and Resin runtime.

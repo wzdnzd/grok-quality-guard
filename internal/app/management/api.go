@@ -293,6 +293,8 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 		return s.actionTaskList(request.Params)
 	case "tasks.center.list":
 		return s.actionTaskCenterList(request.Params)
+	case "tasks.center.queue":
+		return s.actionTaskCenterQueue(request.Params)
 	case "tasks.center.get", "tasks.center.items":
 		return s.actionTaskCenterDetail(request.Params)
 	case "tasks.center.cancel":

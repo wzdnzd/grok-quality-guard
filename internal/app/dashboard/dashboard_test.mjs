@@ -1413,7 +1413,8 @@ test('Task history settings explain defaults and convert MiB to bytes', () => {
 });
 
 test('Resident queues render only the returned enabled queues and detail can close', async () => {
-  const { dashboard: ui, get, historyCalls } = harness();
+  const { dashboard: ui, get, historyCalls, mock } = harness();
+  mock('api', async () => ({ queue_id: 'auto_bind', active: [], waiting: { items: [], total: 0, page: 1, page_size: 20 } }));
   ui.renderResidentQueues([], { enabled: false, retention_days: 3, record_count: 0, archive_bytes: 0, max_bytes: 134217728 });
   assert.match(get('taskHistorySummary').textContent, /历史记录已关闭/);
   assert.match(get('residentQueues').innerHTML, /当前没有启用中的常驻队列/);
@@ -1429,7 +1430,7 @@ test('Resident queues render only the returned enabled queues and detail can clo
   assert.match(get('residentQueues').innerHTML, /自动绑定队列/);
   assert.match(get('residentQueues').innerHTML, /质量检测队列/);
   assert.match(get('residentQueues').innerHTML, /查看队列/);
-  ui.selectTaskCenterQueue('auto_bind', true);
+  await ui.selectTaskCenterQueue('auto_bind', true);
   assert.match(get('taskDetailBody').innerHTML, /打开自动绑定设置/);
   assert.equal(get('taskDetailCard').classList.contains('mobile-open'), true);
   ui.closeTaskCenterDetail(true);
@@ -1457,7 +1458,41 @@ test('Lease actions reserve a stable slot for single and paired buttons', () => 
   assert.match(html, /\.proxy-lease-table \.proxy-row-primary\s*\{[^}]*flex:\s*0 0 136px;[^}]*width:\s*136px;/s);
   assert.match(html, /\.proxy-lease-table \.proxy-row-primary\.is-single\s*\{\s*display:\s*inline-flex;/s);
 });
-for (const { name, run } of cases) {
+test('Live resident queue detail renders active and waiting object IDs', async () => {
+  const { dashboard: ui, get, mock } = harness();
+  const requests = [];
+  mock('api', async (action, params) => {
+    requests.push({ action, params });
+    const queueID = String(params.queue_id);
+    return {
+      queue_id: queueID,
+      active: [{ id: queueID + '-active', label: queueID + '-active', status: 'running', started_at: '2026-11-18T08:00:00Z' }],
+      waiting: {
+        items: [{ id: queueID + '-waiting', label: queueID + '-waiting', status: 'waiting', position: 1, queued_at: '2026-11-18T07:59:00Z' }],
+        total: 1, page: 1, page_size: 20
+      }
+    };
+  });
+  const cases = [
+    { id: 'quality_probe', label: '质量检测队列' },
+    { id: 'auto_bind', label: '自动绑定队列' },
+    { id: 'proxy_health', label: '代理健康检查' }
+  ];
+  for (const testCase of cases) {
+    const queue = { id: testCase.id, label: testCase.label, status: 'running', total: 2, completed: 0, running: 1, waiting: 1, succeeded: 0, failed: 0 };
+    ui.state.taskCenterSelectedQueue = queue;
+    await ui.loadTaskQueueDetail(queue, 1);
+    const request = requests.at(-1);
+    assert.equal(request.action, 'tasks.center.queue');
+    assert.deepEqual(plain(request.params), { queue_id: testCase.id, page: 1, page_size: 20 });
+    const body = get('taskDetailBody').innerHTML;
+    assert.match(body, /执行中的任务/);
+    assert.match(body, /等待执行的任务/);
+    assert.match(body, new RegExp(testCase.id + '-active'));
+    assert.match(body, new RegExp(testCase.id + '-waiting'));
+  }
+  assert.equal(requests.length, cases.length);
+});for (const { name, run } of cases) {
   await run();
   console.log('PASS ' + name);
 }

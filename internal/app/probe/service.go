@@ -40,6 +40,21 @@ type QueueSnapshot struct {
 	LastError     string    `json:"last_error,omitempty"`
 }
 
+// QueueEntry identifies one account currently owned by the automatic probe
+// scheduler. It is only returned by the explicit queue-detail action.
+type QueueEntry struct {
+	AuthID    string    `json:"auth_id"`
+	Status    string    `json:"status"`
+	QueuedAt  time.Time `json:"queued_at,omitempty"`
+	StartedAt time.Time `json:"started_at,omitempty"`
+}
+
+// QueueDetail separates running probes from the bounded waiting queue.
+type QueueDetail struct {
+	Active  []QueueEntry `json:"active"`
+	Waiting []QueueEntry `json:"waiting"`
+}
+
 const (
 	ClassNone                  = domain.ClassNone
 	ClassIgnored               = domain.ClassIgnored

@@ -1902,6 +1902,7 @@ Content-Type: application/json
 | `state_file.update` | `state_file` | 写入并切换状态文件路径；目标文件必须不存在 |
 | `events.list` | `limit`、`cursor`、`auth_id` | 事件列表 |
 | `tasks.center.list` | `page`、`page_size`、`category`、`status`、`query` | 查询任务中心的任务索引和常驻队列 |
+| `tasks.center.queue` | `queue_id`、`page`、`page_size` | 读取质量检测、自动绑定或代理健康检查队列的执行中与等待项 |
 | `tasks.center.get` | `task_id`、`page`、`page_size`、`item_status` | 按页读取逐项结果；历史任务从归档懒加载 |
 | `tasks.center.cancel` | `task_id` | 请求取消等待中或执行中的任务 |
 | `tasks.center.delete` | `task_id` | 永久删除已结束任务的历史索引、归档和逐项明细 |

@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	appstate "grok-quality-guard/internal/app/state"
 	coreproxy "grok-quality-guard/internal/proxy"
@@ -192,5 +193,42 @@ func TestAutoBindNoAvailableSourcesClearsStaleRetryState(t *testing.T) {
 	}
 	if service.mgr.runtime.LastError != "" {
 		t.Fatalf("runtime last error = %q, want cleared for source waiting", service.mgr.runtime.LastError)
+	}
+}
+func TestResidentQueueDetailsReportAutoBindAndHealthWork(t *testing.T) {
+	now := time.Now().UTC()
+	service := NewService(proxyViewTestEnvironment{store: newProxyTestStore(t)})
+	service.mgr.queue = []string{"auth-wait"}
+	service.mgr.queueHead = 0
+	service.mgr.queuedAt = map[string]time.Time{
+		"auth-wait":    now.Add(2 * time.Second),
+		"auth-pending": now.Add(time.Second),
+		"auth-run":     now,
+	}
+	service.mgr.pending = map[string]time.Time{"auth-pending": now.Add(time.Second)}
+	service.mgr.inFlight = map[string]time.Time{"auth-run": now}
+
+	auto, ok := service.QueueDetail("auto_bind")
+	if !ok {
+		t.Fatal("auto_bind queue detail not found")
+	}
+	if len(auto.Active) != 1 || auto.Active[0].ID != "auth-run" {
+		t.Fatalf("auto_bind active = %#v", auto.Active)
+	}
+	if len(auto.Waiting) != 2 || auto.Waiting[0].ID != "auth-pending" || auto.Waiting[1].ID != "auth-wait" {
+		t.Fatalf("auto_bind waiting = %#v", auto.Waiting)
+	}
+
+	service.mgr.healthQueuedAt = map[string]time.Time{"source-wait": now.Add(time.Second)}
+	service.mgr.healthActive = map[string]time.Time{"source-run": now}
+	health, ok := service.QueueDetail("proxy_health")
+	if !ok {
+		t.Fatal("proxy_health queue detail not found")
+	}
+	if len(health.Active) != 1 || health.Active[0].ID != "source-run" {
+		t.Fatalf("proxy_health active = %#v", health.Active)
+	}
+	if len(health.Waiting) != 1 || health.Waiting[0].ID != "source-wait" {
+		t.Fatalf("proxy_health waiting = %#v", health.Waiting)
 	}
 }

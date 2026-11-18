@@ -166,7 +166,11 @@ type proxyManager struct {
 	queue          []string
 	queueHead      int
 	queued         map[string]struct{}
-	inFlight       map[string]struct{}
+	queuedAt       map[string]time.Time
+	pending        map[string]time.Time
+	inFlight       map[string]time.Time
+	healthQueuedAt map[string]time.Time
+	healthActive   map[string]time.Time
 	observations   map[string]proxyObservation
 	runtime        proxy.AutoBindRuntime
 	scanOffset     int
@@ -178,7 +182,8 @@ type proxyManager struct {
 func newProxyManager() proxyManager {
 	return proxyManager{
 		reservations: make(map[string]int), reservedByAuth: make(map[string]string), resinReserved: make(map[string]struct{}),
-		queued: make(map[string]struct{}), inFlight: make(map[string]struct{}),
+		queued: make(map[string]struct{}), queuedAt: make(map[string]time.Time), pending: make(map[string]time.Time),
+		inFlight: make(map[string]time.Time), healthQueuedAt: make(map[string]time.Time), healthActive: make(map[string]time.Time),
 		observations: make(map[string]proxyObservation), wake: make(chan struct{}, 1),
 		slots: make(chan struct{}, 16),
 	}
