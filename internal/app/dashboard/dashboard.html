@@ -4881,18 +4881,16 @@
       </div>
     </section>
   </div>
-  <script type="application/json" id="i18n-resources">{}</script>
   <script>
     const API = '/v0/management/plugins/grok-quality-guard/api';
     const I18N_RESOURCES = '/v0/management/plugins/grok-quality-guard/locales';
+    const I18N_RESOURCE_DATA = null; // i18n-resource-data
 
     const I18N_STORAGE_KEY = 'grok-quality-guard.ui.locale';
     const I18N_SUPPORTED = Object.freeze(['zh-CN', 'zh-TW', 'en']);
     const I18N_INTL = Object.freeze({ 'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW', en: 'en-US' });
     const i18n = (() => {
-      const resourcesNode = document.getElementById('i18n-resources');
-      let resources = {};
-      try { resources = resourcesNode ? JSON.parse(resourcesNode.textContent || '{}') : {}; } catch (_) { resources = {}; }
+      let resources = I18N_RESOURCE_DATA && typeof I18N_RESOURCE_DATA === 'object' && !Array.isArray(I18N_RESOURCE_DATA) ? I18N_RESOURCE_DATA : {};
 
       function normalizeLocale(value) {
         const tag = String(value || '').trim().replace(/_/g, '-').toLowerCase();
@@ -5016,7 +5014,10 @@
       }
 
       function hasResources() {
-        return I18N_SUPPORTED.every((code) => resources[code] && typeof resources[code] === 'object' && !Array.isArray(resources[code]));
+        return I18N_SUPPORTED.every((code) => {
+          const catalog = resources[code];
+          return catalog && typeof catalog === 'object' && !Array.isArray(catalog) && typeof catalog['ui.overview'] === 'string' && catalog['ui.overview'].trim() !== '';
+        });
       }
 
       async function ensureResources() {
@@ -5028,6 +5029,7 @@
           const payload = await response.json();
           if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('invalid_i18n_resources');
           resources = payload;
+          if (!hasResources()) throw new Error('incomplete_i18n_resources');
           compileSourceIndex();
           return resources;
         })();

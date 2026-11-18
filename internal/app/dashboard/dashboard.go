@@ -19,9 +19,14 @@ var (
 // HTML returns the embedded management dashboard document with locale resources injected.
 func HTML() string {
 	htmlOnce.Do(func() {
-		placeholder := `<script type="application/json" id="i18n-resources">{}</script>`
-		replacement := `<script type="application/json" id="i18n-resources">` + string(i18n.ResourcesJSON()) + `</script>`
-		renderedContent = strings.Replace(content, placeholder, replacement, 1)
+		placeholder := `const I18N_RESOURCE_DATA = null; // i18n-resource-data`
+		resourceJSON := strings.NewReplacer(
+			"</", "<\\/",
+			"\u2028", "\\u2028",
+			"\u2029", "\\u2029",
+		).Replace(string(i18n.ResourcesJSON()))
+		render := `const I18N_RESOURCE_DATA = ` + resourceJSON + `; // i18n-resource-data`
+		renderedContent = strings.Replace(content, placeholder, render, 1)
 	})
 	return renderedContent
 }
