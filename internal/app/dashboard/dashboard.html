@@ -822,6 +822,9 @@
     }
 
     .accounts-table td.select-cell,
+    .accounts-table td.status-cell,
+    .accounts-table td.proxy-cell,
+    .accounts-table td.time-cell,
     .accounts-table td.actions-cell {
       vertical-align: middle;
     }
@@ -7438,7 +7441,7 @@
       }
       const probeConfirmed = await confirmAction({
         title: '检测所选账号',
-        detail: '检测 ' + count + ' 个账号；会消耗额度，插件禁用账号先恢复后检测，外部禁用账号跳过',
+        detail: '检测 ' + count + ' 个账号，会消耗额度，插件禁用账号先恢复后检测，外部禁用账号跳过',
         confirmLabel: '开始检测',
         icon: 'play',
         wide: true
@@ -7489,7 +7492,7 @@
           : '';
         const restoreConfirmed = await confirmAction({
           title: '恢复所选账号',
-          detail: '恢复 ' + count + ' 个账号；健康账号跳过，插件禁用账号重新启用',
+          detail: '恢复 ' + count + ' 个账号，健康账号跳过，插件禁用账号重新启用',
           confirmLabel: '恢复账号',
           icon: 'check',
           wide: true,
@@ -7538,7 +7541,7 @@
       try {
         const disableConfirmed = await confirmAction({
           title: '禁用所选账号',
-          detail: '禁用 ' + count + ' 个账号；默认仅在插件内隔离，不修改 OAuth 文件',
+          detail: '禁用 ' + count + ' 个账号，默认仅在插件内隔离，不修改 OAuth 文件',
           confirmLabel: '禁用账号',
           icon: 'power',
           tone: 'danger',

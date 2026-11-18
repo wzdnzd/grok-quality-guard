@@ -286,6 +286,7 @@ test('Account rows show binding status and truncate full cooldown labels', () =>
   const { dashboard: ui } = harness();
   assert.match(html, /<th title="代理绑定状态与轮换代数">绑定状态<\/th>/);
   assert.match(html, /<th title="冷却截止时间">冷却<\/th>/);
+  assert.match(html, /\.accounts-table td\.select-cell,\s*\.accounts-table td\.status-cell,\s*\.accounts-table td\.proxy-cell,\s*\.accounts-table td\.time-cell,\s*\.accounts-table td\.actions-cell\s*\{\s*vertical-align:\s*middle;/s);
   assert.doesNotMatch(html, /\.time-cell \.cell-primary,\s*\.time-cell \.subline/);
   const cooling = ui.accountRow({
     auth_id: 'auth-cooling', display: 'cooling@example.com', state: 'cooling',
