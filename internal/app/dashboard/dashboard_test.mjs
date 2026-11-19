@@ -155,7 +155,7 @@ function harness(options = {}) {
   const runtimeSource = options.i18nResources === undefined
     ? source
     : source.replace(/const I18N_RESOURCE_DATA = [^\n]*; \/\/ i18n-resource-data/, `const I18N_RESOURCE_DATA = ${JSON.stringify(options.i18nResources)}; // i18n-resource-data`);
-  vm.runInContext(runtimeSource + '\n globalThis.dashboard = { i18n, state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderOverview, renderAccounts, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyNodeEditor, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, closeResidentQueueDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, collectPolicy, populatePolicyForm, applyLocationHash, setTab, refreshAll, refreshAccounts, ensureAccountData, ensureProxyData, loadProxyData, renderAll, scheduleDeferredRefresh, scheduleAccountMetadataRefresh };', context);
+  vm.runInContext(runtimeSource + '\n globalThis.dashboard = { i18n, state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderOverview, renderAccounts, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyNodeEditor, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, closeResidentQueueDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, taskKindLabel, taskStatusLabel, taskOutcomeCounts, taskResultSummary, collectPolicy, populatePolicyForm, applyLocationHash, setTab, refreshAll, refreshAccounts, ensureAccountData, ensureProxyData, loadProxyData, renderAll, scheduleDeferredRefresh, scheduleAccountMetadataRefresh };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -1644,6 +1644,131 @@ test('Task detail exposes progress, queue counts, metadata and lazy item paging'
   assert.equal(localeResources['zh-CN']['task.status.probed'], '已检测');
 });
 
+test('Task center localizes every batch task kind and item status', () => {
+  const taskKinds = {
+    'accounts.probe': 'task.kind.accounts_probe',
+    'accounts.probe_selected': 'task.kind.accounts_probe_selected',
+    'accounts.restore_selected': 'task.kind.accounts_restore_selected',
+    'accounts.disable_selected': 'task.kind.accounts_disable_selected',
+    'quality.cross_verify': 'task.kind.quality_cross_verify',
+    'proxy.auto_rotate': 'task.kind.proxy_auto_rotate',
+    'proxy.bind': 'task.kind.proxy_bind',
+    'proxy.clear': 'task.kind.proxy_clear',
+    'proxy.rotate': 'task.kind.proxy_rotate',
+    'proxy.adopt': 'task.kind.proxy_adopt',
+    'proxy.bind_unbound': 'task.kind.proxy_bind_unbound',
+    'proxy.template.apply': 'task.kind.proxy_template_apply',
+    'proxy.source.create': 'task.kind.proxy_source_create',
+    'proxy.source.update': 'task.kind.proxy_source_update',
+    'proxy.source.delete': 'task.kind.proxy_source_delete',
+    'proxy.sources.test_selected': 'task.kind.proxy_sources_test_selected',
+    'proxy.sources.delete_selected': 'task.kind.proxy_sources_delete_selected',
+    'proxy.change.retry': 'task.kind.proxy_change_retry'
+  };
+  const itemStatuses = [
+    'succeeded', 'failed', 'skipped', 'probed', 'restored', 'external_restored',
+    'external_left_disabled', 'disabled', 'reachable', 'unreachable', 'deleted',
+    'bound', 'cleared', 'rotated', 'adopted', 'already_bound', 'dry_run',
+    'external', 'drifted', 'unbound', 'unavailable', 'conflict', 'rotation_unavailable',
+    'reconcile_required', 'commit_unknown', 'needs_reconcile', 'partial', 'superseded',
+    'canceled', 'prepared', 'finalized', 'pending', 'unknown'
+  ];
+  const locales = ['zh-CN', 'zh-TW', 'en'];
+  for (const locale of locales) {
+    for (const key of Object.values(taskKinds)) {
+      assert.equal(typeof localeResources[locale][key], 'string', `${locale} is missing ${key}`);
+      assert.notEqual(localeResources[locale][key].trim(), '', `${locale} has an empty ${key}`);
+    }
+    for (const status of itemStatuses) {
+      const key = 'task.status.' + status;
+      assert.equal(typeof localeResources[locale][key], 'string', `${locale} is missing ${key}`);
+      assert.notEqual(localeResources[locale][key].trim(), '', `${locale} has an empty ${key}`);
+    }
+  }
+  assert.equal(localeResources['zh-CN']['task.kind.accounts_restore_selected'], '账号恢复');
+  assert.equal(localeResources['zh-CN']['task.status.external_restored'], '已恢复外部禁用');
+  assert.notEqual(localeResources['zh-CN']['task.status.unknown'], '待更新');
+  const zh = harness({ languages: ['zh-CN'], language: 'zh-CN' }).dashboard;
+  assert.equal(zh.taskKindLabel('accounts.restore_selected'), '账号恢复');
+  assert.equal(zh.taskStatusLabel('external_restored'), '已恢复外部禁用');
+  const traditional = harness({ languages: ['zh-TW'], language: 'zh-TW' }).dashboard;
+  assert.equal(traditional.taskKindLabel('accounts.restore_selected'), '帳號恢復');
+  assert.equal(traditional.taskStatusLabel('external_restored'), '已恢復外部停用');
+  const english = harness({ languages: ['en-US'], language: 'en-US' }).dashboard;
+  assert.equal(english.taskKindLabel('accounts.restore_selected'), 'Restore accounts');
+  assert.equal(english.taskStatusLabel('external_restored'), 'Externally restored');
+});
+
+test('Task outcome counters cover every batch result shape without double counting', () => {
+  const { dashboard: ui } = harness();
+  assert.deepEqual(plain(ui.taskOutcomeCounts({
+    kind: 'accounts.restore_selected', total: 3,
+    result: { count: 3, restored: 1, external_restored: 1, external_left_disabled: 1, skipped: 0, failed: 0 }
+  })), { total: 3, succeeded: 2, failed: 0, skipped: 1 });
+  assert.deepEqual(plain(ui.taskOutcomeCounts({
+    kind: 'accounts.probe_selected', total: 3,
+    result: { count: 3, probed: 2, restored: 2, skipped: 1, failed: 0 }
+  })), { total: 3, succeeded: 2, failed: 0, skipped: 1 });
+  assert.deepEqual(plain(ui.taskOutcomeCounts({
+    kind: 'accounts.disable_selected', total: 3,
+    result: { count: 3, disabled: 2, skipped: 1, failed: 0 }
+  })), { total: 3, succeeded: 2, failed: 0, skipped: 1 });
+  assert.deepEqual(plain(ui.taskOutcomeCounts({
+    kind: 'proxy.sources.test_selected', total: 3,
+    result: { count: 3, counts: { total: 3, reachable: 2, unreachable: 1, failed: 0, pending: 0 }, reachable: 2, unreachable: 1, failed: 0 }
+  })), { total: 3, succeeded: 2, failed: 1, skipped: 0 });
+  assert.deepEqual(plain(ui.taskOutcomeCounts({
+    kind: 'proxy.sources.delete_selected', total: 3,
+    result: { count: 3, counts: { total: 3, deleted: 2, failed: 1, pending: 0 }, deleted: 2, failed: 1 }
+  })), { total: 3, succeeded: 2, failed: 1, skipped: 0 });
+  assert.deepEqual(plain(ui.taskOutcomeCounts({
+    kind: 'proxy.bind', total: 4,
+    result: { count: 4, counts: { total: 4, succeeded: 3, failed: 1, pending: 0 }, failed: 1 }
+  })), { total: 4, succeeded: 3, failed: 1, skipped: 0 });
+  assert.deepEqual(plain(ui.taskOutcomeCounts({
+    kind: 'proxy.template.apply', total: 3,
+    result: { count: 3, counts: { total: 3, succeeded: 2, failed: 0, pending: 1 } }
+  })), { total: 3, succeeded: 2, failed: 0, skipped: 1 });
+});
+
+test('Completed restore tasks render localized type, item outcomes and derived counts', async () => {
+  const { dashboard: ui, get, mock } = harness({ languages: ['zh-CN'], language: 'zh-CN' });
+  const task = {
+    task_id: 'restore-1', kind: 'accounts.restore_selected', category: 'account',
+    status: 'succeeded', total: 2, completed: 2, succeeded: 0, failed: 0, skipped: 0,
+    created_at: '2026-11-18T08:00:00Z', ended_at: '2026-11-18T08:00:01Z', duration_ms: 1000,
+    result: { count: 2, restored: 0, external_restored: 2, external_left_disabled: 0, failed: 0, skipped: 0 }
+  };
+  ui.state.taskCenter = {
+    items: [task], total: 1, page: 1, page_size: 20, counts: {}, resident_queues: [],
+    history: { enabled: true, retention_days: 3, record_count: 1, archive_bytes: 10, max_bytes: 100 }
+  };
+  ui.renderTaskCenter();
+  const rows = get('taskRows').innerHTML;
+  assert.match(rows, /账号恢复/);
+  assert.doesNotMatch(rows, /accounts\.restore_selected/);
+
+  mock('api', async (action) => {
+    assert.equal(action, 'tasks.center.get');
+    return {
+      task,
+      items: [
+        { auth_id: 'auth-1', status: 'external_restored' },
+        { auth_id: 'auth-2', status: 'external_restored' }
+      ],
+      total: 2, item_total: 2, page: 1, page_size: 20, source: 'history'
+    };
+  });
+  ui.state.taskCenterSelectedID = task.task_id;
+  await ui.loadTaskCenterDetail(task.task_id, 1, 'all', false);
+  const body = get('taskDetailBody').innerHTML;
+  assert.match(body, /账号恢复/);
+  assert.doesNotMatch(body, /accounts\.restore_selected/);
+  assert.equal((body.match(/已恢复外部禁用/g) || []).length, 2);
+  assert.doesNotMatch(body, /待更新/);
+  assert.doesNotMatch(body, /external_restored/);
+  assert.match(body, /共 2 项 · 成功 2 · 失败 0 · 跳过 0/);
+});
 test('Task center places cancel beside active status and delete beside finished status', () => {
   const { dashboard: ui, get } = harness();
   ui.state.taskCenter = {
@@ -1700,12 +1825,19 @@ test('Task center row actions confirm cancel and permanent deletion without sele
   assert.ok(calls.some((call) => call.action === 'tasks.center.cancel' && call.params.task_id === 'running-1'));
   assert.equal(ui.state.taskCenterSelectedID, '');
 
+  ui.state.taskCenter = {
+    items: [{ task_id: 'finished-1', kind: 'accounts.restore_selected', status: 'succeeded' }],
+    total: 1, page: 1, page_size: 20, counts: {}, resident_queues: [],
+    history: { enabled: true, retention_days: 3, record_count: 1, archive_bytes: 10, max_bytes: 100 }
+  };
   ui.state.taskCenterSelectedID = 'finished-1';
   const remove = get('taskRows').emit('click', {
     target: actionTarget('[data-task-center-delete]', { taskCenterDelete: 'finished-1' })
   });
   await Promise.resolve();
   assert.match(get('confirmDetail').textContent, /永久删除/);
+  assert.match(get('confirmDetail').textContent, /账号恢复/);
+  assert.doesNotMatch(get('confirmDetail').textContent, /accounts\.restore_selected/);
   await get('confirmAccept').emit('click');
   await remove;
   assert.ok(calls.some((call) => call.action === 'tasks.center.delete' && call.params.task_id === 'finished-1'));

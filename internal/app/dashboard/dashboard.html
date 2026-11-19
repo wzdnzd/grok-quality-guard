@@ -8501,12 +8501,15 @@
     function taskCategoryLabel(value) {
       return localizedCode('task.category.', value, 'task.category.generic');
     }
+    function taskKindLabel(value) {
+      return localizedCode('task.kind.', value, 'task.kind.default');
+    }
     function taskStatusClass(value) {
       const status = String(value || '').toLowerCase();
-      if (['running', 'starting', 'queued', 'pending', 'waiting'].includes(status)) return 'running';
-      if (['succeeded', 'probed', 'restored', 'disabled', 'deleted', 'bound', 'cleared', 'rotated', 'updated', 'created', 'reachable'].includes(status)) return 'succeeded';
-      if (['failed', 'interrupted', 'unreachable', 'partial', 'needs_reconcile', 'reconcile_required', 'commit_unknown', 'permanent_failure', 'credential_blocked'].includes(status)) return 'failed';
-      if (['skipped', 'superseded', 'unchanged', 'already_bound', 'external_left_disabled', 'protected', 'paused', 'idle', 'cancelled', 'canceled'].includes(status)) return 'paused';
+      if (['running', 'starting', 'queued', 'pending', 'waiting', 'prepared'].includes(status)) return 'running';
+      if (['succeeded', 'probed', 'restored', 'external_restored', 'adopted', 'disabled', 'deleted', 'bound', 'cleared', 'rotated', 'updated', 'created', 'reachable', 'finalized', 'finished'].includes(status)) return 'succeeded';
+      if (['failed', 'error', 'interrupted', 'unreachable', 'unavailable', 'conflict', 'rotation_unavailable', 'partial', 'needs_reconcile', 'reconcile_required', 'commit_unknown', 'permanent_failure', 'credential_blocked'].includes(status)) return 'failed';
+      if (['skipped', 'superseded', 'unchanged', 'already_bound', 'external_left_disabled', 'protected', 'paused', 'idle', 'cancelled', 'canceled', 'dry_run', 'external', 'drifted', 'unbound', 'removed', 'retry_wait'].includes(status)) return 'paused';
       return '';
     }
     function taskPercent(task) {
@@ -8535,15 +8538,81 @@
       if (value.enabled === false) return i18n.t('ui.history_disabled_only_current');
       return i18n.t('ui.task_history_summary', { days: Number(value.retention_days || 3), records: Number(value.record_count || 0), used: formatBytes(value.archive_bytes || 0), max: formatBytes(value.max_bytes || 0) });
     }
+    function taskCount(value) {
+      const count = Number(value ?? 0);
+      return Number.isFinite(count) && count > 0 ? count : 0;
+    }
+    function taskOutcomeCounts(task) {
+      const value = task && typeof task === 'object' ? task : {};
+      const result = value.result && typeof value.result === 'object' ? value.result : {};
+      const counts = result.counts && typeof result.counts === 'object' ? result.counts : {};
+      let succeeded = taskCount(value.succeeded);
+      let failed = taskCount(value.failed);
+      let skipped = taskCount(value.skipped);
+      if (succeeded + failed + skipped === 0) {
+        // Older history summaries can have zero generic counters even though
+        // their domain result recorded the real outcome. Reconstruct the counts
+        // without treating subset fields (for example probe.result.restored) as
+        // additional successful items.
+        switch (String(value.kind || '')) {
+          case 'accounts.restore_selected':
+            succeeded = taskCount(result.restored) + taskCount(result.external_restored);
+            failed = taskCount(result.failed);
+            skipped = taskCount(result.skipped) + taskCount(result.external_left_disabled);
+            break;
+          case 'accounts.probe_selected':
+            succeeded = taskCount(result.probed);
+            failed = taskCount(result.failed);
+            skipped = taskCount(result.skipped);
+            break;
+          case 'accounts.disable_selected':
+            succeeded = taskCount(result.disabled);
+            failed = taskCount(result.failed);
+            skipped = taskCount(result.skipped);
+            break;
+          case 'proxy.sources.test_selected':
+            succeeded = taskCount(result.reachable ?? counts.reachable);
+            failed = taskCount(result.unreachable ?? counts.unreachable) + taskCount(result.failed ?? counts.failed);
+            skipped = taskCount(counts.pending);
+            break;
+          case 'proxy.sources.delete_selected':
+            succeeded = taskCount(result.deleted ?? counts.deleted);
+            failed = taskCount(result.failed ?? counts.failed);
+            skipped = taskCount(counts.pending);
+            break;
+          default:
+            succeeded = taskCount(result.succeeded ?? counts.succeeded);
+            failed = taskCount(result.failed ?? counts.failed);
+            skipped = taskCount(result.skipped ?? counts.pending);
+            break;
+        }
+        if (succeeded + failed + skipped === 0) {
+          if (result.probed != null) {
+            succeeded = taskCount(result.probed);
+          } else if (result.disabled != null) {
+            succeeded = taskCount(result.disabled);
+          } else if (result.deleted != null) {
+            succeeded = taskCount(result.deleted);
+          } else if (result.reachable != null) {
+            succeeded = taskCount(result.reachable);
+            failed = taskCount(result.unreachable);
+          } else if (result.restored != null || result.external_restored != null) {
+            succeeded = taskCount(result.restored) + taskCount(result.external_restored);
+            skipped = taskCount(result.external_left_disabled);
+          }
+        }
+      }
+      const total = Math.max(taskCount(value.total), taskCount(value.completed), taskCount(result.count), taskCount(result.total), taskCount(counts.total), succeeded + failed + skipped);
+      return { total, succeeded, failed, skipped };
+    }
     function taskResultSummary(task) {
       if (!task) return '';
+      const outcome = taskOutcomeCounts(task);
       const result = task.result;
+      if (outcome.total > 0) {
+        return i18n.t('ui.task_result_totals', { total: num(outcome.total), succeeded: num(outcome.succeeded), failed: num(outcome.failed), skipped: num(outcome.skipped) });
+      }
       if (result && typeof result === 'object') {
-        const count = Number(result.count ?? result.total ?? result.counts?.total ?? 0);
-        const counts = result.counts || {};
-        if (count || counts.total || result.failed != null || result.succeeded != null) {
-          return i18n.t('ui.task_result_totals', { total: num(count || counts.total || 0), succeeded: num(result.succeeded ?? counts.succeeded ?? 0), failed: num(result.failed ?? counts.failed ?? 0), skipped: num(result.skipped ?? counts.skipped ?? 0) });
-        }
         if (result.message) return friendlyApiMessage(String(result.message), result.code);
         if (result.change_id) return i18n.t('ui.proxy_sync_change', { id: result.change_id });
       }
@@ -8568,7 +8637,7 @@
     }
     function taskRow(task) {
       const id = esc(task.task_id);
-      const label = task.label || task.kind || i18n.t('ui.task');
+      const label = task.label || taskKindLabel(task.kind) || i18n.t('ui.task');
       const translatedLabel = i18n.translateSource(String(label));
       const status = String(task.status || '');
       const active = status === 'queued' || status === 'running';
@@ -8637,14 +8706,15 @@
         return;
       }
       const task = detail.task || {};
-      const total = Math.max(0, Number(task.total || 0));
+      const outcome = taskOutcomeCounts(task);
+      const total = outcome.total;
       const completed = Math.max(0, Number(task.completed || 0));
       const running = Math.max(0, Number(task.running || 0));
       const waiting = Math.max(0, Number(task.waiting || 0));
       const percent = total > 0 ? Math.max(0, Math.min(100, Math.round(completed / total * 100))) : 0;
       const status = String(task.status || '');
-      document.getElementById('taskDetailTitle').innerHTML = icon('eye') + esc(task.label || task.kind || i18n.t("ui.task_details"));
-      document.getElementById('taskDetailSubtitle').textContent = taskCategoryLabel(task.category) + i18n.t('ui.meta_separator') + (task.kind || task.task_id);
+      document.getElementById('taskDetailTitle').innerHTML = icon('eye') + esc(task.label || taskKindLabel(task.kind) || i18n.t("ui.task_details"));
+      document.getElementById('taskDetailSubtitle').textContent = taskCategoryLabel(task.category) + i18n.t('ui.meta_separator') + (task.kind ? taskKindLabel(task.kind) : task.task_id);
       const detailBadge = document.getElementById('taskDetailBadge');
       detailBadge.hidden = false;
       detailBadge.className = 'badge ' + (status === 'succeeded' ? 'good' : (status === 'failed' || status === 'interrupted' ? 'bad' : (status === 'running' || status === 'queued' ? 'info' : '')));
@@ -8655,13 +8725,13 @@
         '<div class="task-count"><span>' + i18n.t('ui.completed') + '</span><strong>' + num(completed) + '</strong></div>' +
         '<div class="task-count"><span>' + i18n.t('ui.worker_processing') + '</span><strong>' + num(running) + '</strong></div>' +
         '<div class="task-count"><span>' + i18n.t('ui.waiting_2') + '</span><strong>' + num(waiting) + '</strong></div>' +
-        '<div class="task-count"><span>' + i18n.t('ui.queue_succeeded') + '</span><strong>' + num(task.succeeded || 0) + '</strong></div>' +
-        '<div class="task-count"><span>' + i18n.t('ui.failed') + '</span><strong>' + num(task.failed || 0) + '</strong></div>' +
-        '<div class="task-count"><span>' + i18n.t('ui.skipped') + '</span><strong>' + num(task.skipped || 0) + '</strong></div>' +
+        '<div class="task-count"><span>' + i18n.t('ui.queue_succeeded') + '</span><strong>' + num(outcome.succeeded) + '</strong></div>' +
+        '<div class="task-count"><span>' + i18n.t('ui.failed') + '</span><strong>' + num(outcome.failed) + '</strong></div>' +
+        '<div class="task-count"><span>' + i18n.t('ui.skipped') + '</span><strong>' + num(outcome.skipped) + '</strong></div>' +
         '<div class="task-count"><span>' + i18n.t('ui.duration') + '</span><strong>' + esc(taskDurationLabel(task.duration_ms)) + '</strong></div></div>';
       const meta = '<div class="task-meta-grid">' +
         '<div class="task-meta-item">' + i18n.t('ui.task_id') + '<strong title="' + esc(task.task_id) + '">' + esc(task.task_id) + '</strong></div>' +
-        '<div class="task-meta-item">' + i18n.t('ui.task_type') + '<strong>' + esc(task.kind || '-') + '</strong></div>' +
+        '<div class="task-meta-item">' + i18n.t('ui.task_type') + '<strong>' + esc(taskKindLabel(task.kind)) + '</strong></div>' +
         '<div class="task-meta-item">' + i18n.t('ui.created_at') + '<strong>' + esc(formatFullTime(task.created_at)) + '</strong></div>' +
         '<div class="task-meta-item">' + i18n.t('ui.started_at') + '<strong>' + esc(formatFullTime(task.started_at)) + '</strong></div>' +
         '<div class="task-meta-item">' + i18n.t('ui.ended_at') + '<strong>' + esc(formatFullTime(task.ended_at)) + '</strong></div>' +
@@ -8671,8 +8741,7 @@
         (Array.isArray(task.auth_ids) && task.auth_ids.length ? '<div class="task-meta-item task-meta-wide">' + i18n.t('ui.involved_accounts') + '<strong>' + esc(task.auth_ids.join(i18n.t('ui.list_separator'))) + (Number(task.auth_count || 0) > task.auth_ids.length ? i18n.t('ui.account_count_more_suffix', { count: num(task.auth_count) }) : '') + '</strong></div>' : '') +
         '</div>';
       const resultSummary = taskResultSummary(task);
-      const resultMessage = resultSummary || task.error;
-      const resultText = resultMessage ? friendlyApiMessage(resultMessage, task.error_code) : '';
+      const resultText = resultSummary || (task.error ? friendlyApiMessage(task.error, task.error_code) : '');
       const resultHTML = resultText ? '<div class="task-result-box ' + (task.error ? 'error' : '') + '">' + esc(resultText) + '</div>' : '';
       const items = Array.isArray(detail.items) ? detail.items : [];
       const itemTotal = Number(detail.item_total ?? detail.total ?? items.length);
@@ -9383,7 +9452,7 @@
       if (remove) {
         const taskID = remove.dataset.taskCenterDelete;
         const task = (state.taskCenter?.items || []).find((item) => item.task_id === taskID);
-        const label = task?.label || task?.kind || i18n.t("ui.this_task");
+        const label = task?.label || taskKindLabel(task?.kind) || i18n.t("ui.this_task");
         const confirmed = await confirmAction({
           title: i18n.t('ui.delete_task'),
           detail: i18n.t('ui.delete_task_detail', { label: label }),
