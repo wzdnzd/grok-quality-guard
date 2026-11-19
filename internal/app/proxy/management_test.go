@@ -1,10 +1,14 @@
 package proxy
 
 import (
+	"context"
+	"encoding/json"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
 	appstate "grok-quality-guard/internal/app/state"
 	coreproxy "grok-quality-guard/internal/proxy"
@@ -230,5 +234,82 @@ func TestResidentQueueDetailsReportAutoBindAndHealthWork(t *testing.T) {
 	}
 	if len(health.Waiting) != 1 || health.Waiting[0].ID != "source-wait" {
 		t.Fatalf("proxy_health waiting = %#v", health.Waiting)
+	}
+}
+
+type proxyObservationTestEnvironment struct {
+	proxyViewTestEnvironment
+	raw map[string]json.RawMessage
+}
+
+func (e proxyObservationTestEnvironment) ProxyResolveAuth(context.Context, string) (Account, pluginapi.HostAuthGetResponse, map[string]json.RawMessage, error) {
+	return Account{}, pluginapi.HostAuthGetResponse{}, e.raw, nil
+}
+
+func TestProxyObservationClearRemovesEndpointMetadata(t *testing.T) {
+	service := NewService(proxyViewTestEnvironment{store: newProxyTestStore(t)})
+	service.updateCatalogProxy("auth-1", "socks5h://user:secret@proxy.example:1080")
+	service.updateCatalogProxy("auth-1", "")
+
+	service.mgr.mu.Lock()
+	observation := service.mgr.observations["auth-1"]
+	service.mgr.mu.Unlock()
+	if !observation.Known || observation.Masked != "" || observation.Hash != "" {
+		t.Fatalf("cleared observation retained endpoint metadata: %#v", observation)
+	}
+}
+
+func TestConfirmProxyObservationClearsStaleEndpointMetadata(t *testing.T) {
+	service := NewService(proxyObservationTestEnvironment{
+		proxyViewTestEnvironment: proxyViewTestEnvironment{store: newProxyTestStore(t)},
+		raw:                      map[string]json.RawMessage{},
+	})
+	service.mgr.observations["auth-1"] = proxyObservation{
+		Masked:    "socks5h://old***:******@proxy.example:1080",
+		Hash:      "old-hash",
+		Known:     false,
+		CheckedAt: time.Now().UTC(),
+	}
+	observation := service.confirmProxyObservation(context.Background(), Account{ID: "auth-1", Path: "/tmp/auth-1.json"})
+	if !observation.Known || observation.Masked != "" || observation.Hash != "" {
+		t.Fatalf("confirmed empty proxy retained stale endpoint metadata: %#v", observation)
+	}
+}
+
+func TestProxyObservationPruneReleasesDeletedAndExpiredAccounts(t *testing.T) {
+	service := NewService(proxyViewTestEnvironment{store: newProxyTestStore(t)})
+	service.updateCatalogProxy("auth-live", "socks5h://user:secret@proxy.example:1080")
+	service.updateCatalogProxy("auth-gone", "socks5h://other:secret@proxy.example:1080")
+
+	service.mgr.mu.Lock()
+	if got := service.mgr.observations["auth-live"].Masked; got != "socks5h://us***r:******@proxy.example:1080" {
+		service.mgr.mu.Unlock()
+		t.Fatalf("observation stored an unmasked endpoint: %q", got)
+	}
+	gone := service.mgr.observations["auth-gone"]
+	gone.CheckedAt = time.Now().UTC().Add(-proxyObservationRetention - time.Minute)
+	service.mgr.observations["auth-gone"] = gone
+	service.mgr.mu.Unlock()
+
+	service.PruneProxyObservations([]string{"auth-live"})
+	service.mgr.mu.Lock()
+	if len(service.mgr.observations) != 1 {
+		service.mgr.mu.Unlock()
+		t.Fatalf("observations after catalog prune = %#v", service.mgr.observations)
+	}
+	if _, exists := service.mgr.observations["auth-gone"]; exists {
+		service.mgr.mu.Unlock()
+		t.Fatal("deleted auth observation was retained")
+	}
+	live := service.mgr.observations["auth-live"]
+	live.CheckedAt = time.Now().UTC().Add(-proxyObservationRetention - time.Minute)
+	service.mgr.observations["auth-live"] = live
+	service.mgr.mu.Unlock()
+
+	service.PruneProxyObservations([]string{"auth-live"})
+	service.mgr.mu.Lock()
+	defer service.mgr.mu.Unlock()
+	if len(service.mgr.observations) != 0 {
+		t.Fatalf("expired observations were retained: %#v", service.mgr.observations)
 	}
 }

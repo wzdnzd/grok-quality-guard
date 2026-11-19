@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	catalogapp "grok-quality-guard/internal/app/catalog"
 	appstate "grok-quality-guard/internal/app/state"
 	appconfig "grok-quality-guard/internal/config"
 	coreproxy "grok-quality-guard/internal/proxy"
@@ -57,6 +58,42 @@ func TestCatalogRefreshKeepsGuardOwnedStateDuringTemporaryOmission(t *testing.T)
 	}
 }
 
+func TestCatalogRefreshRetainsExternalDisabledStateDuringTemporaryOmission(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-external", "[EMAIL]", map[string]any{"disabled": true})
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	firstSeen := time.Now().UTC().Add(-2 * time.Hour)
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		account := plugin.ensureStateAccount(state, "auth-external")
+		account.State = appstate.StateExternallyDisabled
+		account.FirstSeenAt = firstSeen
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+
+	host.mu.Lock()
+	host.entries = nil
+	host.mu.Unlock()
+	if errRefresh := plugin.RefreshCatalog(context.Background()); errRefresh != nil {
+		t.Fatal(errRefresh)
+	}
+	account, exists := plugin.stateAccount("auth-external")
+	if !exists || account.State != appstate.StateExternallyDisabled || account.CatalogMissingSince.IsZero() {
+		t.Fatalf("external disabled state was lost during a partial catalog: %#v", account)
+	}
+
+	host.mu.Lock()
+	host.entries = entries
+	host.mu.Unlock()
+	if errRefresh := plugin.RefreshCatalog(context.Background()); errRefresh != nil {
+		t.Fatal(errRefresh)
+	}
+	account, exists = plugin.stateAccount("auth-external")
+	if !exists || account.State != appstate.StateExternallyDisabled || !account.CatalogMissingSince.IsZero() || !account.FirstSeenAt.Equal(firstSeen) {
+		t.Fatalf("external disabled state was not restored intact: %#v", account)
+	}
+}
 func TestCatalogSyncRestoresStateFromDisableKind(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", map[string]any{"disabled": true})
 	host := newMockHostCall(entries, auths)
@@ -88,15 +125,14 @@ func TestCatalogSyncLeavesExternalDisableReasonUnknown(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", map[string]any{"disabled": true})
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, nil)
-	account, ok := plugin.stateAccount("auth-1")
-	if !ok || account.State != appstate.StateExternallyDisabled {
-		t.Fatalf("external disable state = %#v", account)
+	if account, ok := plugin.stateAccount("auth-1"); ok {
+		t.Fatalf("external disable should remain sparse, got %#v", account)
 	}
-	if account.DisableReason != "" || account.LastReason != "" {
-		t.Fatalf("external disable must not invent a reason: %#v", account)
+	catalog := plugin.CatalogSnapshot()
+	if len(catalog) != 1 || catalog[0].ID != "auth-1" || !catalog[0].Disabled {
+		t.Fatalf("catalog did not retain the external disabled account: %#v", catalog)
 	}
 }
-
 func TestCatalogRefreshPrunesStaleGuardStateAfterRetention(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
 	host := newMockHostCall(entries, auths)
@@ -206,8 +242,87 @@ func TestCatalogRefreshKeepsManagedProxyBindingDuringTemporaryOmission(t *testin
 	if !ok {
 		t.Fatal("account state was not restored after catalog recovery")
 	}
-	status, sourceID, _, managed := plugin.proxySvc.AccountBindingView(account, url)
+	status, sourceID, _, managed := plugin.proxySvc.AccountBindingViewWithHash(account, url, "")
 	if !managed || status != "bound" || sourceID != binding.SourceID {
 		t.Fatalf("managed proxy was reclassified after catalog recovery: status=%q source=%q managed=%v", status, sourceID, managed)
+	}
+}
+
+func TestCatalogRefreshPreservesFirstSeenAtForSparseAccounts(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	before := plugin.CatalogSnapshot()
+	if len(before) != 1 || before[0].FirstSeenAt.IsZero() {
+		t.Fatalf("catalog did not record FirstSeenAt: %#v", before)
+	}
+	if errRefresh := plugin.RefreshCatalog(context.Background()); errRefresh != nil {
+		t.Fatal(errRefresh)
+	}
+	after := plugin.CatalogSnapshot()
+	if len(after) != 1 || !after[0].FirstSeenAt.Equal(before[0].FirstSeenAt) {
+		t.Fatalf("FirstSeenAt changed across refresh: before=%s after=%s", before[0].FirstSeenAt, after[0].FirstSeenAt)
+	}
+	if account, exists := plugin.stateAccount("auth-1"); exists {
+		t.Fatalf("catalog-only account should remain sparse: %#v", account)
+	}
+}
+
+func TestCatalogSyncPreservesLegacyExternalDisabledState(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-disabled", "[EMAIL]", map[string]any{"disabled": true})
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	initialCatalog := plugin.catalogSvc
+	plugin.catalogSvc = catalogapp.NewService(plugin)
+	t.Cleanup(initialCatalog.Close)
+	t.Cleanup(plugin.catalogSvc.Close)
+	legacyFirstSeen := time.Now().UTC().Add(-2 * time.Hour)
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		account := plugin.ensureStateAccount(state, "auth-disabled")
+		account.State = appstate.StateExternallyDisabled
+		account.FirstSeenAt = legacyFirstSeen
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if errRefresh := plugin.RefreshCatalog(context.Background()); errRefresh != nil {
+		t.Fatal(errRefresh)
+	}
+	account, exists := plugin.stateAccount("auth-disabled")
+	if !exists || account.State != appstate.StateExternallyDisabled || !account.FirstSeenAt.Equal(legacyFirstSeen) {
+		t.Fatalf("legacy externally-disabled state was not preserved: %#v", account)
+	}
+	catalog := plugin.CatalogSnapshot()
+	if len(catalog) != 1 || !catalog[0].Disabled || !catalog[0].FirstSeenAt.Equal(legacyFirstSeen) {
+		t.Fatalf("catalog did not preserve externally-disabled state: %#v", catalog)
+	}
+}
+
+func TestCatalogSyncPreservesLegacyDefaultStateAndFirstSeen(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	initialCatalog := plugin.catalogSvc
+	plugin.catalogSvc = catalogapp.NewService(plugin)
+	t.Cleanup(initialCatalog.Close)
+	legacyFirstSeen := time.Now().UTC().Add(-2 * time.Hour)
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		account := plugin.ensureStateAccount(state, "auth-1")
+		account.State = appstate.StateUnknown
+		account.FirstSeenAt = legacyFirstSeen
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if errRefresh := plugin.RefreshCatalog(context.Background()); errRefresh != nil {
+		t.Fatal(errRefresh)
+	}
+	account, exists := plugin.stateAccount("auth-1")
+	if !exists || account.State != appstate.StateUnknown || !account.FirstSeenAt.Equal(legacyFirstSeen) {
+		t.Fatalf("legacy default state was not preserved: %#v", account)
+	}
+	catalog := plugin.CatalogSnapshot()
+	if len(catalog) != 1 || !catalog[0].FirstSeenAt.Equal(legacyFirstSeen) {
+		t.Fatalf("FirstSeenAt was not preserved for legacy default state: %#v", catalog)
 	}
 }

@@ -846,12 +846,12 @@ func (m *Manager) ListCenter(filter TaskCenterFilter) (TaskCenterResult, error) 
 	if filter.PageSize > 200 {
 		filter.PageSize = 200
 	}
-	entries, errHistory := m.loadHistory()
+	_, errHistory := m.loadHistory()
 	if errHistory != nil {
 		return TaskCenterResult{}, errHistory
 	}
 	m.cleanupHistoryIfDue(time.Now().UTC())
-	entries, errHistory = m.loadHistory()
+	entries, errHistory := m.loadHistory()
 	if errHistory != nil {
 		return TaskCenterResult{}, errHistory
 	}

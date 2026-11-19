@@ -63,6 +63,34 @@ func TestLargeCatalogManagementAvoidsPerAccountHostReads(t *testing.T) {
 		t.Fatalf("unexpected account page: total=%d items=%d", decoded.Data.Total, len(decoded.Data.Items))
 	}
 
+	idsResponse := actionManagementForTest(t, plugin, "accounts.list", map[string]any{
+		"page":      1,
+		"page_size": 10000,
+		"ids_only":  true,
+	})
+	if idsResponse.StatusCode != 200 {
+		t.Fatalf("accounts.list ids_only status = %d body=%s", idsResponse.StatusCode, idsResponse.Body)
+	}
+	var idsDecoded struct {
+		Data struct {
+			Items []string `json:"items"`
+			Total int      `json:"total"`
+		} `json:"data"`
+	}
+	if errUnmarshal := json.Unmarshal(idsResponse.Body, &idsDecoded); errUnmarshal != nil {
+		t.Fatalf("decode ids_only response: %v", errUnmarshal)
+	}
+	firstID := ""
+	if len(idsDecoded.Data.Items) > 0 {
+		firstID = idsDecoded.Data.Items[0]
+	}
+	if idsDecoded.Data.Total != authCount || len(idsDecoded.Data.Items) != authCount || firstID != "auth-0000" {
+		t.Fatalf("unexpected ids_only page: total=%d items=%d first=%q", idsDecoded.Data.Total, len(idsDecoded.Data.Items), firstID)
+	}
+	if len(idsResponse.Body)*3 >= len(response.Body) {
+		t.Fatalf("ids_only response is not materially smaller: ids=%d summary=%d", len(idsResponse.Body), len(response.Body))
+	}
+
 	overview := actionManagementForTest(t, plugin, "overview", nil)
 	if overview.StatusCode != 200 {
 		t.Fatalf("overview status = %d body=%s", overview.StatusCode, overview.Body)
@@ -86,7 +114,7 @@ func TestAccountListSummaryOmitsDetailFields(t *testing.T) {
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, nil)
 	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
-		account := state.Accounts["auth-1"]
+		account := plugin.ensureStateAccount(state, "auth-1")
 		account.LastEvidence = &appstate.QualityEvidence{Class: qualitypkg.ClassMissingThinking, Reason: "quality detail"}
 		account.LastProbeAt = time.Now().UTC()
 		account.SoftStrikes = 2

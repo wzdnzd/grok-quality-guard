@@ -6,6 +6,10 @@ import (
 )
 
 func (s *Service) accountSummary(account Account, stateAccount AccountState, proxyURL string) accountSummaryView {
+	return s.accountSummaryWithHash(account, stateAccount, proxyURL, "")
+}
+
+func (s *Service) accountSummaryWithHash(account Account, stateAccount AccountState, proxyURL, proxyHash string) accountSummaryView {
 	displayFull := strings.TrimSpace(firstNonEmpty(account.Email, account.Label, account.ID))
 	displayLabel := strings.TrimSpace(account.Label)
 	if strings.Contains(displayLabel, "@") {
@@ -26,11 +30,14 @@ func (s *Service) accountSummary(account Account, stateAccount AccountState, pro
 		CooldownUntil:     stateAccount.CooldownUntil,
 		ProbeBackoffUntil: stateAccount.ProbeBackoffUntil,
 		ProxyStatus:       "unbound",
-		Proxy:             maskProxyURL(proxyURL),
+		Proxy:             proxyURL,
 		TPS:               stateAccount.Metrics.TPS,
 		OutputTokens:      stateAccount.Metrics.OutputTokens,
 		ReasoningTokens:   stateAccount.Metrics.ReasoningTokens,
 		EncryptedBytes:    stateAccount.Metrics.EncryptedBytes,
+	}
+	if view.Proxy != "" && (account.ProxyMasked == "" || view.Proxy != account.ProxyMasked) {
+		view.Proxy = maskProxyURL(view.Proxy)
 	}
 	if view.State == "" {
 		view.State = StateUnknown
@@ -39,7 +46,13 @@ func (s *Service) accountSummary(account Account, stateAccount AccountState, pro
 		}
 	}
 	binding, hasBinding := s.proxyBindingForAccount(stateAccount)
-	proxyStatus, sourceID, sourceKind, _ := s.proxyAccountBindingView(stateAccount, proxyURL)
+	proxyStatus, sourceID, sourceKind, _ := s.proxyAccountBindingViewWithHash(stateAccount, proxyURL, proxyHash)
+	if authProxyMetadataPending(account, proxyURL) {
+		// Auth-file metadata is enriched asynchronously after the host catalog is
+		// published. Keep that interval explicitly unknown instead of claiming
+		// the account is unbound or drifted before the file has been inspected.
+		proxyStatus = "unknown"
+	}
 	view.ProxyStatus = proxyStatus
 	view.ProxySourceID = sourceID
 	view.ProxySourceKind = string(sourceKind)
@@ -57,6 +70,10 @@ func (s *Service) accountSummary(account Account, stateAccount AccountState, pro
 	return view
 }
 
+func authProxyMetadataPending(account Account, proxyURL string) bool {
+	return !account.ProxyURLKnown && strings.TrimSpace(account.Path) != "" && strings.TrimSpace(proxyURL) == ""
+}
+
 func accountStateFromSummary(summary AccountStateSummary) AccountState {
 	return AccountState{
 		State:             summary.State,
@@ -72,9 +89,9 @@ func accountStateFromSummary(summary AccountStateSummary) AccountState {
 	}
 }
 
-func (s *Service) accountView(account Account, stateAccount AccountState, proxyURL string) accountView {
+func (s *Service) accountView(account Account, stateAccount AccountState, proxyURL, proxyHash string) accountView {
 	return accountView{
-		accountSummaryView:     s.accountSummary(account, stateAccount, proxyURL),
+		accountSummaryView:     s.accountSummaryWithHash(account, stateAccount, proxyURL, proxyHash),
 		Evidence:               stateAccount.LastEvidence,
 		LastProbeAt:            stateAccount.LastProbeAt,
 		DisableKind:            stateAccount.DisableKind,
@@ -95,7 +112,7 @@ func (s *Service) accountView(account Account, stateAccount AccountState, proxyU
 const catalogProxyFallbackLimit = 200
 
 func (s *Service) accountProxyURL(ctx context.Context, account Account, allowFallback bool) string {
-	proxyURL := strings.TrimSpace(account.ProxyURL)
+	proxyURL := strings.TrimSpace(account.ProxyMasked)
 	if proxyURL != "" || strings.TrimSpace(account.Path) != "" || !allowFallback {
 		return proxyURL
 	}
@@ -106,6 +123,13 @@ func (s *Service) accountProxyURL(ctx context.Context, account Account, allowFal
 	return strings.TrimSpace(authRawString(raw, "proxy_url"))
 }
 
+func (s *Service) accountProxyProjection(ctx context.Context, account Account, allowFallback bool) (string, string) {
+	if value := strings.TrimSpace(account.ProxyMasked); value != "" {
+		return value, account.ProxyHash
+	}
+	return s.accountProxyURL(ctx, account, allowFallback), ""
+}
+
 func (s *Service) accountViewForAccount(ctx context.Context, account Account) (accountView, error) {
 	_, _, raw, errResolve := s.resolveAuth(ctx, account.ID)
 	if errResolve != nil {
@@ -113,5 +137,5 @@ func (s *Service) accountViewForAccount(ctx context.Context, account Account) (a
 	}
 	stateAccount, _ := s.stateAccount(account.ID)
 	rawProxyURL := strings.TrimSpace(authRawString(raw, "proxy_url"))
-	return s.accountView(account, stateAccount, rawProxyURL), nil
+	return s.accountView(account, stateAccount, rawProxyURL, ""), nil
 }

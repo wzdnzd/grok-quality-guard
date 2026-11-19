@@ -307,3 +307,21 @@ func TestStateStoreUpdateAccountRollbackAndEventAppend(t *testing.T) {
 		t.Fatalf("standalone event was not appended: %#v", events)
 	}
 }
+
+func TestRawPolicyTaskHistoryProbeSkipsLargeUnrelatedValues(t *testing.T) {
+	large := strings.Repeat("x", 128*1024)
+	withoutHistory := []byte(`{"accounts":{"auth-1":{"label":"` + large + `"}},"events":[{"detail":{"nested":[1,2,3]}}],"policy":{"events_limit":3}}`)
+	if rawPolicyHasTaskHistory(withoutHistory) {
+		t.Fatal("task history was reported without a policy task_history key")
+	}
+	withHistory := []byte(`{"accounts":{},"policy":{"events_limit":3,"task_history":{"enabled":true}}}`)
+	if !rawPolicyHasTaskHistory(withHistory) {
+		t.Fatal("policy task_history key was not detected")
+	}
+	if rawPolicyHasTaskHistory([]byte(`{"task_history":{"enabled":true}}`)) {
+		t.Fatal("top-level task_history was incorrectly treated as policy")
+	}
+	if rawPolicyHasTaskHistory([]byte(`{"policy":`)) {
+		t.Fatal("malformed state unexpectedly reported task history")
+	}
+}

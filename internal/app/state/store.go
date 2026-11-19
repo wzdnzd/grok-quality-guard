@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"grok-quality-guard/internal/app/model"
 	"grok-quality-guard/internal/config"
 	proxy "grok-quality-guard/internal/proxy"
 )
@@ -115,6 +114,7 @@ type AccountState struct {
 	AutoBind                     proxy.AutoBindAccountState `json:"auto_bind,omitempty"`
 	Metrics                      Metrics                    `json:"metrics"`
 }
+
 type AccountStateSummary struct {
 	State             string
 	LastReason        string
@@ -126,6 +126,25 @@ type AccountStateSummary struct {
 	Proxy             proxy.Binding
 	AutoBind          proxy.AutoBindAccountState
 	Metrics           Metrics
+}
+
+// ProbeAccountState is the small per-account projection needed by the
+// automatic probe scheduler. It deliberately excludes evidence, metrics,
+// proxy bindings, and event history.
+type ProbeAccountState struct {
+	AuthID            string
+	State             string
+	FirstSeenAt       time.Time
+	CooldownUntil     time.Time
+	ProbeBackoffUntil time.Time
+}
+
+// AccountReconcileCandidate is the persisted metadata required to decide
+// whether a full auth read is needed during quality reconciliation.
+type AccountReconcileCandidate struct {
+	AuthID                string
+	State                 string
+	HasAuthDisabledIntent bool
 }
 
 type Event struct {
@@ -439,14 +458,81 @@ func (s *Store) Load(defaultPolicy config.Policy, revision string) error {
 }
 
 func rawPolicyHasTaskHistory(raw []byte) bool {
-	var envelope struct {
-		Policy map[string]json.RawMessage `json:"policy"`
-	}
-	if json.Unmarshal(raw, &envelope) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, errToken := decoder.Token()
+	if errToken != nil || token != json.Delim('{') {
 		return false
 	}
-	_, ok := envelope.Policy["task_history"]
-	return ok
+	for decoder.More() {
+		keyToken, errKey := decoder.Token()
+		if errKey != nil {
+			return false
+		}
+		key, _ := keyToken.(string)
+		if key != "policy" {
+			// Walk tokens without materializing large account, event, or proxy
+			// values. Load already decodes the state once; this probe must not
+			// allocate a second copy of those fields just to inspect policy.
+			if skipJSONValue(decoder) != nil {
+				return false
+			}
+			continue
+		}
+		policyToken, errPolicy := decoder.Token()
+		if errPolicy != nil || policyToken != json.Delim('{') {
+			return false
+		}
+		for decoder.More() {
+			policyKeyToken, errPolicyKey := decoder.Token()
+			if errPolicyKey != nil {
+				return false
+			}
+			policyKey, _ := policyKeyToken.(string)
+			if policyKey == "task_history" {
+				return true
+			}
+			if skipJSONValue(decoder) != nil {
+				return false
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// skipJSONValue consumes exactly one JSON value using token boundaries. Strings
+// are transient while scanning; unlike json.RawMessage, large values are not
+// retained as a second in-memory copy.
+func skipJSONValue(decoder *json.Decoder) error {
+	token, errToken := decoder.Token()
+	if errToken != nil {
+		return errToken
+	}
+	delim, compound := token.(json.Delim)
+	if !compound {
+		return nil
+	}
+	switch delim {
+	case '{':
+		for decoder.More() {
+			if _, errKey := decoder.Token(); errKey != nil {
+				return errKey
+			}
+			if errValue := skipJSONValue(decoder); errValue != nil {
+				return errValue
+			}
+		}
+	case '[':
+		for decoder.More() {
+			if errValue := skipJSONValue(decoder); errValue != nil {
+				return errValue
+			}
+		}
+	default:
+		return errors.New("unexpected JSON delimiter")
+	}
+	_, errClose := decoder.Token()
+	return errClose
 }
 
 func decodeStrictJSON(data []byte, target any) error {
@@ -529,19 +615,86 @@ func (s *Store) AccountSnapshot(authID string) (AccountState, bool) {
 	return *cloneAccountState(account), true
 }
 
-func (s *Store) AccountStateValuesForIDs(authIDs []string) []string {
-	states := make([]string, len(authIDs))
+// AccountStateValues returns only the routing-facing state string for each
+// persisted account. Missing entries intentionally fall back to unknown in the
+// routing index instead of being materialized as default AccountState values.
+func (s *Store) AccountStateValues() map[string]string {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	values := make(map[string]string, len(s.state.Accounts))
+	for authID, account := range s.state.Accounts {
+		if account != nil {
+			values[authID] = account.State
+		}
+	}
+	return values
+}
+
+// AccountFirstSeenValues lets the catalog preserve probe aging for existing
+// account state records.
+func (s *Store) AccountFirstSeenValues() map[string]time.Time {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	values := make(map[string]time.Time, len(s.state.Accounts))
+	for authID, account := range s.state.Accounts {
+		if account != nil && !account.FirstSeenAt.IsZero() {
+			values[authID] = account.FirstSeenAt
+		}
+	}
+	return values
+}
+
+// ProbeStatesForIDs avoids cloning the complete AccountState for every account
+// during the periodic probe scan.
+func (s *Store) ProbeStatesForIDs(authIDs []string) []ProbeAccountState {
+	states := make([]ProbeAccountState, len(authIDs))
 	if s == nil {
 		return states
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for index, authID := range authIDs {
-		if account := s.state.Accounts[authID]; account != nil {
-			states[index] = account.State
+		account := s.state.Accounts[authID]
+		if account == nil {
+			continue
+		}
+		states[index] = ProbeAccountState{
+			AuthID:            authID,
+			State:             account.State,
+			FirstSeenAt:       account.FirstSeenAt,
+			CooldownUntil:     account.CooldownUntil,
+			ProbeBackoffUntil: account.ProbeBackoffUntil,
 		}
 	}
 	return states
+}
+
+// AccountReconcileCandidates copies only fields used for candidate selection.
+// The full state is fetched lazily for the small set that actually needs repair.
+func (s *Store) AccountReconcileCandidates() []AccountReconcileCandidate {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	candidates := make([]AccountReconcileCandidate, 0, len(s.state.Accounts))
+	for authID, account := range s.state.Accounts {
+		if account == nil {
+			continue
+		}
+		candidates = append(candidates, AccountReconcileCandidate{
+			AuthID:                authID,
+			State:                 account.State,
+			HasAuthDisabledIntent: account.AuthDisabledIntent != nil,
+		})
+	}
+	return candidates
 }
 
 func (s *Store) AccountStateSummariesForIDs(authIDs []string) []AccountStateSummary {
@@ -593,22 +746,6 @@ func (s *Store) AccountStatesForIDs(authIDs []string) []AccountState {
 	return states
 }
 
-func (s *Store) AccountsSnapshot() map[string]*AccountState {
-	if s == nil {
-		return nil
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	accounts := make(map[string]*AccountState, len(s.state.Accounts))
-	for authID, account := range s.state.Accounts {
-		if account == nil {
-			continue
-		}
-		accounts[authID] = cloneAccountState(account)
-	}
-	return accounts
-}
-
 func (s *Store) StateCounts() map[string]int {
 	if s == nil {
 		return nil
@@ -648,35 +785,36 @@ func (s *Store) RecentEventCount(since time.Time) int {
 	return count
 }
 
-func (s *Store) CatalogMatches(accounts []model.Account) bool {
-	if s == nil {
-		return false
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if len(s.state.Accounts) != len(accounts) {
-		return false
-	}
-	for _, account := range accounts {
-		if _, exists := s.state.Accounts[account.ID]; !exists {
-			return false
-		}
-	}
-	return true
-}
-
 func (s *Store) UpdateAccount(authID string, fn func(*AccountState) (*Event, error)) error {
-	return s.updateAccount(authID, fn, true)
+	return s.updateAccountEvents(authID, func(account *AccountState) ([]Event, error) {
+		event, err := fn(account)
+		if event == nil {
+			return nil, err
+		}
+		return []Event{*event}, err
+	}, true)
 }
 
 // RecordObservation applies an observation-only mutation in memory and
 // coalesces the durable write. Use UpdateAccount for guard, probe, admin, and
 // proxy mutations that must be durable before the caller continues.
 func (s *Store) RecordObservation(authID string, fn func(*AccountState) (*Event, error)) error {
-	return s.updateAccount(authID, fn, false)
+	return s.updateAccountEvents(authID, func(account *AccountState) ([]Event, error) {
+		event, err := fn(account)
+		if event == nil {
+			return nil, err
+		}
+		return []Event{*event}, err
+	}, false)
 }
 
-func (s *Store) updateAccount(authID string, fn func(*AccountState) (*Event, error), persist bool) error {
+// RecordObservationEvents coalesces one observation update and all of its
+// dependent events into a single scheduled checkpoint write.
+func (s *Store) RecordObservationEvents(authID string, fn func(*AccountState) ([]Event, error)) error {
+	return s.updateAccountEvents(authID, fn, false)
+}
+
+func (s *Store) updateAccountEvents(authID string, fn func(*AccountState) ([]Event, error), persist bool) error {
 	if s == nil {
 		return errors.New("state store is nil")
 	}
@@ -696,7 +834,7 @@ func (s *Store) updateAccount(authID string, fn func(*AccountState) (*Event, err
 		account = &AccountState{AuthID: authID, State: StateUnknown, FirstSeenAt: time.Now().UTC()}
 		s.state.Accounts[authID] = account
 	}
-	event, errFn := fn(account)
+	events, errFn := fn(account)
 	if errFn != nil {
 		if existed && previousCopy != nil {
 			s.state.Accounts[authID] = previousCopy
@@ -708,14 +846,16 @@ func (s *Store) updateAccount(authID string, fn func(*AccountState) (*Event, err
 		s.mu.Unlock()
 		return errFn
 	}
-	if event != nil {
-		if event.AuthID == "" {
-			event.AuthID = authID
+	if len(events) > 0 {
+		for _, event := range events {
+			if event.AuthID == "" {
+				event.AuthID = authID
+			}
+			if event.Time.IsZero() {
+				event.Time = time.Now().UTC()
+			}
+			appendEvent(&s.state, event)
 		}
-		if event.Time.IsZero() {
-			event.Time = time.Now().UTC()
-		}
-		appendEvent(&s.state, *event)
 	} else if existed && previousCopy != nil && reflect.DeepEqual(previousCopy, account) {
 		s.mu.Unlock()
 		return nil

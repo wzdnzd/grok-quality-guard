@@ -24,13 +24,13 @@ func (s *Service) actionProxySummary(ctx context.Context) (any, int, error) {
 	if err := s.env.ProxyEnsureCatalog(ctx); err != nil {
 		return nil, 500, err
 	}
-	sources := s.proxySourcesView()
+	catalog := s.proxyCatalog()
+	bound := s.env.ProxyStore().ProxyCounts()
+	sources := s.proxySourcesViewFromCatalog(catalog, bound)
 	counts := map[string]int{"bound": 0, "unbound": 0, "external": 0, "drifted": 0, "unknown": 0, "reconcile_required": 0}
 	accountTotal := s.walkProxyCatalog(func(row proxyCatalogRow) { counts[row.Status]++ })
 	sourceCounts := map[string]int{"node": 0, "template": 0, "resin": 0}
 	available := 0
-	catalog := s.proxyCatalog()
-	bound := s.env.ProxyStore().ProxyCounts()
 	for _, view := range sources {
 		sourceCounts[string(view.Kind)]++
 		entry := catalog.ByID[view.ID]
@@ -942,7 +942,13 @@ func proxyTemplateView(template proxy.Template, count int) proxySourceView {
 }
 func (s *Service) proxySourcesView() []proxySourceView {
 	catalog := s.proxyCatalog()
-	counts := s.env.ProxyStore().ProxyCounts()
+	return s.proxySourcesViewFromCatalog(catalog, s.env.ProxyStore().ProxyCounts())
+}
+
+func (s *Service) proxySourcesViewFromCatalog(catalog *proxySourceCatalog, counts map[string]int) []proxySourceView {
+	if catalog == nil {
+		return nil
+	}
 	views := make([]proxySourceView, 0, len(catalog.Sources))
 	for _, entry := range catalog.Sources {
 		var view proxySourceView
@@ -952,11 +958,10 @@ func (s *Service) proxySourcesView() []proxySourceView {
 		case proxy.SourceTemplate:
 			view = proxyTemplateView(*entry.Template, counts[entry.ID])
 		case proxy.SourceResin:
-			config, ok := s.env.ProxyStore().ProxySourcesSnapshot().ResinSources[entry.ID]
-			if !ok || entry.Template == nil {
+			if entry.ResinConfig == nil || entry.Template == nil {
 				continue
 			}
-			view = s.resinSourceView(*entry.Template, config, counts[entry.ID])
+			view = s.resinSourceView(*entry.Template, *entry.ResinConfig, counts[entry.ID])
 		}
 		view.Valid = entry.Error == nil
 		if entry.Error != nil {
@@ -1016,14 +1021,10 @@ func (s *Service) proxySourceDetailsForEdit(id string, edit bool) (any, error) {
 		return nil, proxyError("proxy_source_not_found", 404, "proxy source not found")
 	}
 	if entry.Kind == proxy.SourceResin {
-		if entry.Template == nil {
+		if entry.Template == nil || entry.ResinConfig == nil {
 			return nil, proxyError("proxy_source_details_missing", 409, "Resin source details are missing")
 		}
-		config, ok := s.env.ProxyStore().ProxySourcesSnapshot().ResinSources[entry.ID]
-		if !ok {
-			return nil, proxyError("proxy_source_details_missing", 409, "Resin source details are missing")
-		}
-		return s.resinSourceDetails(*entry.Template, config), nil
+		return s.resinSourceDetails(*entry.Template, *entry.ResinConfig), nil
 	}
 	count := s.env.ProxyStore().ProxyBindingCount(id)
 	var view proxySourceView
@@ -1087,7 +1088,10 @@ func (s *Service) proxySourceInfo(sourceID string) (string, proxy.SourceKind) {
 	return entry.Name, entry.Kind
 }
 
-func (s *Service) proxyAccountBindingView(state AccountState, value string) (string, string, proxy.SourceKind, bool) {
+// proxyAccountBindingViewWithHash is used by bulk account projections. Those
+// projections carry a precomputed URL hash and masked display value so they do
+// not need to retain or re-read the raw proxy URL.
+func (s *Service) proxyAccountBindingViewWithHash(state AccountState, value, hash string) (string, string, proxy.SourceKind, bool) {
 	binding, managed := bindingForAccount(state)
 	if value == "" {
 		if managed {
@@ -1098,10 +1102,69 @@ func (s *Service) proxyAccountBindingView(state AccountState, value string) (str
 	if !managed {
 		return "external", "", "", false
 	}
+	if hash != "" && binding.EndpointHash != "" {
+		if hash == binding.EndpointHash {
+			return "bound", binding.SourceID, binding.SourceKind, true
+		}
+		return "drifted", binding.SourceID, binding.SourceKind, true
+	}
+	if strings.Contains(value, "***") || value == "[redacted]" {
+		return "drifted", binding.SourceID, binding.SourceKind, true
+	}
 	if !bindingMatchesURL(binding, value) {
 		return "drifted", binding.SourceID, binding.SourceKind, true
 	}
 	return "bound", binding.SourceID, binding.SourceKind, true
+}
+
+// PruneProxyObservations removes overlay entries that are no longer usable.
+// The catalog refresh calls this with the complete live auth set so account
+// deletion immediately releases memory instead of waiting for process exit.
+func (s *Service) PruneProxyObservations(authIDs []string) {
+	s.pruneProxyObservations(authIDs, true)
+}
+
+func (s *Service) maybePruneProxyObservations(authIDs []string) {
+	s.pruneProxyObservations(authIDs, false)
+}
+
+func (s *Service) pruneProxyObservations(authIDs []string, force bool) {
+	if s == nil {
+		return
+	}
+	now := time.Now().UTC()
+	s.mgr.mu.Lock()
+	if !force && now.Sub(s.mgr.observationsPruned) < proxyObservationPruneInterval && len(s.mgr.observations) <= maxProxyObservations {
+		s.mgr.mu.Unlock()
+		return
+	}
+	live := make(map[string]struct{}, len(authIDs))
+	for _, authID := range authIDs {
+		if authID = strings.TrimSpace(authID); authID != "" {
+			live[authID] = struct{}{}
+		}
+	}
+	for authID, observation := range s.mgr.observations {
+		if _, ok := live[authID]; !ok || observation.CheckedAt.IsZero() || now.Sub(observation.CheckedAt) > proxyObservationRetention {
+			delete(s.mgr.observations, authID)
+		}
+	}
+	if len(s.mgr.observations) > maxProxyObservations {
+		type staleObservation struct {
+			authID string
+			at     time.Time
+		}
+		stale := make([]staleObservation, 0, len(s.mgr.observations))
+		for authID, observation := range s.mgr.observations {
+			stale = append(stale, staleObservation{authID: authID, at: observation.CheckedAt})
+		}
+		sort.Slice(stale, func(i, j int) bool { return stale[i].at.Before(stale[j].at) })
+		for index := 0; index < len(stale)-maxProxyObservations; index++ {
+			delete(s.mgr.observations, stale[index].authID)
+		}
+	}
+	s.mgr.observationsPruned = now
+	s.mgr.mu.Unlock()
 }
 
 func (s *Service) proxyObservationFor(account Account) proxyObservation {
@@ -1111,7 +1174,7 @@ func (s *Service) proxyObservationFor(account Account) proxyObservation {
 	if ok && time.Since(observation.CheckedAt) < catalogRefreshTTL && (account.ModTime.IsZero() || !account.ModTime.After(observation.CheckedAt)) {
 		return observation
 	}
-	return proxyObservation{URL: account.ProxyURL, Hash: account.ProxyHash, Known: account.ProxyURLKnown || account.ProxyURL != "", CheckedAt: account.ModTime}
+	return proxyObservation{Masked: account.ProxyMasked, Hash: account.ProxyHash, Known: account.ProxyURLKnown || account.ProxyMasked != "", CheckedAt: account.ModTime}
 }
 
 func (s *Service) confirmProxyObservation(ctx context.Context, account Account) proxyObservation {
@@ -1120,12 +1183,18 @@ func (s *Service) confirmProxyObservation(ctx context.Context, account Account) 
 		return observation
 	}
 	_, _, raw, err := s.env.ProxyResolveAuth(ctx, account.ID)
+	var proxyURL string
 	if err == nil {
-		observation.URL, err = proxyURLFromRaw(raw)
+		proxyURL, err = proxyURLFromRaw(raw)
 	}
 	observation.Known = err == nil
-	if err == nil && observation.URL != "" {
-		observation.Hash = proxyURLHash(observation.URL)
+	if err == nil {
+		observation.Masked = ""
+		observation.Hash = ""
+		if proxyURL != "" {
+			observation.Masked = maskProxyURL(proxyURL)
+			observation.Hash = proxyURLHash(proxyURL)
+		}
 	}
 	observation.CheckedAt = time.Now().UTC()
 	s.mgr.mu.Lock()
@@ -1150,6 +1219,7 @@ func (s *Service) walkProxyCatalog(visit func(proxyCatalogRow)) int {
 	for i, account := range accounts {
 		ids[i] = account.ID
 	}
+	s.maybePruneProxyObservations(ids)
 	summaries := s.env.ProxyStore().ProxyAccountsForIDs(ids)
 	byID := make(map[string]proxyAccountSummary, len(summaries))
 	for _, summary := range summaries {
@@ -1159,7 +1229,7 @@ func (s *Service) walkProxyCatalog(visit func(proxyCatalogRow)) int {
 	defer s.mgr.mu.Unlock()
 	now := time.Now()
 	for _, a := range accounts {
-		row := proxyCatalogRow{Account: a, Status: "unbound", Observation: proxyObservation{URL: a.ProxyURL, Hash: a.ProxyHash, Known: a.ProxyURLKnown || a.ProxyURL != "", CheckedAt: a.ModTime}}
+		row := proxyCatalogRow{Account: a, Status: "unbound", Observation: proxyObservation{Masked: a.ProxyMasked, Hash: a.ProxyHash, Known: a.ProxyURLKnown || a.ProxyMasked != "", CheckedAt: a.ModTime}}
 		if observation, ok := s.mgr.observations[a.ID]; ok && now.Sub(observation.CheckedAt) < catalogRefreshTTL && (a.ModTime.IsZero() || !a.ModTime.After(observation.CheckedAt)) {
 			row.Observation = observation
 		}
@@ -1177,20 +1247,17 @@ func (s *Service) walkProxyCatalog(visit func(proxyCatalogRow)) int {
 			} else if row.Binding.SourceID != "" {
 				if row.Binding.EndpointHash == "" {
 					row.Status = "unknown"
-				} else if row.Observation.URL == "" {
+				} else if row.Observation.Masked == "" {
 					row.Status = "drifted"
 				} else {
 					hash := row.Observation.Hash
-					if hash == "" {
-						hash = proxyURLHash(row.Observation.URL)
-					}
 					if hash == row.Binding.EndpointHash {
 						row.Status = "bound"
 					} else {
 						row.Status = "drifted"
 					}
 				}
-			} else if row.Observation.URL != "" {
+			} else if row.Observation.Masked != "" {
 				row.Status = "external"
 			}
 		}
@@ -1208,7 +1275,7 @@ func proxyLeaseAccount(binding proxy.Binding) string {
 func proxyRowView(row proxyCatalogRow) map[string]any {
 	a, b := row.Account, row.Binding
 	displayFull := strings.TrimSpace(firstNonEmptyString(a.Email, a.Label, a.ID))
-	return map[string]any{"auth_id": a.ID, "auth_id_display": maskAuthID(a.ID), "display": maskAccountIdentity(displayFull), "display_full": displayFull, "proxy": maskProxyURL(row.Observation.URL), "proxy_status": row.Status, "proxy_source_id": b.SourceID, "proxy_source_kind": b.SourceKind, "proxy_generation": b.Generation, "proxy_source_revision": b.SourceRevision, "proxy_lease_account": proxyLeaseAccount(b), "auto_bind_excluded": row.AutoBind.Excluded, "next_attempt_at": row.AutoBind.NextAttemptAt, "last_error": row.AutoBind.LastError, "last_error_code": row.AutoBind.LastErrorCode}
+	return map[string]any{"auth_id": a.ID, "auth_id_display": maskAuthID(a.ID), "display": maskAccountIdentity(displayFull), "display_full": displayFull, "proxy": maskProxyURL(row.Observation.Masked), "proxy_status": row.Status, "proxy_source_id": b.SourceID, "proxy_source_kind": b.SourceKind, "proxy_generation": b.Generation, "proxy_source_revision": b.SourceRevision, "proxy_lease_account": proxyLeaseAccount(b), "auto_bind_excluded": row.AutoBind.Excluded, "next_attempt_at": row.AutoBind.NextAttemptAt, "last_error": row.AutoBind.LastError, "last_error_code": row.AutoBind.LastErrorCode}
 }
 
 func proxyStatusMatches(filter, status string) bool {

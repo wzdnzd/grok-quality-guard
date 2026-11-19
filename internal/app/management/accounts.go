@@ -22,19 +22,25 @@ func (s *Service) actionProbe(ctx context.Context, params map[string]any) (any, 
 	}
 	force := action.Bool(params, "force")
 	task := s.startTask("accounts.probe", []string{authID}, "task.progress.probe_account", func(taskCtx context.Context) (any, error) {
+		account, okAccount := s.findAccount(authID)
+		if !okAccount {
+			return nil, newAPIActionError("auth_not_found", "api.error.auth_not_found", http.StatusNotFound, nil)
+		}
+		stateBefore := s.accountCandidateState(accountCandidate{authID: authID, account: account})
+		if stateBefore == StateExternallyDisabled {
+			// A forced probe must not rewrite an externally disabled auth as if
+			// the plugin owned the disable. Return the truthful current view and
+			// let the operator explicitly restore it when intended.
+			return s.accountViewForAccount(taskCtx, account)
+		}
 		// Detached tasks must not reuse the short-lived management callback
 		if force {
-			stateAccount, _ := s.stateAccount(authID)
-			if errRestore := s.restoreBeforeManualProbe(taskCtx, authID, stateAccount.State); errRestore != nil {
+			if errRestore := s.restoreBeforeManualProbe(taskCtx, authID, stateBefore); errRestore != nil {
 				return nil, errRestore
 			}
 		}
 		if errProbe := s.ProbeAccount(taskCtx, authID, force, ""); errProbe != nil {
 			return nil, errProbe
-		}
-		account, okAccount := s.findAccount(authID)
-		if !okAccount {
-			return nil, newAPIActionError("auth_not_found", "api.error.auth_not_found", http.StatusNotFound, nil)
 		}
 		return s.accountViewForAccount(taskCtx, account)
 	})

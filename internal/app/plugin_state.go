@@ -8,14 +8,12 @@ import (
 )
 
 func (p *Plugin) accountLock(authID string) *sync.Mutex {
-	p.accountLocksMu.Lock()
-	defer p.accountLocksMu.Unlock()
-	lock := p.accountLocks[authID]
-	if lock == nil {
-		lock = &sync.Mutex{}
-		p.accountLocks[authID] = lock
+	hash := uint32(2166136261)
+	for index := 0; index < len(authID); index++ {
+		hash ^= uint32(authID[index])
+		hash *= 16777619
 	}
-	return lock
+	return &p.accountLocks[hash%uint32(len(p.accountLocks))]
 }
 
 func (p *Plugin) ensureStateAccount(state *appstate.State, authID string) *appstate.AccountState {

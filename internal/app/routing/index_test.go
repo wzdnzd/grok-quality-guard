@@ -14,11 +14,11 @@ func TestSelectionIndexOrdersHealthyThenUnknownAndPriorityDescending(t *testing.
 		{ID: "unknown-high", Provider: "xai", Priority: 100},
 		{ID: "suspect", Provider: "xai", Priority: 1000},
 	}
-	states := map[string]*AccountState{
-		"healthy-low":  {State: StateHealthy},
-		"healthy-high": {State: StateHealthy},
-		"unknown-high": {State: StateUnknown},
-		"suspect":      {State: StateSuspect},
+	states := map[string]string{
+		"healthy-low":  StateHealthy,
+		"healthy-high": StateHealthy,
+		"unknown-high": StateUnknown,
+		"suspect":      StateSuspect,
 	}
 	var index SelectionIndex
 	index.Build(accounts, states)

@@ -12,7 +12,7 @@ import (
 func seedStrikeAccount(t *testing.T, plugin *Plugin, authID string, startedAt time.Time, streak int) {
 	t.Helper()
 	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
-		account := state.Accounts[authID]
+		account := plugin.ensureStateAccount(state, authID)
 		account.State = appstate.StateHealthy
 		account.QualityStrikeMissingThinking = true
 		account.QualityFailureAt = startedAt
@@ -120,7 +120,7 @@ func TestRateLimitedDoesNotResetConsecutiveCounters(t *testing.T) {
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, nil)
 	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
-		account := state.Accounts["auth-1"]
+		account := plugin.ensureStateAccount(state, "auth-1")
 		account.State = appstate.StateHealthy
 		account.SoftStrikes = 1
 		account.ErrorStrikes = 1
@@ -147,7 +147,7 @@ func TestBufferOverflowDoesNotRecordHealthyVerdict(t *testing.T) {
 		cfg.Quality.HoldMaxBufferBytes = 1
 	})
 	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
-		account := state.Accounts["auth-1"]
+		account := plugin.ensureStateAccount(state, "auth-1")
 		account.State = appstate.StateHealthy
 		account.SoftStrikes = 1
 		account.ErrorStrikes = 1

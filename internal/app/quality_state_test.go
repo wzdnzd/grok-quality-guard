@@ -241,16 +241,22 @@ func TestExternallyDisabledAuthIsNotModified(t *testing.T) {
 	}
 }
 
-func TestRefreshCatalogMarksExternallyDisabled(t *testing.T) {
-	entries, auths := singleGrokAuth(t, "auth-1", "alice@example.com", map[string]any{"disabled": true})
+func TestRefreshCatalogKeepsExternallyDisabledSparse(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{"disabled": true})
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, nil)
-	account, _ := plugin.stateAccount("auth-1")
-	if account.State != appstate.StateExternallyDisabled {
-		t.Fatalf("state = %q, want externally_disabled", account.State)
+	if account, exists := plugin.stateAccount("auth-1"); exists {
+		t.Fatalf("catalog-only external disable should remain sparse: %#v", account)
 	}
-	if account.DisableReason != "" {
-		t.Fatalf("external disable must not invent a reason: %q", account.DisableReason)
+	externalFound := false
+	for _, account := range plugin.CatalogSnapshot() {
+		if account.ID == "auth-1" && account.Disabled {
+			externalFound = true
+			break
+		}
+	}
+	if !externalFound {
+		t.Fatal("external auth should remain disabled in catalog")
 	}
 }
 

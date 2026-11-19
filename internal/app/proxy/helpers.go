@@ -6,7 +6,12 @@ import (
 	"time"
 )
 
-const catalogRefreshTTL = 30 * time.Second
+const (
+	catalogRefreshTTL             = 30 * time.Second
+	proxyObservationRetention     = 5 * time.Minute
+	proxyObservationPruneInterval = time.Minute
+	maxProxyObservations          = 20000
+)
 
 func catalogAccountMatches(account Account, query string) bool {
 	query = strings.ToLower(strings.TrimSpace(query))

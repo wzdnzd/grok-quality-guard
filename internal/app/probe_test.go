@@ -28,7 +28,7 @@ func TestProbeFailureAfterStrikePermanentlyDisablesWithoutDeadlock(t *testing.T)
 	}...)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) { cfg.AutoAction = "cooldown_then_disable" })
 	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
-		account := state.Accounts["auth-1"]
+		account := plugin.ensureStateAccount(state, "auth-1")
 		account.State = appstate.StateCooling
 		account.DisableKind = appstate.DisableKindCooldown
 		account.CooldownUntil = time.Now().UTC().Add(-time.Minute)
@@ -80,7 +80,7 @@ func TestProbeSuccessReenablesCooldownAndPreservesStrike(t *testing.T) {
 		cfg.Quality.HardTPS = 2e9
 	})
 	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
-		account := state.Accounts["auth-1"]
+		account := plugin.ensureStateAccount(state, "auth-1")
 		account.State = appstate.StateCooling
 		account.DisableKind = appstate.DisableKindCooldown
 		account.CooldownUntil = time.Now().UTC().Add(-time.Minute)
@@ -333,11 +333,10 @@ func TestProbeTransportFailureRecordsInternalError(t *testing.T) {
 
 func ageAccountsForProbe(t *testing.T, plugin *Plugin) {
 	t.Helper()
+	catalog := plugin.CatalogSnapshot()
 	errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
-		for _, account := range state.Accounts {
-			if account == nil {
-				continue
-			}
+		for _, item := range catalog {
+			account := plugin.ensureStateAccount(state, item.ID)
 			account.FirstSeenAt = time.Now().UTC().Add(-time.Minute)
 			if account.State == "" || account.State == appstate.StateUnknown || account.State == appstate.StateExternallyDisabled {
 				account.State = appstate.StateSuspect
@@ -583,7 +582,7 @@ func TestProbeSchedulerFiltersHealthyAccountsBeforeQueue(t *testing.T) {
 	plugin := newTestPlugin(t, host, nil)
 	ageAccountsForProbe(t, plugin)
 	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
-		state.Accounts["auth-1"].State = appstate.StateHealthy
+		plugin.ensureStateAccount(state, "auth-1").State = appstate.StateHealthy
 		return nil
 	}); errUpdate != nil {
 		t.Fatal(errUpdate)
@@ -651,6 +650,28 @@ func TestProbeDueUnknownRespectsBackoff(t *testing.T) {
 	}
 }
 
+func TestProbeSchedulerUsesCatalogFirstSeenForSparseAccounts(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	accounts := plugin.CatalogSnapshot()
+	if len(accounts) != 1 {
+		t.Fatalf("catalog accounts = %d, want 1", len(accounts))
+	}
+	now := time.Now().UTC()
+	accounts[0].FirstSeenAt = now
+	plugin.mu.RLock()
+	policy := plugin.policy
+	plugin.mu.RUnlock()
+	scheduler := newProbeScheduler(plugin, context.Background())
+	state := appstate.State{}
+	if added := scheduler.enqueueDue(accounts, state, policy, now.Add(time.Second)); added != 0 {
+		t.Fatalf("sparse account was probed before unknown delay: added=%d", added)
+	}
+	if added := scheduler.enqueueDue(accounts, state, policy, now.Add(time.Minute)); added != 1 {
+		t.Fatalf("sparse account was not probed after unknown delay: added=%d", added)
+	}
+}
 func TestUnknownProbeJitterIsStableAndBounded(t *testing.T) {
 	const max = 30 * time.Second
 	first := unknownProbeJitter("auth-1", max)

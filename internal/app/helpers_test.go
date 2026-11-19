@@ -120,6 +120,19 @@ func (m *mockHostCall) scriptModelResponse(authID string, response pluginapi.Hos
 	m.modelResponses[authID] = response
 }
 
+func hostAuthEntriesForTest(entries []pluginapi.HostAuthFileEntry) []hostAuthFileEntry {
+	files := make([]hostAuthFileEntry, len(entries))
+	for index, entry := range entries {
+		files[index] = hostAuthFileEntry{
+			ID: entry.ID, AuthIndex: entry.AuthIndex, Name: entry.Name, Type: entry.Type,
+			Provider: entry.Provider, Label: entry.Label, Disabled: entry.Disabled,
+			Unavailable: entry.Unavailable, Path: entry.Path, Size: entry.Size,
+			ModTime: entry.ModTime, Email: entry.Email, Priority: entry.Priority,
+		}
+	}
+	return files
+}
+
 func (m *mockHostCall) call(method string, payload any) (json.RawMessage, error) {
 	encoded, errMarshal := json.Marshal(payload)
 	if errMarshal != nil {
@@ -130,7 +143,7 @@ func (m *mockHostCall) call(method string, payload any) (json.RawMessage, error)
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		m.authListCalls++
-		return marshalTestResult(authListResponse{Files: append([]pluginapi.HostAuthFileEntry(nil), m.entries...)})
+		return marshalTestResult(authListResponse{Files: hostAuthEntriesForTest(m.entries)})
 	case pluginabi.MethodHostAuthModels:
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -329,6 +342,8 @@ func newTestPlugin(t *testing.T, host *mockHostCall, mutate func(*appconfig.Conf
 	if errRefresh := plugin.RefreshCatalog(context.Background()); errRefresh != nil {
 		t.Fatalf("refresh catalog: %v", errRefresh)
 	}
+	plugin.catalogSvc.WaitAuthMetaRefresh()
+	plugin.catalogSvc.WaitAuthModelsRefresh()
 	return plugin
 }
 

@@ -431,10 +431,6 @@ func (s *Service) actionAccountsList(ctx context.Context, params map[string]any)
 	catalog := s.catalogSnapshot()
 	filterState := strings.ToLower(strings.TrimSpace(asString(params["state"])))
 	query := strings.ToLower(strings.TrimSpace(asString(params["query"])))
-	var stateValues []string
-	if filterState != "" {
-		stateValues = store.AccountStateValuesForIDs(catalogAccountIDs(catalog))
-	}
 	page := action.Int(params, "page", 1)
 	pageSize := action.Int(params, "page_size", 50)
 	if page < 1 {
@@ -443,69 +439,96 @@ func (s *Service) actionAccountsList(ctx context.Context, params map[string]any)
 	if pageSize < 1 || pageSize > 10000 {
 		pageSize = 50
 	}
-	filtered := make([]Account, 0, len(catalog))
+	var stateValues map[string]string
+	if store != nil {
+		stateValues = store.AccountStateValues()
+	}
+	idsOnly := action.Bool(params, "ids_only")
+	stateCounts := make(map[string]int, 8)
+	filteredIndexes := make([]int, 0, len(catalog))
 	for index, account := range catalog {
-		if filterState != "" && catalogAccountState(account, stateValues[index]) != filterState {
+		state := catalogAccountState(account, stateValues[account.ID])
+		stateCounts[state]++
+		if filterState != "" && state != filterState {
 			continue
 		}
 		if query != "" && !catalogAccountMatches(account, query) {
 			continue
 		}
-		filtered = append(filtered, account)
+		filteredIndexes = append(filteredIndexes, index)
 	}
-	sort.Slice(filtered, func(i, j int) bool { return filtered[i].ID < filtered[j].ID })
+	sort.Slice(filteredIndexes, func(i, j int) bool { return catalog[filteredIndexes[i]].ID < catalog[filteredIndexes[j]].ID })
 	start := (page - 1) * pageSize
-	if start > len(filtered) {
-		start = len(filtered)
+	if start > len(filteredIndexes) {
+		start = len(filteredIndexes)
 	}
 	end := start + pageSize
-	if end > len(filtered) {
-		end = len(filtered)
+	if end > len(filteredIndexes) {
+		end = len(filteredIndexes)
+	}
+	pageIndexes := filteredIndexes[start:end]
+	pageAccounts := make([]Account, len(pageIndexes))
+	for index, catalogIndex := range pageIndexes {
+		pageAccounts[index] = catalog[catalogIndex]
+	}
+	if idsOnly {
+		ids := catalogAccountIDs(pageAccounts)
+		return map[string]any{
+			"items":        ids,
+			"page":         page,
+			"page_size":    pageSize,
+			"total":        len(filteredIndexes),
+			"state_counts": stateCounts,
+		}, http.StatusOK, nil
+	}
+	proxyMetadataPending := false
+	for _, account := range pageAccounts {
+		if authProxyMetadataPending(account, "") {
+			proxyMetadataPending = true
+			break
+		}
 	}
 	allowProxyFallback := len(catalog) <= catalogProxyFallbackLimit
-	pageAccounts := filtered[start:end]
 	pageIDs := catalogAccountIDs(pageAccounts)
 	var views any
 	if action.Bool(params, "summary") {
 		pageSummaries := store.AccountStateSummariesForIDs(pageIDs)
 		items := make([]accountSummaryView, 0, len(pageAccounts))
 		for index, account := range pageAccounts {
-			items = append(items, s.accountSummary(account, accountStateFromSummary(pageSummaries[index]), s.accountProxyURL(ctx, account, allowProxyFallback)))
+			proxyValue, proxyHash := s.accountProxyProjection(ctx, account, allowProxyFallback)
+			items = append(items, s.accountSummaryWithHash(account, accountStateFromSummary(pageSummaries[index]), proxyValue, proxyHash))
 		}
 		views = items
 	} else {
 		pageStates := store.AccountStatesForIDs(pageIDs)
 		items := make([]accountView, 0, len(pageAccounts))
 		for index, account := range pageAccounts {
-			items = append(items, s.accountView(account, pageStates[index], s.accountProxyURL(ctx, account, allowProxyFallback)))
+			proxyValue, proxyHash := s.accountProxyProjection(ctx, account, allowProxyFallback)
+			items = append(items, s.accountView(account, pageStates[index], proxyValue, proxyHash))
 		}
 		views = items
 	}
-	stateCounts := map[string]int(nil)
-	stateCounts = catalogStateCounts(store, catalog)
 	return map[string]any{
 		"items":        views,
 		"page":         page,
 		"page_size":    pageSize,
-		"total":        len(filtered),
+		"total":        len(filteredIndexes),
 		"state_counts": stateCounts,
+		// The dashboard retries this page after asynchronous auth-file
+		// enrichment finishes. This is a per-row display hint, not a trigger
+		// for a host auth read in the list request itself.
+		"proxy_metadata_pending": proxyMetadataPending,
 	}, http.StatusOK, nil
 }
 
 func catalogStateCounts(store *Store, catalog []Account) map[string]int {
 	counts := make(map[string]int, 8)
-	values := []string(nil)
+	var values map[string]string
 	if store != nil {
-		values = store.AccountStateValuesForIDs(catalogAccountIDs(catalog))
+		values = store.AccountStateValues()
 	}
-	for index, account := range catalog {
-		state := ""
-		if index < len(values) {
-			state = values[index]
-		}
-		if state == "" {
-			state = catalogAccountState(account, "")
-		}
+	for _, account := range catalog {
+		state := catalogAccountState(account, values[account.ID])
 		counts[state]++
 	}
 	return counts
@@ -585,5 +608,5 @@ func (s *Service) actionAccountGet(ctx context.Context, params map[string]any) (
 	}
 	stateAccount, _ := s.stateAccount(account.ID)
 	rawProxyURL := strings.TrimSpace(authRawString(raw, "proxy_url"))
-	return s.accountView(account, stateAccount, rawProxyURL), http.StatusOK, nil
+	return s.accountView(account, stateAccount, rawProxyURL, ""), http.StatusOK, nil
 }

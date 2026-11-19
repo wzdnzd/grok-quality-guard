@@ -49,11 +49,13 @@ type Plugin struct {
 	workersActive      bool
 	quiescing          bool
 
-	accountLocksMu sync.Mutex
-	accountLocks   map[string]*sync.Mutex
+	accountLocks [256]sync.Mutex
+
+	hostCallsMu sync.Mutex
+	hostCalls   map[string]*hostCallFlight
 
 	modelStreamsMu sync.Mutex
-	modelStreams   map[string]struct{}
+	modelStreams   map[string]time.Time
 
 	taskWG  sync.WaitGroup
 	taskMgr *tasks.Manager
@@ -73,8 +75,8 @@ func NewPlugin() *Plugin {
 	plugin := &Plugin{
 		cfg:          appconfig.DefaultConfig(),
 		policy:       appconfig.PolicyFromConfig(appconfig.DefaultConfig()),
-		accountLocks: make(map[string]*sync.Mutex),
-		modelStreams: make(map[string]struct{}),
+		hostCalls:    make(map[string]*hostCallFlight),
+		modelStreams: make(map[string]time.Time),
 		taskMgr:      tasks.NewManager(),
 
 		requestCtx:    requestCtx,
@@ -217,7 +219,7 @@ func (p *Plugin) startWorkersLocked() {
 	p.ctx = ctx
 	p.cancel = cancel
 	p.workersActive = true
-	p.wg.Add(4)
+	p.wg.Add(5)
 	go func() {
 		defer p.wg.Done()
 		p.catalogSvc.RunRefreshLoop(ctx)
@@ -233,6 +235,10 @@ func (p *Plugin) startWorkersLocked() {
 	go func() {
 		defer p.wg.Done()
 		p.proxySvc.RunAutoBindLoop(ctx)
+	}()
+	go func() {
+		defer p.wg.Done()
+		p.runModelStreamCleanupLoop(ctx)
 	}()
 }
 
@@ -266,17 +272,26 @@ func (p *Plugin) Shutdown() {
 	}
 	p.mu.Unlock()
 	p.cancelTasks()
-	p.closeAllModelStreams()
+	if p.catalogSvc != nil {
+		p.catalogSvc.Close()
+	}
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
 	done := make(chan struct{})
 	go func() {
+		p.closeAllModelStreams()
 		p.wg.Wait()
 		p.taskWG.Wait()
 		p.taskMgr.Wait()
+		if p.catalogSvc != nil {
+			p.catalogSvc.WaitAuthMetaRefreshContext(shutdownCtx)
+			p.catalogSvc.WaitAuthModelsRefreshContext(shutdownCtx)
+		}
 		close(done)
 	}()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-shutdownCtx.Done():
 	}
 	if store := p.stateStore(); store != nil {
 		_ = store.Flush()

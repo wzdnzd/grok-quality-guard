@@ -33,7 +33,7 @@ func bindingMatchesURL(binding proxy.Binding, value string) bool {
 	return value != "" && binding.EndpointHash != "" && binding.EndpointHash == proxyURLHash(value)
 }
 
-func (s *Service) commitProxyOperationLocked(ctx context.Context, response pluginapi.HostAuthGetResponse, raw map[string]json.RawMessage, operation proxy.Operation, automatic bool) (proxyBindingResult, error) {
+func (s *Service) commitProxyOperationLocked(ctx context.Context, response pluginapi.HostAuthGetResponse, _ map[string]json.RawMessage, operation proxy.Operation, automatic bool) (proxyBindingResult, error) {
 	store := s.env.ProxyStore()
 	result := proxyBindingResult{AuthID: operation.AuthID, SourceID: operation.Binding.SourceID, SourceKind: operation.Binding.SourceKind, OperationID: operation.ID}
 	if operation.Clear {
@@ -63,13 +63,12 @@ func (s *Service) commitProxyOperationLocked(ctx context.Context, response plugi
 		return s.failProxyOperation(operation, err, true)
 	}
 	response = latestResponse
-	raw = latest
 	if operation.Clear {
-		delete(raw, "proxy_url")
+		delete(latest, "proxy_url")
 	} else {
-		auth.SetRawString(raw, "proxy_url", operation.DesiredURL)
+		auth.SetRawString(latest, "proxy_url", operation.DesiredURL)
 	}
-	encoded, err := marshalRawMap(raw)
+	encoded, err := marshalRawMap(latest)
 	if err != nil {
 		return s.failProxyOperation(operation, err, false)
 	}
@@ -89,7 +88,7 @@ func (s *Service) commitProxyOperationLocked(ctx context.Context, response plugi
 		if !found {
 			return s.failProxyOperation(operation, proxyError("auth_proxy_unknown", 409, "auth disappeared before automatic save"), false)
 		}
-		a.Disabled = auth.Disabled(raw)
+		a.Disabled = auth.Disabled(latest)
 		if !proxyAccountAllowedAuto(a, state.State, state.DisableKind, config) || !proxyScopeContains(config.SourceScope, operation.Binding.SourceKind) {
 			return s.failProxyOperation(operation, proxyError("auto_bind_ineligible", 409, "automatic binding scope or account eligibility changed"), false)
 		}

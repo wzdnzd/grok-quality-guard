@@ -149,35 +149,36 @@ type proxySourceCatalog struct {
 }
 
 type proxyObservation struct {
-	URL       string
+	Masked    string
 	Hash      string
 	Known     bool
 	CheckedAt time.Time
 }
 
 type proxyManager struct {
-	mu             sync.Mutex
-	buildMu        sync.Mutex
-	scanMu         sync.Mutex
-	changeMu       sync.Mutex
-	runningChanges map[string]struct{}
-	reservations   map[string]int
-	reservedByAuth map[string]string
-	resinReserved  map[string]struct{}
-	queue          []string
-	queueHead      int
-	queued         map[string]struct{}
-	queuedAt       map[string]time.Time
-	pending        map[string]time.Time
-	inFlight       map[string]time.Time
-	healthQueuedAt map[string]time.Time
-	healthActive   map[string]time.Time
-	observations   map[string]proxyObservation
-	runtime        proxy.AutoBindRuntime
-	scanOffset     int
-	wake           chan struct{}
-	slots          chan struct{}
-	catalog        *proxySourceCatalog
+	mu                 sync.Mutex
+	buildMu            sync.Mutex
+	scanMu             sync.Mutex
+	changeMu           sync.Mutex
+	runningChanges     map[string]struct{}
+	reservations       map[string]int
+	reservedByAuth     map[string]string
+	resinReserved      map[string]struct{}
+	queue              []string
+	queueHead          int
+	queued             map[string]struct{}
+	queuedAt           map[string]time.Time
+	pending            map[string]time.Time
+	inFlight           map[string]time.Time
+	healthQueuedAt     map[string]time.Time
+	healthActive       map[string]time.Time
+	observations       map[string]proxyObservation
+	observationsPruned time.Time
+	runtime            proxy.AutoBindRuntime
+	scanOffset         int
+	wake               chan struct{}
+	slots              chan struct{}
+	catalog            *proxySourceCatalog
 }
 
 func newProxyManager() proxyManager {
@@ -570,8 +571,12 @@ func (s *Service) bindProxy(ctx context.Context, authID string, opts proxyBindOp
 func (s *Service) updateCatalogProxy(authID, proxyURL string) {
 	// Catalog slices are shared immutable snapshots. Keep writes in a small
 	// observation overlay instead of modifying an array visible to other readers.
+	observation := proxyObservation{Masked: maskProxyURL(proxyURL), Known: true, CheckedAt: time.Now().UTC()}
+	if strings.TrimSpace(proxyURL) != "" {
+		observation.Hash = proxyURLHash(proxyURL)
+	}
 	s.mgr.mu.Lock()
-	s.mgr.observations[authID] = proxyObservation{URL: proxyURL, Hash: proxyURLHash(proxyURL), Known: true, CheckedAt: time.Now().UTC()}
+	s.mgr.observations[authID] = observation
 	s.mgr.mu.Unlock()
 }
 

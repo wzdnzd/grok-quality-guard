@@ -59,7 +59,6 @@ type Environment interface {
 	UpdateStatePath(string) (string, error)
 	Proxy() *proxyapp.Service
 	Quality() *qualityapp.Service
-	AccountProxyURL(context.Context, model.Account, bool) string
 }
 
 type Service struct {

@@ -183,8 +183,8 @@ func (s *Service) ActionResinCleanup(params map[string]any, action string) (any,
 func MaskAccountIdentity(value string) string { return maskAccountIdentity(value) }
 func MaskEmail(value string) string           { return maskEmail(value) }
 func MaskAuthID(value string) string          { return maskAuthID(value) }
-func (s *Service) AccountBindingView(state AccountState, value string) (string, string, proxy.SourceKind, bool) {
-	return s.proxyAccountBindingView(state, value)
+func (s *Service) AccountBindingViewWithHash(state AccountState, value, hash string) (string, string, proxy.SourceKind, bool) {
+	return s.proxyAccountBindingViewWithHash(state, value, hash)
 }
 
 // SourceInfo resolves the stable display name and kind for an account's proxy

@@ -10,28 +10,24 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	if store == nil {
 		return nil
 	}
-	snapshot := store.Snapshot()
 	catalog := s.env.CatalogSnapshot()
 	accounts := make(map[string]Account, len(catalog))
 	for _, account := range catalog {
 		accounts[account.ID] = account
 	}
-	for authID, stateAccount := range snapshot.Accounts {
-		if stateAccount == nil {
+	for _, candidate := range store.AccountReconcileCandidates() {
+		if candidate.HasAuthDisabledIntent || isIsolatedState(candidate.State) {
+			s.reconcileAccount(ctx, candidate.AuthID)
 			continue
 		}
-		if stateAccount.AuthDisabledIntent != nil || isIsolatedState(stateAccount.State) {
-			s.reconcileAccount(ctx, authID)
+		if candidate.State != StateUnknown {
 			continue
 		}
-		if stateAccount.State != StateUnknown {
-			continue
-		}
-		account, okAccount := accounts[authID]
+		account, okAccount := accounts[candidate.AuthID]
 		if !okAccount || !account.Disabled {
 			continue
 		}
-		s.reconcileAccount(ctx, authID)
+		s.reconcileAccount(ctx, candidate.AuthID)
 	}
 	return nil
 }

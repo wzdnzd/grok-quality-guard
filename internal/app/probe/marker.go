@@ -21,3 +21,16 @@ func (s *Service) MarkProbeAuth(authID string, ttl time.Duration) {
 	s.probeSkip[authID] = time.Now().Add(ttl)
 	s.probeSkipMu.Unlock()
 }
+
+func (s *Service) cleanupProbeSkip(now time.Time) {
+	if s == nil {
+		return
+	}
+	s.probeSkipMu.Lock()
+	for authID, expiry := range s.probeSkip {
+		if !now.Before(expiry) {
+			delete(s.probeSkip, authID)
+		}
+	}
+	s.probeSkipMu.Unlock()
+}

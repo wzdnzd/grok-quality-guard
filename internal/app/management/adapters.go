@@ -110,8 +110,8 @@ func (s *Service) ManualRestoreExternal(ctx context.Context, authID string, incl
 func (s *Service) proxyBindingForAccount(account AccountState) (proxy.Binding, bool) {
 	return s.env.Proxy().BindingForAccount(account)
 }
-func (s *Service) proxyAccountBindingView(account AccountState, value string) (string, string, proxy.SourceKind, bool) {
-	return s.env.Proxy().AccountBindingView(account, value)
+func (s *Service) proxyAccountBindingViewWithHash(account AccountState, value, hash string) (string, string, proxy.SourceKind, bool) {
+	return s.env.Proxy().AccountBindingViewWithHash(account, value, hash)
 }
 func (s *Service) proxySourceInfo(sourceID string) (string, proxy.SourceKind) {
 	return s.env.Proxy().SourceInfo(sourceID)

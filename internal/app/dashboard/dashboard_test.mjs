@@ -13,7 +13,7 @@ const documentHtml = html.replace(i18nResourceMarker, `const I18N_RESOURCE_DATA 
 const scripts = [...documentHtml.matchAll(/<script(?![^>]*type="application\/json")(?:[^>]*)>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
 for (const script of scripts) new vm.Script(script);
 const source = scripts.find((script) => script.includes('const API ='))
-  .replace(/\s+applyLocationHash\(\);\s+refreshAll\(true\);\s*$/, '');
+  .replace(/\s+applyLocationHash\(\);\s*(?:refreshAll\(true\);\s*)?$/, '');
 
 // A small DOM boundary for the existing inline controller. These tests exercise
 // asynchronous UI state and parsing; browser layout remains a separate check.
@@ -115,6 +115,23 @@ function harness(options = {}) {
     }
   };
   const historyCalls = [];
+  const capturedTimers = new Map();
+  let nextTimerID = 0;
+  const scheduleTimer = (callback, duration) => {
+    if (options.captureTimers) {
+      const timerID = ++nextTimerID;
+      capturedTimers.set(timerID, callback);
+      return timerID;
+    }
+    if (duration === 0 || duration === 1000) queueMicrotask(callback);
+    return 1;
+  };
+  const clearTimer = (timerID) => { capturedTimers.delete(timerID); };
+  const runTimers = () => {
+    const callbacks = [...capturedTimers.values()];
+    capturedTimers.clear();
+    callbacks.forEach((callback) => callback());
+  };
   const context = vm.createContext({
     document,
     navigator: {
@@ -126,9 +143,9 @@ function harness(options = {}) {
       history: { replaceState(_state, _title, hash) { historyCalls.push(hash); } },
       localStorage,
       addEventListener() {},
-      clearTimeout() {},
+      clearTimeout: clearTimer,
       setInterval() {},
-      setTimeout(callback, duration) { if (duration === 1000) queueMicrotask(callback); return 1; }
+      setTimeout: scheduleTimer
     },
     HTMLElement: Element,
     CSS: { escape: (value) => String(value) },
@@ -138,7 +155,7 @@ function harness(options = {}) {
   const runtimeSource = options.i18nResources === undefined
     ? source
     : source.replace(/const I18N_RESOURCE_DATA = [^\n]*; \/\/ i18n-resource-data/, `const I18N_RESOURCE_DATA = ${JSON.stringify(options.i18nResources)}; // i18n-resource-data`);
-  vm.runInContext(runtimeSource + '\n globalThis.dashboard = { i18n, state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderOverview, renderAccounts, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyNodeEditor, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, closeResidentQueueDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, collectPolicy, populatePolicyForm, applyLocationHash };', context);
+  vm.runInContext(runtimeSource + '\n globalThis.dashboard = { i18n, state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderOverview, renderAccounts, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyNodeEditor, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, closeResidentQueueDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, collectPolicy, populatePolicyForm, applyLocationHash, setTab, refreshAll, refreshAccounts, ensureAccountData, ensureProxyData, loadProxyData, renderAll, scheduleDeferredRefresh, scheduleAccountMetadataRefresh };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -174,7 +191,7 @@ function harness(options = {}) {
     groups.set(group.index, card);
     return card;
   }
-  return { dashboard: context.dashboard, get, context, mock, placeholder, groupCard, document, historyCalls, storage, storageWrites };
+  return { dashboard: context.dashboard, get, context, mock, placeholder, groupCard, document, historyCalls, storage, storageWrites, runTimers, capturedTimers };
 }
 
 const plain = (value) => JSON.parse(JSON.stringify(value));
@@ -248,6 +265,19 @@ test('Missing inline locale resources hydrate from the management endpoint', asy
   assert.equal(get('uiLanguage').value, 'en');
 });
 
+test('Locale resources keep matching keys and interpolation placeholders', () => {
+  const baseKeys = Object.keys(localeResources.en).sort();
+  for (const locale of ['zh-CN', 'zh-TW']) {
+    assert.deepEqual(Object.keys(localeResources[locale]).sort(), baseKeys, `${locale} key set differs from en`);
+  }
+  const placeholders = (value) => [...String(value).matchAll(/\{([a-zA-Z0-9_]+)(?=[:}])/g)].map((match) => match[1]).sort();
+  for (const key of baseKeys) {
+    const expected = placeholders(localeResources.en[key]);
+    for (const locale of ['zh-CN', 'zh-TW']) {
+      assert.deepEqual(placeholders(localeResources[locale][key]), expected, `${locale} placeholders differ for ${key}`);
+    }
+  }
+});
 test('English rendering paths do not leak Simplified Chinese copy', () => {
   const { dashboard: ui, get } = harness({ languages: ['en-US'], language: 'en-US' });
   ui.state.overview = {
@@ -393,6 +423,145 @@ test('Out-of-order list responses cannot replace a newer page', async () => {
   assert.equal(ui.state.proxySources[0].id, 'new');
 });
 
+test('Account tab refresh renders proxy unknown before proxy data resolves', async () => {
+  const { dashboard: ui, get, mock } = harness();
+  const proxySummary = deferred();
+  const proxySources = deferred();
+  const requests = [];
+  mock('api', async (action) => {
+    requests.push(action);
+    if (action === 'overview') return { auth_count: 1, states: { unknown: 1 } };
+    if (action === 'accounts.list') return {
+      items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown' }],
+      total: 1, page: 1, page_size: 50, state_counts: { unknown: 1 }
+    };
+    if (action === 'proxy.summary') return proxySummary.promise;
+    if (action === 'proxy.sources.list') return proxySources.promise;
+    throw new Error('unexpected request ' + action);
+  });
+  ui.state.activeTab = 'accounts';
+  await ui.refreshAll(true);
+  assert.deepEqual([...new Set(requests)].sort(), ['accounts.list', 'overview', 'proxy.sources.list', 'proxy.summary']);
+  assert.match(get('accountRows').innerHTML, new RegExp(ui.i18n.t('proxy.binding.unknown')));
+  proxySummary.resolve({ binding_counts: { unknown: 1 } });
+  proxySources.resolve({ items: [], total: 0, page: 1, page_size: 50 });
+  await ui.ensureProxyData();
+  assert.equal(ui.state.proxyLoadPromise, null);
+});
+
+test('Proxy data loading is single-flight', async () => {
+  const { dashboard: ui, mock } = harness();
+  const summary = deferred();
+  const sources = deferred();
+  const requests = [];
+  mock('api', (action) => {
+    requests.push(action);
+    if (action === 'proxy.summary') return summary.promise;
+    if (action === 'proxy.sources.list') return sources.promise;
+    throw new Error('unexpected request ' + action);
+  });
+  const first = ui.ensureProxyData(true);
+  const second = ui.ensureProxyData(true);
+  assert.equal(first, second);
+  assert.deepEqual(requests.sort(), ['proxy.sources.list', 'proxy.summary']);
+  summary.resolve({});
+  sources.resolve({ items: [], total: 0, page: 1, page_size: 50 });
+  await first;
+  assert.equal(requests.length, 2);
+  assert.equal(ui.state.proxyLoading, false);
+});
+
+test('Pending metadata retries after an in-progress refresh completes', async () => {
+  const { dashboard: ui, mock, runTimers } = harness({ captureTimers: true });
+  ui.state.activeTab = 'accounts';
+  let calls = 0;
+  mock('api', async (action) => {
+    assert.equal(action, 'accounts.list');
+    calls += 1;
+    return {
+      items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown', proxy_status: 'unbound' }],
+      total: 1,
+      page: 1,
+      page_size: 50,
+      state_counts: { unknown: 1 },
+      proxy_metadata_pending: false
+    };
+  });
+  ui.state.refreshing = true;
+  ui.applyAccountListData({
+    items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown', proxy_status: 'unknown' }],
+    total: 1,
+    proxy_metadata_pending: true
+  });
+  runTimers();
+  assert.equal(calls, 0);
+  assert.equal(ui.state.accountProxyRetryCount, 1, 'waiting for an active refresh must not consume the retry budget');
+  ui.state.refreshing = false;
+  runTimers();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(calls, 1);
+  assert.equal(ui.state.accountProxyPending, false);
+});
+test('Pending proxy metadata triggers one bounded account follow-up', async () => {
+  const { dashboard: ui, mock } = harness();
+  ui.state.activeTab = 'accounts';
+  let calls = 0;
+  mock('api', async (action) => {
+    assert.equal(action, 'accounts.list');
+    calls += 1;
+    return {
+      items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown', proxy_status: 'unbound' }],
+      total: 1,
+      page: 1,
+      page_size: 50,
+      state_counts: { unknown: 1 },
+      proxy_metadata_pending: false
+    };
+  });
+  ui.applyAccountListData({
+    items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown', proxy_status: 'unknown' }],
+    total: 1,
+    proxy_metadata_pending: true
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(calls, 1);
+  assert.equal(ui.state.accountProxyPending, false);
+  assert.equal(ui.state.accountProxyRetryCount, 0);
+});
+
+test('refreshAll releases the refresh lock when rendering fails', async () => {
+  const { dashboard: ui, mock } = harness();
+  ui.state.activeTab = 'overview';
+  mock('api', async (action) => action === 'overview' ? {} : { items: [] });
+  mock('renderAll', () => { throw new Error('render failed'); });
+  await assert.rejects(() => ui.refreshAll(true), /render failed/);
+  assert.equal(ui.state.refreshing, false);
+});
+test('A tab change during a section refresh schedules the new tab refresh', async () => {
+  const { dashboard: ui, mock } = harness();
+  let refreshes = 0;
+  mock('refreshAll', async () => { refreshes += 1; });
+  ui.state.activeTab = 'accounts';
+  ui.state.refreshPending = true;
+  assert.equal(ui.scheduleDeferredRefresh('overview'), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(refreshes, 1);
+  assert.equal(ui.state.refreshPending, false);
+  ui.state.activeTab = 'accounts';
+  ui.state.refreshPending = false;
+  assert.equal(ui.scheduleDeferredRefresh('accounts'), false);
+});
+
+test('Account detail cache is bounded while the selected detail stays available', () => {
+  const { dashboard: ui } = harness();
+  for (let index = 0; index < 150; index += 1) {
+    ui.state.accountDetails.set('auth-' + index, { auth_id: 'auth-' + index });
+  }
+  ui.state.selectedAuthID = 'auth-0';
+  ui.applyAccountListData({ items: [], total: 150, state_counts: { unknown: 150 } });
+  assert.equal(ui.state.accountDetails.has('auth-0'), true);
+  assert.ok(ui.state.accountDetails.size <= 100, 'detail cache size = ' + ui.state.accountDetails.size);
+});
 test('A million-source list renders only one page and preserves cross-page account selection', async () => {
   const { dashboard: ui, get, mock } = harness();
   const requests = [];

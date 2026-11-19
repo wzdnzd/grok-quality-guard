@@ -167,13 +167,6 @@ func (s *Service) applyGuardDisableWithOptions(authID, kind string, duration tim
 	return s.applyGuardDisableLockedWithOptions(context.Background(), authID, kind, duration, class, source, strike, pluginOnly)
 }
 
-// applyGuardDisableLocked records the desired state before touching the auth
-// file so an interrupted write can be repaired by the reconciler. Callers must
-// hold the per-auth lock.
-func (s *Service) applyGuardDisableLocked(ctx context.Context, authID, kind string, duration time.Duration, class, source string, strike bool) error {
-	return s.applyGuardDisableLockedWithOptions(ctx, authID, kind, duration, class, source, strike, false)
-}
-
 func (s *Service) applyGuardDisableLockedWithOptions(ctx context.Context, authID, kind string, duration time.Duration, class, source string, strike, pluginOnly bool) error {
 	_, response, raw, errResolve := s.env.ResolveAuth(ctx, authID)
 	if errResolve != nil {

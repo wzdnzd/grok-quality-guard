@@ -92,15 +92,17 @@ func selectionLayerForState(state string, priority int) (string, int, bool) {
 	}
 }
 
-func selectionStateForAccount(states map[string]*AccountState, account Account) *AccountState {
-	if value := states[account.ID]; value != nil {
+func selectionStateForAccount(states map[string]string, account Account) string {
+	if value, ok := states[account.ID]; ok {
 		return value
 	}
 	authIndex := strings.TrimSpace(account.AuthIndex)
 	if authIndex != "" && authIndex != account.ID {
-		return states[authIndex]
+		if value, ok := states[authIndex]; ok {
+			return value
+		}
 	}
-	return nil
+	return ""
 }
 
 func accountEligibleForSelection(account Account, state string) bool {
@@ -180,13 +182,13 @@ func (index *routingSelectionIndex) Total() int {
 // NeedsUpsert reports whether a state change can move the account between
 // selection layers. Observation-only updates keep the same layer and must not
 // copy the entire index.
-func (index *routingSelectionIndex) NeedsUpsert(account Account, state AccountState) bool {
+func (index *routingSelectionIndex) NeedsUpsert(account Account, state string) bool {
 	current := index.Load()
 	if current == nil {
 		return true
 	}
 	oldKey, oldEligible := current.layerByAuth[account.ID]
-	stateValue := state.State
+	stateValue := state
 	if stateValue == "" {
 		stateValue = StateUnknown
 	}
@@ -200,13 +202,13 @@ func (index *routingSelectionIndex) NeedsUpsert(account Account, state AccountSt
 	return !oldEligible || oldKey != key
 }
 
-func (index *routingSelectionIndex) Build(accounts []Account, states map[string]*AccountState) {
+func (index *routingSelectionIndex) Build(accounts []Account, states map[string]string) {
 	groups := make(map[string][]Account)
 	meta := make(map[string]routingSelectionLayer)
 	for _, account := range accounts {
 		state := StateUnknown
-		if value := selectionStateForAccount(states, account); value != nil && value.State != "" {
-			state = value.State
+		if value := selectionStateForAccount(states, account); value != "" {
+			state = value
 		}
 		if !accountEligibleForSelection(account, state) {
 			continue
@@ -243,7 +245,7 @@ func (index *routingSelectionIndex) Build(accounts []Account, states map[string]
 }
 
 // Upsert publishes a copy-on-write snapshot and must be called while buildMu is held
-func (index *routingSelectionIndex) Upsert(account Account, state AccountState) {
+func (index *routingSelectionIndex) Upsert(account Account, state string) {
 	current := index.Load()
 	if current == nil {
 		return
@@ -267,7 +269,7 @@ func (index *routingSelectionIndex) Upsert(account Account, state AccountState) 
 			layers[oldKey] = layer
 		}
 	}
-	stateValue := state.State
+	stateValue := state
 	if stateValue == "" {
 		stateValue = StateUnknown
 	}
@@ -385,9 +387,9 @@ func (s *Service) rebuildSelectionIndex() error {
 	s.selectionIndex.buildMu.Lock()
 	defer s.selectionIndex.buildMu.Unlock()
 	store := s.env.Store()
-	var states map[string]*AccountState
+	var states map[string]string
 	if store != nil {
-		states = store.AccountsSnapshot()
+		states = store.AccountStateValues()
 	}
 	s.selectionIndex.Build(s.env.CatalogSnapshot(), states)
 	return nil
@@ -419,10 +421,11 @@ func (s *Service) refreshSelectionAccount(authID string) {
 	if !okState && account.AuthIndex != "" {
 		state, _ = s.env.StateAccount(account.AuthIndex)
 	}
-	if !index.NeedsUpsert(account, state) {
+	stateValue := state.State
+	if !index.NeedsUpsert(account, stateValue) {
 		return
 	}
-	index.Upsert(account, state)
+	index.Upsert(account, stateValue)
 }
 
 func (runtime *routingSelectionRuntime) StrategyStart(layerKey, strategy string, count int) int {

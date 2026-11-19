@@ -5301,10 +5301,16 @@
       leaseSelection: new Set(),
       leaseProxyDetails: new Map(),
       sourceProxyDetails: new Map(),
-      refreshing: false
+      refreshing: false,
+      refreshPending: false,
+      proxyLoading: false,
+      proxyLoadPromise: null,
+      accountProxyPending: false,
+      accountProxyRetryCount: 0
     };
     const formDrafts = new Map();
     let toastTimer = 0;
+    let accountMetadataRefreshTimer = 0;
     let taskSearchTimer = 0;
     const STATE_TONES = Object.freeze({
       unknown: '', healthy: 'good', suspect: 'warn', degraded: 'bad', cooling: 'warn',
@@ -5771,8 +5777,8 @@
         window.history.replaceState(null, '', '#' + hash);
       }
       if (name === 'resin') setProxySubtab(state.proxySubtab);
-      if (name === 'accounts' || name === 'resin') window.setTimeout(() => ensureAccountData(), 0);
       if (name === 'tasks') window.setTimeout(() => refreshTaskCenter(Boolean(state.taskCenter)), 0);
+      else window.setTimeout(() => refreshAll(true), 0);
     }
     function openSettings(section) {
       setTab('settings');
@@ -5883,13 +5889,14 @@
     }
     async function ensureAccountData() {
       if ((state.activeTab === 'resin' ? state.leaseList : state.accountList) || state.refreshing) return;
+      if (state.activeTab === 'accounts') state.accountProxyRetryCount = 0;
       await refreshSection(null, i18n.t("ui.account_data"), async () => {
         await loadList(state.activeTab === 'resin' ? 'leases' : 'accounts');
-        try { await loadProxyData(); } catch (_) { }
         renderAccounts();
         renderResin();
         renderProxySources();
         populateProxyAutoBindForm();
+        ensureProxyData().catch(() => {});
       });
     }
     function applyAccountListData(value) {
@@ -5897,15 +5904,54 @@
       state.accounts = (data.items || []).map(normalizeBindingView);
       state.accountsTotal = Number((state.overview || {}).auth_count || Math.max(state.accountsTotal, Number(data.total || state.accounts.length)));
       state.stateCounts = data.state_counts || {};
+      state.accountProxyPending = Boolean(data.proxy_metadata_pending);
+      if (!state.accountProxyPending) {
+        state.accountProxyRetryCount = 0;
+        window.clearTimeout(accountMetadataRefreshTimer);
+        accountMetadataRefreshTimer = 0;
+      }
       state.accountsLoaded = true;
       while (state.accountDetails.size > 100) {
-        const key = state.accountDetails.keys().next().value;
-        if (key === state.selectedAuthID) break;
-        state.accountDetails.delete(key);
+        let removed = false;
+        for (const key of state.accountDetails.keys()) {
+          if (key === state.selectedAuthID) continue;
+          state.accountDetails.delete(key);
+          removed = true;
+          break;
+        }
+        if (!removed) break;
       }
+      if (state.accountProxyPending) scheduleAccountMetadataRefresh();
+    }
+    function scheduleAccountMetadataRefresh() {
+      if (accountMetadataRefreshTimer || !state.accountProxyPending) return;
+      if (state.accountProxyRetryCount >= 6) return;
+      state.accountProxyRetryCount += 1;
+      armAccountMetadataRefresh();
+    }
+    function armAccountMetadataRefresh() {
+      if (accountMetadataRefreshTimer || !state.accountProxyPending) return;
+      accountMetadataRefreshTimer = window.setTimeout(async () => {
+        accountMetadataRefreshTimer = 0;
+        if (!state.accountProxyPending || state.activeTab !== 'accounts') return;
+        if (state.refreshing) {
+          // Waiting for another request to finish is not a retry attempt.
+          armAccountMetadataRefresh();
+          return;
+        }
+        try {
+          await loadList('accounts');
+          renderAccounts();
+        } catch (_) {
+          // Keep the already-rendered rows. The bounded retry count prevents a
+          // permanently unreadable auth file from creating a polling loop.
+          if (state.accountProxyPending) scheduleAccountMetadataRefresh();
+        }
+      }, 1000);
     }
     async function refreshSection(button, label, refresh) {
       if (state.refreshing) return;
+      const tab = state.activeTab;
       state.refreshing = true;
       setBusy(button, true);
       document.getElementById('syncLabel').textContent = i18n.t("ui.refreshing") + label;
@@ -5918,22 +5964,57 @@
       } finally {
         state.refreshing = false;
         setBusy(button, false);
+        scheduleDeferredRefresh(tab);
       }
     }
+    function scheduleDeferredRefresh(previousTab) {
+      if (!state.refreshPending && state.activeTab === previousTab) return false;
+      state.refreshPending = false;
+      window.setTimeout(() => {
+        if (state.activeTab === 'tasks') refreshTaskCenter(Boolean(state.taskCenter));
+        else refreshAll(true);
+      }, 0);
+      return true;
+    }
     function refreshAccounts(button) {
+      state.accountProxyRetryCount = 0;
       return refreshSection(button, i18n.t("ui.account_quality"), async () => {
         const [overview] = await Promise.all([api('overview'), loadList('accounts')]);
         state.overview = overview || {};
-        await loadProxyData();
+        if (state.overview.policy) state.policy = state.overview.policy;
         renderOverview();
         renderAccounts();
         renderResin();
         renderProxySources();
+        ensureProxyData(true).catch(() => {});
       });
     }
     async function loadProxyData() {
       const [summary] = await Promise.all([api('proxy.summary'), loadList('sources')]);
       state.proxy = summary || {};
+    }
+    function ensureProxyData(force) {
+      if (!force && state.proxy && state.proxySourceList) return Promise.resolve();
+      if (state.proxyLoadPromise) return state.proxyLoadPromise;
+      state.proxyLoading = true;
+      state.proxyLoadPromise = (async () => {
+        try {
+          await loadProxyData();
+          renderOverview();
+          renderAccounts();
+          renderResin();
+          renderProxySources();
+          populateProxyAutoBindForm();
+        } catch (_) {
+          // Keep the account rows' existing proxy unknown/loading state. The
+          // next tab refresh or explicit action retries without blocking the
+          // account table.
+        } finally {
+          state.proxyLoading = false;
+          state.proxyLoadPromise = null;
+        }
+      })();
+      return state.proxyLoadPromise;
     }
     function refreshResin(button) {
       return refreshSection(button, i18n.t("ui.proxy_management"), async () => {
@@ -5956,37 +6037,57 @@
       });
     }
     async function refreshAll(silent) {
-      if (state.refreshing) return;
+      if (state.refreshing) {
+        state.refreshPending = true;
+        return;
+      }
+      const tab = state.activeTab;
       state.refreshing = true;
-      document.getElementById('syncLabel').textContent = i18n.t("ui.syncing");
-      const loadAccounts = state.activeTab === 'accounts';
-      const loadLeases = state.activeTab === 'resin';
-      const tasks = await Promise.allSettled([
-        api('overview'),
-        loadAccounts ? loadList('accounts') : (loadLeases ? loadList('leases') : Promise.resolve(null)),
-        api('events.list', { limit: 1000 }),
-        api('policy.get'),
-        api('proxy.summary'),
-        loadList('sources')
-      ]);
-      const errors = [];
-      if (tasks[0].status === 'fulfilled') state.overview = tasks[0].value || {};
-      else errors.push(tasks[0].reason);
-      if ((loadAccounts || loadLeases) && tasks[1].status === 'rejected') errors.push(tasks[1].reason || new Error(i18n.t("ui.account_data_load_failed")));
-      if (tasks[2].status === 'fulfilled') state.events = (tasks[2].value && tasks[2].value.items) || [];
-      else errors.push(tasks[2].reason);
-      if (tasks[3].status === 'fulfilled') state.policy = tasks[3].value || {};
-      else errors.push(tasks[3].reason);
-      if (tasks[4].status === 'fulfilled') state.proxy = tasks[4].value || {};
-      else errors.push(tasks[4].reason);
-      if (tasks[5].status === 'rejected') errors.push(tasks[5].reason);
-      renderAll();
-      state.refreshing = false;
-      document.getElementById('syncLabel').textContent = i18n.t('ui.updated_at_value', { time: formatTime(new Date().toISOString()) });
-      if (errors.length) toast((errors[0] && errors[0].message) || i18n.t("ui.partial_data_load_failed"), 'error');
-      else if (!silent) toast(i18n.t("ui.data_refreshed"), 'success');
-      if ((state.activeTab === 'accounts' && !state.accountList) || (state.activeTab === 'resin' && !state.leaseList)) {
-        window.setTimeout(() => ensureAccountData(), 0);
+      try {
+        document.getElementById('syncLabel').textContent = i18n.t("ui.syncing");
+        const loadAccounts = tab === 'accounts';
+        const loadLeases = tab === 'resin';
+        const loadEvents = tab === 'overview' || tab === 'events';
+        const loadProxy = tab === 'resin';
+        if (loadAccounts) state.accountProxyRetryCount = 0;
+        const tasks = await Promise.allSettled([
+          tab === 'tasks' ? Promise.resolve(null) : api('overview'),
+          loadAccounts ? loadList('accounts') : (loadLeases ? loadList('leases') : Promise.resolve(null)),
+          loadEvents ? api('events.list', { limit: 1000 }) : Promise.resolve(null),
+          tab === 'settings' ? api('policy.get') : Promise.resolve(null),
+          loadProxy ? api('proxy.summary') : Promise.resolve(null),
+          loadProxy ? loadList('sources') : Promise.resolve(null)
+        ]);
+        const errors = [];
+        if (tasks[0].status === 'fulfilled' && tasks[0].value != null) {
+          state.overview = tasks[0].value || {};
+          if (state.overview.policy) state.policy = state.overview.policy;
+        } else if (tasks[0].status === 'rejected') errors.push(tasks[0].reason);
+        if ((loadAccounts || loadLeases) && tasks[1].status === 'rejected') errors.push(tasks[1].reason || new Error(i18n.t("ui.account_data_load_failed")));
+        if (loadEvents) {
+          if (tasks[2].status === 'fulfilled') state.events = (tasks[2].value && tasks[2].value.items) || [];
+          else errors.push(tasks[2].reason);
+        }
+        if (tab === 'settings') {
+          if (tasks[3].status === 'fulfilled') state.policy = tasks[3].value || {};
+          else errors.push(tasks[3].reason);
+        }
+        if (loadProxy) {
+          if (tasks[4].status === 'fulfilled') state.proxy = tasks[4].value || {};
+          else errors.push(tasks[4].reason);
+          if (tasks[5].status === 'rejected') errors.push(tasks[5].reason);
+        }
+        renderAll();
+        document.getElementById('syncLabel').textContent = i18n.t('ui.updated_at_value', { time: formatTime(new Date().toISOString()) });
+        if (errors.length) toast((errors[0] && errors[0].message) || i18n.t("ui.partial_data_load_failed"), 'error');
+        else if (!silent) toast(i18n.t("ui.data_refreshed"), 'success');
+        if (tab === 'accounts' || tab === 'overview') ensureProxyData().catch(() => {});
+        if ((state.activeTab === 'accounts' && !state.accountList) || (state.activeTab === 'resin' && !state.leaseList)) {
+          window.setTimeout(() => ensureAccountData(), 0);
+        }
+      } finally {
+        state.refreshing = false;
+        scheduleDeferredRefresh(tab);
       }
     }
     function metricCard(iconName, value, label, detail, tone) {
@@ -9937,7 +10038,6 @@
     i18n.observe();
     i18n.applyLocale(i18n.locale);
     applyLocationHash();
-    refreshAll(true);
   </script>
 </body>
 

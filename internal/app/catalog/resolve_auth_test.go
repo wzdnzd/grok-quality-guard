@@ -18,10 +18,10 @@ type blockingAuthEnvironment struct {
 }
 
 func (e *blockingAuthEnvironment) Store() *appstate.Store { return appstate.NewStore("") }
-func (e *blockingAuthEnvironment) ListAuths() ([]pluginapi.HostAuthFileEntry, error) {
+func (e *blockingAuthEnvironment) ListAuths(context.Context) ([]pluginapi.HostAuthFileEntry, error) {
 	return nil, nil
 }
-func (e *blockingAuthEnvironment) ListAuthModels() ([]pluginapi.HostAuthModels, error) {
+func (e *blockingAuthEnvironment) ListAuthModels(context.Context) ([]pluginapi.HostAuthModels, error) {
 	return nil, nil
 }
 func (e *blockingAuthEnvironment) GetAuth(index string) (pluginapi.HostAuthGetResponse, error) {
@@ -44,10 +44,11 @@ func (e *blockingAuthEnvironment) GetAuthContext(ctx context.Context, index stri
 		JSON:      json.RawMessage(`{"type":"xai","access_token":"token"}`),
 	}, nil
 }
-func (e *blockingAuthEnvironment) SelectionReady() bool         { return true }
-func (e *blockingAuthEnvironment) RebuildSelectionIndex() error { return nil }
-func (e *blockingAuthEnvironment) WakeProxyAutoBind()           {}
-func (e *blockingAuthEnvironment) WakeResinLeaseDeleteLoop()    {}
+func (e *blockingAuthEnvironment) SelectionReady() bool            { return true }
+func (e *blockingAuthEnvironment) RebuildSelectionIndex() error    { return nil }
+func (e *blockingAuthEnvironment) WakeProxyAutoBind()              {}
+func (e *blockingAuthEnvironment) WakeResinLeaseDeleteLoop()       {}
+func (e *blockingAuthEnvironment) PruneProxyObservations([]string) {}
 
 func TestResolveAuthHonorsContextWhenGetAuthBlocks(t *testing.T) {
 	env := &blockingAuthEnvironment{

@@ -17,6 +17,7 @@ import (
 
 type Account = model.Account
 type AccountState = appstate.AccountState
+type ProbeAccountState = appstate.ProbeAccountState
 type Event = appstate.Event
 type State = appstate.State
 type Store = appstate.Store

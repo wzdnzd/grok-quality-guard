@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -37,31 +38,73 @@ func (s *Service) refreshLoop(ctx context.Context) {
 const (
 	catalogRefreshTTL            = 30 * time.Second
 	authModelsRefreshTTL         = 5 * time.Minute
+	authModelsRetryBackoff       = 30 * time.Second
+	authModelsCallTimeout        = 30 * time.Second
+	authMetaRefreshTimeout       = 2 * time.Minute
+	authMetaFailureBackoff       = 5 * time.Minute
+	catalogInitialReadWait       = 5 * time.Second
 	guardCatalogMissingRetention = 24 * time.Hour
 )
 
 func (s *Service) ensureCatalog(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	s.catalogMu.RLock()
-	fresh := !s.catalogAt.IsZero() && time.Since(s.catalogAt) < catalogRefreshTTL
+	hasCatalog := !s.catalogAt.IsZero()
+	stale := !hasCatalog || time.Since(s.catalogAt) >= catalogRefreshTTL
 	s.catalogMu.RUnlock()
-	if fresh {
+	if hasCatalog {
+		if stale {
+			// Management reads must never wait behind host.auth.list. If the
+			// periodic worker is disabled or behind, start one non-blocking
+			// refresh and serve the current snapshot to this request.
+			s.startCatalogRefresh()
+		}
 		return nil
 	}
+	waitCtx, cancel := context.WithTimeout(ctx, catalogInitialReadWait)
+	defer cancel()
+	if errAcquire := acquireGate(waitCtx, s.catalogRefreshGate); errAcquire != nil {
+		return errAcquire
+	}
+	defer releaseGate(s.catalogRefreshGate)
+	// Another request or the refresh loop may have completed while we waited.
+	s.catalogMu.RLock()
+	hasCatalog = !s.catalogAt.IsZero()
+	s.catalogMu.RUnlock()
+	if hasCatalog {
+		return nil
+	}
+	return s.refreshCatalogLocked(waitCtx)
+}
 
-	s.catalogRefreshMu.Lock()
-	defer s.catalogRefreshMu.Unlock()
-	s.catalogMu.RLock()
-	fresh = !s.catalogAt.IsZero() && time.Since(s.catalogAt) < catalogRefreshTTL
-	s.catalogMu.RUnlock()
-	if fresh {
-		return nil
+func (s *Service) startCatalogRefresh() {
+	if s == nil || s.env == nil || s.stopped() {
+		return
 	}
-	return s.refreshCatalogLocked(ctx)
+	if !tryAcquireGate(s.catalogRefreshGate) {
+		return
+	}
+	s.catalogMu.Lock()
+	if !s.catalogRefreshAttemptAt.IsZero() && time.Since(s.catalogRefreshAttemptAt) < catalogRefreshTTL {
+		s.catalogMu.Unlock()
+		releaseGate(s.catalogRefreshGate)
+		return
+	}
+	s.catalogRefreshAttemptAt = time.Now().UTC()
+	s.catalogMu.Unlock()
+	go func() {
+		defer releaseGate(s.catalogRefreshGate)
+		_ = s.refreshCatalogLocked(s.backgroundContext())
+	}()
 }
 
 func (s *Service) RefreshCatalog(ctx context.Context) error {
-	s.catalogRefreshMu.Lock()
-	defer s.catalogRefreshMu.Unlock()
+	if errAcquire := acquireGate(ctx, s.catalogRefreshGate); errAcquire != nil {
+		return errAcquire
+	}
+	defer releaseGate(s.catalogRefreshGate)
 	return s.refreshCatalogLocked(ctx)
 }
 
@@ -74,7 +117,12 @@ func (s *Service) refreshCatalogLocked(ctx context.Context) error {
 	previousByID := s.catalogByID
 	s.catalogMu.RUnlock()
 
-	entries, errList := s.env.ListAuths()
+	now := time.Now().UTC()
+	var firstSeenByID map[string]time.Time
+	if store := s.env.Store(); store != nil {
+		firstSeenByID = store.AccountFirstSeenValues()
+	}
+	entries, errList := s.env.ListAuths(ctx)
 	if errList != nil {
 		return errList
 	}
@@ -94,6 +142,16 @@ func (s *Service) refreshCatalogLocked(ctx context.Context) error {
 		if id == "" {
 			continue
 		}
+		var firstSeenAt time.Time
+		if previousIndex, exists := previousByID[id]; exists && previousIndex >= 0 && previousIndex < len(previousCatalog) {
+			firstSeenAt = previousCatalog[previousIndex].FirstSeenAt
+		}
+		if firstSeenAt.IsZero() {
+			firstSeenAt = firstSeenByID[id]
+		}
+		if firstSeenAt.IsZero() {
+			firstSeenAt = now
+		}
 		account := Account{
 			ID:          id,
 			AuthIndex:   strings.TrimSpace(entry.AuthIndex),
@@ -107,6 +165,7 @@ func (s *Service) refreshCatalogLocked(ctx context.Context) error {
 			Path:        strings.TrimSpace(entry.Path),
 			Size:        entry.Size,
 			ModTime:     entry.ModTime,
+			FirstSeenAt: firstSeenAt,
 		}
 		accounts = append(accounts, account)
 	}
@@ -116,47 +175,60 @@ func (s *Service) refreshCatalogLocked(ctx context.Context) error {
 		}
 		return accounts[i].ID < accounts[j].ID
 	})
-	s.refreshAuthMeta(ctx, accounts, previousCatalog, previousByID)
+	copyCachedAuthMeta(accounts, previousCatalog, previousByID)
 	fingerprints := catalogFingerprints(accounts)
 
 	s.catalogMu.Lock()
-	stateChanged := fingerprints.state != s.catalogStateFingerprint
 	routingChanged := fingerprints.routing != s.catalogRoutingFingerprint
 	modelsChanged := fingerprints.models != s.catalogModelsFingerprint
 	s.catalog = accounts
 	byID := make(map[string]int, len(accounts))
 	byAuthIndex := make(map[string]int, len(accounts))
+	publishedIDs := make([]string, 0, len(accounts))
 	for index, account := range accounts {
 		byID[account.ID] = index
+		publishedIDs = append(publishedIDs, account.ID)
 		if authIndex := strings.TrimSpace(account.AuthIndex); authIndex != "" && authIndex != account.ID {
 			byAuthIndex[authIndex] = index
 		}
 	}
 	s.catalogByID = byID
 	s.catalogByAuthIndex = byAuthIndex
-	s.catalogStateFingerprint = fingerprints.state
 	s.catalogRoutingFingerprint = fingerprints.routing
 	s.catalogModelsFingerprint = fingerprints.models
 	s.catalogAt = time.Now().UTC()
 	s.catalogMu.Unlock()
 
+	// Drop proxy observations for auths that disappeared from the host catalog.
+	// Observations are runtime-only overlays and must not accumulate across
+	// account churn.
+	s.env.PruneProxyObservations(publishedIDs)
+	if modelsChanged {
+		s.invalidateGrokAuthModels()
+	}
 	if s.grokAuthModelsNeedRefresh(modelsChanged) {
-		if authModels, errModels := s.env.ListAuthModels(); errModels == nil {
-			s.setGrokAuthModels(authModels)
-		}
+		s.startGrokAuthModelsRefresh(modelsChanged)
 	}
-	if stateChanged || !s.catalogStateMatches(accounts) {
-		_ = s.syncCatalogState(accounts)
-	}
+	// Retention cleanup is time-based even when the catalog fingerprint is
+	// unchanged, so a missing auth must still be re-evaluated on every refresh.
+	// Do not gate this on catalog/state key equality: sparse state intentionally
+	// omits catalog-only accounts, so that check would always be false and would
+	// only add an O(catalog) scan. UpdateIfChanged keeps this O(sparse state) and
+	// skips persistence when nothing is due.
+	_ = s.syncCatalogState(accounts)
 	if routingChanged || !s.env.SelectionReady() {
 		_ = s.env.RebuildSelectionIndex()
 	}
+	// Auth-file metadata is enrichment only. Publish the host catalog first so
+	// the account tab can render immediately with proxy status unknown, then
+	// fill proxy/OAuth fields without blocking the request that triggered the
+	// catalog refresh.
+	s.startAuthMetaRefresh()
 	s.env.WakeProxyAutoBind()
 	return nil
 }
 
 type catalogFingerprintSet struct {
-	state   uint64
 	routing uint64
 	models  uint64
 }
@@ -202,13 +274,9 @@ func (value *fingerprint) writeInt(number int) {
 }
 
 func catalogFingerprints(accounts []Account) catalogFingerprintSet {
-	state := fingerprint(fingerprintOffset64)
 	routing := fingerprint(fingerprintOffset64)
 	models := fingerprint(fingerprintOffset64)
 	for _, account := range accounts {
-		state.writeString(account.ID)
-		state.writeBool(account.Disabled)
-
 		models.writeString(account.ID)
 		models.writeString(account.AuthIndex)
 		models.writeString(account.Type)
@@ -222,94 +290,274 @@ func catalogFingerprints(accounts []Account) catalogFingerprintSet {
 		routing.writeBool(account.Unavailable)
 		routing.writeInt(account.Priority)
 	}
-	return catalogFingerprintSet{state: uint64(state), routing: uint64(routing), models: uint64(models)}
-}
-
-func (s *Service) catalogStateMatches(accounts []Account) bool {
-	store := s.env.Store()
-	return store != nil && store.CatalogMatches(accounts)
+	return catalogFingerprintSet{routing: uint64(routing), models: uint64(models)}
 }
 
 func (s *Service) grokAuthModelsNeedRefresh(modelsChanged bool) bool {
-	s.authModelsMu.RLock()
-	defer s.authModelsMu.RUnlock()
-	if modelsChanged || !s.authModelsReady || s.authModelsAt.IsZero() {
+	if modelsChanged {
 		return true
 	}
-	return time.Since(s.authModelsAt) >= authModelsRefreshTTL
+	s.authModelsMu.RLock()
+	defer s.authModelsMu.RUnlock()
+	if s.authModelsReady {
+		return s.authModelsAt.IsZero() || time.Since(s.authModelsAt) >= authModelsRefreshTTL
+	}
+	if s.authModelsLastAttempt.IsZero() {
+		return true
+	}
+	return time.Since(s.authModelsLastAttempt) >= authModelsRetryBackoff
 }
 
 type authMetaJob struct {
-	accountIndex int
-	path         string
+	valueIndex int
+	authID     string
+	path       string
+	size       int64
+	modTime    time.Time
+}
+
+type authMetaFileSignature struct {
+	path    string
+	size    int64
+	modTime time.Time
+}
+
+type authMetaFailure struct {
+	signature authMetaFileSignature
+	retryAt   time.Time
 }
 
 type authMetaValue struct {
 	proxyURL string
-	oauthID  string
+	OAuthID  string
 	loaded   bool
 }
 
-func (s *Service) refreshAuthMeta(ctx context.Context, accounts, previousCatalog []Account, previousByID map[string]int) {
-	if len(accounts) == 0 {
-		return
-	}
-	jobs := make([]authMetaJob, 0)
+// copyCachedAuthMeta reuses file-derived fields only while the backing file
+// signature is unchanged. Raw proxy URLs are deliberately never cached in the
+// catalog; the masked value and hash are sufficient for list and binding views.
+func copyCachedAuthMeta(accounts, previousCatalog []Account, previousByID map[string]int) {
 	for index := range accounts {
 		account := &accounts[index]
 		path := strings.TrimSpace(account.Path)
 		if path == "" {
 			continue
 		}
-		if previousIndex, exists := previousByID[account.ID]; exists && previousIndex >= 0 && previousIndex < len(previousCatalog) {
-			cached := previousCatalog[previousIndex]
-			if cached.ProxyURLKnown && cached.Path == path && cached.Size == account.Size && cached.ModTime.Equal(account.ModTime) {
-				account.ProxyURL = cached.ProxyURL
-				account.ProxyURLKnown = true
-				account.ProxyHash = cached.ProxyHash
-				account.OAuthID = cached.OAuthID
-				continue
-			}
+		previousIndex, exists := previousByID[account.ID]
+		if !exists || previousIndex < 0 || previousIndex >= len(previousCatalog) {
+			continue
 		}
-		jobs = append(jobs, authMetaJob{accountIndex: index, path: path})
+		cached := previousCatalog[previousIndex]
+		if cached.Path != path || cached.Size != account.Size || !cached.ModTime.Equal(account.ModTime) {
+			continue
+		}
+		account.ProxyURLKnown = cached.ProxyURLKnown
+		account.ProxyHash = cached.ProxyHash
+		account.ProxyMasked = cached.ProxyMasked
+		account.OAuthID = cached.OAuthID
 	}
-	if len(jobs) == 0 {
-		return
-	}
+}
 
-	values := make([]authMetaValue, len(accounts))
-	_ = runBoundedQueue(ctx, jobs, 64, 8, func(_ context.Context, job authMetaJob) {
-		proxyURL, oauthID, loaded := readAuthMeta(job.path)
-		values[job.accountIndex] = authMetaValue{proxyURL: proxyURL, oauthID: oauthID, loaded: loaded}
-	})
-	for _, job := range jobs {
-		value := values[job.accountIndex]
-		if value.loaded {
-			accounts[job.accountIndex].ProxyURL = value.proxyURL
-			accounts[job.accountIndex].ProxyURLKnown = true
-			accounts[job.accountIndex].OAuthID = value.oauthID
-			if value.proxyURL != "" {
-				accounts[job.accountIndex].ProxyHash = proxyapp.URLHash(value.proxyURL)
-			}
+func (s *Service) pendingAuthMetaJobs(accounts []Account) []authMetaJob {
+	now := time.Now().UTC()
+	live := make(map[string]authMetaFileSignature, len(accounts))
+	jobs := make([]authMetaJob, 0)
+	s.authMetaFailuresMu.Lock()
+	defer s.authMetaFailuresMu.Unlock()
+	for index := range accounts {
+		account := accounts[index]
+		path := strings.TrimSpace(account.Path)
+		if path == "" {
+			continue
+		}
+		signature := authMetaFileSignature{path: path, size: account.Size, modTime: account.ModTime}
+		live[account.ID] = signature
+		if account.ProxyURLKnown {
+			continue
+		}
+		if failure, failed := s.authMetaFailures[account.ID]; failed && failure.signature == signature && now.Before(failure.retryAt) {
+			continue
+		}
+		jobs = append(jobs, authMetaJob{
+			valueIndex: len(jobs),
+			authID:     account.ID,
+			path:       path,
+			size:       account.Size,
+			modTime:    account.ModTime,
+		})
+	}
+	for authID, failure := range s.authMetaFailures {
+		signature, exists := live[authID]
+		if !exists || signature != failure.signature {
+			delete(s.authMetaFailures, authID)
+		}
+	}
+	return jobs
+}
+
+func (s *Service) recordAuthMetaResults(jobs []authMetaJob, values []authMetaValue) {
+	s.authMetaFailuresMu.Lock()
+	defer s.authMetaFailuresMu.Unlock()
+	if s.authMetaFailures == nil {
+		s.authMetaFailures = make(map[string]authMetaFailure)
+	}
+	now := time.Now().UTC()
+	for index, job := range jobs {
+		if index < len(values) && values[index].loaded {
+			delete(s.authMetaFailures, job.authID)
+			continue
+		}
+		s.authMetaFailures[job.authID] = authMetaFailure{
+			signature: authMetaFileSignature{path: job.path, size: job.size, modTime: job.modTime},
+			retryAt:   now.Add(authMetaFailureBackoff),
 		}
 	}
 }
 
+// startAuthMetaRefresh schedules one bounded enrichment pass. The gate and
+// pending flag serialize passes across catalog generations without making the
+// host.list request wait for filesystem reads.
+func (s *Service) startAuthMetaRefresh() {
+	if s == nil || s.env == nil || s.stopped() {
+		return
+	}
+	s.authMetaRefreshMu.Lock()
+	s.authMetaRefreshPending = true
+	if !tryAcquireGate(s.authMetaRefreshGate) {
+		s.authMetaRefreshMu.Unlock()
+		return
+	}
+	s.authMetaRefreshPending = false
+	s.authMetaRefreshMu.Unlock()
+	go s.runAuthMetaRefresh()
+}
+
+// releaseAuthMetaRefreshGate clears a follow-up request only while the
+// enrichment coordinator still owns the gate. Callers must hold the gate.
+func (s *Service) releaseAuthMetaRefreshGate() {
+	s.authMetaRefreshMu.Lock()
+	s.authMetaRefreshPending = false
+	releaseGate(s.authMetaRefreshGate)
+	s.authMetaRefreshMu.Unlock()
+}
+
+func (s *Service) runAuthMetaRefresh() {
+	released := false
+	defer func() {
+		if !released {
+			// This also handles a panic or an early lifecycle stop. In the
+			// normal path the gate is released while holding authMetaRefreshMu
+			// below, so a queued request cannot be lost.
+			s.releaseAuthMetaRefreshGate()
+		}
+	}()
+	for {
+		if s.stopped() {
+			return
+		}
+		s.catalogMu.RLock()
+		accounts := s.catalog
+		s.catalogMu.RUnlock()
+
+		jobs := s.pendingAuthMetaJobs(accounts)
+		if len(jobs) > 0 {
+			values := s.loadAuthMeta(jobs)
+			s.recordAuthMetaResults(jobs, values)
+			// Apply the values that still match their per-file signature. A
+			// catalog generation change may be unrelated to these files; do not
+			// discard and reread the entire set for that reason.
+			s.applyAuthMeta(jobs, values)
+		}
+
+		s.authMetaRefreshMu.Lock()
+		pending := s.authMetaRefreshPending
+		s.authMetaRefreshPending = false
+		if pending {
+			s.authMetaRefreshMu.Unlock()
+			continue
+		}
+		releaseGate(s.authMetaRefreshGate)
+		s.authMetaRefreshMu.Unlock()
+		released = true
+		return
+	}
+}
+
+func (s *Service) loadAuthMeta(jobs []authMetaJob) []authMetaValue {
+	values := make([]authMetaValue, len(jobs))
+	read := s.authMetaRead
+	if read == nil {
+		read = readAuthMeta
+	}
+	ctx, cancel := context.WithTimeout(s.backgroundContext(), authMetaRefreshTimeout)
+	defer cancel()
+	_ = runBoundedQueue(ctx, jobs, 64, 8, func(_ context.Context, job authMetaJob) {
+		proxyURL, OAuthID, loaded := read(job.path)
+		values[job.valueIndex] = authMetaValue{proxyURL: proxyURL, OAuthID: OAuthID, loaded: loaded}
+	})
+	return values
+}
+
+// applyAuthMeta applies values only to catalog rows whose backing file still has
+// the same path, size, and modification time. Per-row validation preserves useful
+// results across unrelated catalog refreshes without applying stale data.
+func (s *Service) applyAuthMeta(jobs []authMetaJob, values []authMetaValue) bool {
+	s.catalogMu.Lock()
+	next := append([]Account(nil), s.catalog...)
+	changed := false
+	for index, job := range jobs {
+		value := values[index]
+		if !value.loaded {
+			continue
+		}
+		catalogIndex, exists := s.catalogByID[job.authID]
+		if !exists || catalogIndex < 0 || catalogIndex >= len(next) {
+			continue
+		}
+		account := &next[catalogIndex]
+		if account.Path != job.path || account.Size != job.size || !account.ModTime.Equal(job.modTime) {
+			continue
+		}
+		masked := proxyapp.MaskProxyURL(value.proxyURL)
+		hash := ""
+		if value.proxyURL != "" {
+			hash = proxyapp.URLHash(value.proxyURL)
+		}
+		if account.ProxyURLKnown && account.ProxyMasked == masked && account.ProxyHash == hash && account.OAuthID == value.OAuthID {
+			continue
+		}
+		account.ProxyURLKnown = true
+		account.ProxyMasked = masked
+		account.ProxyHash = hash
+		account.OAuthID = value.OAuthID
+		changed = true
+	}
+	if !changed {
+		s.catalogMu.Unlock()
+		return true
+	}
+	s.catalog = next
+	s.catalogMu.Unlock()
+	s.env.WakeProxyAutoBind()
+	return true
+}
 func readAuthMeta(path string) (string, string, bool) {
-	data, errRead := os.ReadFile(path)
-	if errRead != nil {
+	file, errOpen := os.Open(path)
+	if errOpen != nil {
 		return "", "", false
 	}
-	if strings.TrimSpace(string(data)) == "null" {
-		return "", "", false
-	}
-	var metadata struct {
-		ProxyURL json.RawMessage `json:"proxy_url"`
+	defer file.Close()
+	var metadata *struct {
+		ProxyURL string          `json:"proxy_url"`
 		Sub      string          `json:"sub"`
 		Subject  string          `json:"subject"`
 		Metadata json.RawMessage `json:"metadata"`
 	}
-	if errUnmarshal := json.Unmarshal(data, &metadata); errUnmarshal != nil {
+	decoder := json.NewDecoder(file)
+	if errDecode := decoder.Decode(&metadata); errDecode != nil || metadata == nil {
+		return "", "", false
+	}
+	if errTrailing := decoder.Decode(&struct{}{}); !errors.Is(errTrailing, io.EOF) {
 		return "", "", false
 	}
 	oauthID := strings.TrimSpace(metadata.Sub)
@@ -328,20 +576,13 @@ func readAuthMeta(path string) (string, string, bool) {
 			}
 		}
 	}
-	var proxyURL string
-	if len(metadata.ProxyURL) == 0 || string(metadata.ProxyURL) == "null" {
-		return "", oauthID, true
-	}
-	if json.Unmarshal(metadata.ProxyURL, &proxyURL) != nil {
-		return "", "", false
-	}
-	return strings.TrimSpace(proxyURL), oauthID, true
+	return strings.TrimSpace(metadata.ProxyURL), oauthID, true
 }
 func catalogStateNeedsRetention(account *AccountState) bool {
 	if account == nil {
 		return false
 	}
-	if account.DisableKind != "" || account.AuthDisabledIntent != nil || account.Proxy.SourceID != "" {
+	if account.State == StateExternallyDisabled || account.DisableKind != "" || account.AuthDisabledIntent != nil || account.Proxy.SourceID != "" {
 		return true
 	}
 	autoBind := account.AutoBind
@@ -413,13 +654,9 @@ func (s *Service) syncCatalogState(accounts []Account) error {
 		for _, account := range accounts {
 			existing := state.Accounts[account.ID]
 			if existing == nil {
-				existing = &AccountState{
-					AuthID:      account.ID,
-					State:       StateUnknown,
-					FirstSeenAt: now,
-				}
-				state.Accounts[account.ID] = existing
-				changed = true
+				// Sparse state: a catalog-only account with no quality, guard,
+				// probe, or proxy state is represented by the catalog itself.
+				continue
 			}
 			if !existing.CatalogMissingSince.IsZero() {
 				existing.CatalogMissingSince = time.Time{}

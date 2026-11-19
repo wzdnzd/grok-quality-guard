@@ -13,10 +13,30 @@ import (
 var hostCall func(string, any) (json.RawMessage, error)
 
 const hostCallGrace = 5 * time.Second
+const hostAuthListTimeout = 30 * time.Second
 
 type hostCallResult struct {
 	raw json.RawMessage
 	err error
+}
+
+type hostCallFlight struct {
+	done chan struct{}
+	raw  json.RawMessage
+	err  error
+}
+
+func invokeHostCall(call func(string, any) (json.RawMessage, error), method string, payload any) (raw json.RawMessage, err error) {
+	if call == nil {
+		return nil, fmt.Errorf("host callback %s is not configured", method)
+	}
+	defer func() {
+		if recover() != nil {
+			raw = nil
+			err = fmt.Errorf("host callback %s panicked", method)
+		}
+	}()
+	return call(method, payload)
 }
 
 // hostCallWithContext bounds the wait for a host callback. The ABI callback has
@@ -24,7 +44,7 @@ type hostCallResult struct {
 // background; callers that own host resources must clean up any late result.
 func hostCallWithContext(ctx context.Context, method string, payload any) (json.RawMessage, error) {
 	if ctx == nil || ctx.Done() == nil {
-		return hostCall(method, payload)
+		return invokeHostCall(hostCall, method, payload)
 	}
 	if errCtx := ctx.Err(); errCtx != nil {
 		return nil, errCtx
@@ -32,7 +52,7 @@ func hostCallWithContext(ctx context.Context, method string, payload any) (json.
 	call := hostCall
 	results := make(chan hostCallResult, 1)
 	go func() {
-		raw, errCall := call(method, payload)
+		raw, errCall := invokeHostCall(call, method, payload)
 		results <- hostCallResult{raw: raw, err: errCall}
 	}()
 	select {
@@ -49,7 +69,26 @@ func SetHostCall(call func(string, any) (json.RawMessage, error)) {
 }
 
 type authListResponse struct {
-	Files []pluginapi.HostAuthFileEntry `json:"files"`
+	Files []hostAuthFileEntry `json:"files"`
+}
+
+// hostAuthFileEntry intentionally mirrors only fields used by the guard.
+// Upstream also serializes recent_requests and other management metadata; those
+// values are skipped during decoding instead of being retained in the catalog.
+type hostAuthFileEntry struct {
+	ID          string    `json:"id,omitempty"`
+	AuthIndex   string    `json:"auth_index,omitempty"`
+	Name        string    `json:"name"`
+	Type        string    `json:"type,omitempty"`
+	Provider    string    `json:"provider,omitempty"`
+	Label       string    `json:"label,omitempty"`
+	Disabled    bool      `json:"disabled,omitempty"`
+	Unavailable bool      `json:"unavailable,omitempty"`
+	Path        string    `json:"path,omitempty"`
+	Size        int64     `json:"size,omitempty"`
+	ModTime     time.Time `json:"modtime,omitempty"`
+	Email       string    `json:"email,omitempty"`
+	Priority    int       `json:"priority,omitempty"`
 }
 
 type hostModelExecutionRequest struct {
@@ -57,8 +96,62 @@ type hostModelExecutionRequest struct {
 	HostCallbackID string `json:"host_callback_id,omitempty"`
 }
 
-func (p *Plugin) listAuths() ([]pluginapi.HostAuthFileEntry, error) {
-	result, errCall := hostCall(pluginabi.MethodHostAuthList, map[string]any{})
+func (p *Plugin) sharedHostCall(ctx context.Context, method string, payload any) (json.RawMessage, error) {
+	if p == nil {
+		return nil, fmt.Errorf("plugin is not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if errCtx := ctx.Err(); errCtx != nil {
+		return nil, errCtx
+	}
+	call := hostCall
+	p.hostCallsMu.Lock()
+	if p.hostCalls == nil {
+		p.hostCalls = make(map[string]*hostCallFlight)
+	}
+	flight := p.hostCalls[method]
+	if flight == nil {
+		flight = &hostCallFlight{done: make(chan struct{})}
+		p.hostCalls[method] = flight
+		go func() {
+			raw, errCall := invokeHostCall(call, method, payload)
+			p.hostCallsMu.Lock()
+			flight.raw = raw
+			flight.err = errCall
+			if p.hostCalls[method] == flight {
+				delete(p.hostCalls, method)
+			}
+			close(flight.done)
+			p.hostCallsMu.Unlock()
+		}()
+	}
+	p.hostCallsMu.Unlock()
+	select {
+	case <-ctx.Done():
+		// The host callback has no cancellation handle. Drop our map entry so
+		// a permanently blocked callback cannot poison every future caller of
+		// this method. Existing waiters still observe flight.done if the old
+		// callback eventually returns.
+		p.hostCallsMu.Lock()
+		if p.hostCalls[method] == flight {
+			delete(p.hostCalls, method)
+		}
+		p.hostCallsMu.Unlock()
+		return nil, ctx.Err()
+	case <-flight.done:
+		return flight.raw, flight.err
+	}
+}
+
+func (p *Plugin) listAuths(ctx context.Context) ([]pluginapi.HostAuthFileEntry, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	callCtx, cancel := context.WithTimeout(ctx, hostAuthListTimeout)
+	defer cancel()
+	result, errCall := p.sharedHostCall(callCtx, pluginabi.MethodHostAuthList, map[string]any{})
 	if errCall != nil {
 		return nil, errCall
 	}
@@ -66,11 +159,34 @@ func (p *Plugin) listAuths() ([]pluginapi.HostAuthFileEntry, error) {
 	if errUnmarshal := json.Unmarshal(result, &response); errUnmarshal != nil {
 		return nil, fmt.Errorf("decode host.auth.list result: %w", errUnmarshal)
 	}
-	return response.Files, nil
+	files := make([]pluginapi.HostAuthFileEntry, len(response.Files))
+	for index, entry := range response.Files {
+		files[index] = pluginapi.HostAuthFileEntry{
+			ID:          entry.ID,
+			AuthIndex:   entry.AuthIndex,
+			Name:        entry.Name,
+			Type:        entry.Type,
+			Provider:    entry.Provider,
+			Label:       entry.Label,
+			Disabled:    entry.Disabled,
+			Unavailable: entry.Unavailable,
+			Path:        entry.Path,
+			Size:        entry.Size,
+			ModTime:     entry.ModTime,
+			Email:       entry.Email,
+			Priority:    entry.Priority,
+		}
+	}
+	return files, nil
 }
 
-func (p *Plugin) listAuthModels() ([]pluginapi.HostAuthModels, error) {
-	result, errCall := hostCall(pluginabi.MethodHostAuthModels, pluginapi.HostAuthModelsRequest{})
+func (p *Plugin) listAuthModels(ctx context.Context) ([]pluginapi.HostAuthModels, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	callCtx, cancel := context.WithTimeout(ctx, hostAuthListTimeout)
+	defer cancel()
+	result, errCall := p.sharedHostCall(callCtx, pluginabi.MethodHostAuthModels, pluginapi.HostAuthModelsRequest{})
 	if errCall != nil {
 		return nil, errCall
 	}
@@ -200,9 +316,29 @@ func (p *Plugin) closeModelStream(streamID string) error {
 		return nil
 	}
 	defer p.untrackModelStream(streamID)
-	ctx, cancel := context.WithTimeout(context.Background(), hostCallGrace)
+	return p.closeModelStreamNow(streamID)
+}
+
+func (p *Plugin) closeModelStreamNow(streamID string) error {
+	if streamID == "" {
+		return nil
+	}
+	return p.closeModelStreamNowWithContext(context.Background(), streamID)
+}
+
+func (p *Plugin) closeModelStreamNowWithContext(ctx context.Context, streamID string) error {
+	if streamID == "" {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if errCtx := ctx.Err(); errCtx != nil {
+		return errCtx
+	}
+	callCtx, cancel := context.WithTimeout(ctx, hostCallGrace)
 	defer cancel()
-	_, errCall := hostCallWithContext(ctx, pluginabi.MethodHostModelStreamClose, pluginapi.HostModelStreamCloseRequest{StreamID: streamID})
+	_, errCall := hostCallWithContext(callCtx, pluginabi.MethodHostModelStreamClose, pluginapi.HostModelStreamCloseRequest{StreamID: streamID})
 	return errCall
 }
 

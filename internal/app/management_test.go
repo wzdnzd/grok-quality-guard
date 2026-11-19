@@ -425,12 +425,14 @@ func TestRestoreSelectedBatchManagement(t *testing.T) {
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, nil)
 	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
-		state.Accounts["auth-healthy"].State = appstate.StateHealthy
-		state.Accounts["auth-degraded"].State = appstate.StateDegraded
-		state.Accounts["auth-degraded"].CooldownUntil = time.Now().UTC().Add(time.Hour)
-		state.Accounts["auth-unselected"].State = appstate.StateDegraded
-		state.Accounts["auth-unselected"].CooldownUntil = time.Now().UTC().Add(time.Hour)
-		state.Accounts["auth-external"].State = appstate.StateExternallyDisabled
+		plugin.ensureStateAccount(state, "auth-healthy").State = appstate.StateHealthy
+		degraded := plugin.ensureStateAccount(state, "auth-degraded")
+		degraded.State = appstate.StateDegraded
+		degraded.CooldownUntil = time.Now().UTC().Add(time.Hour)
+		unselected := plugin.ensureStateAccount(state, "auth-unselected")
+		unselected.State = appstate.StateDegraded
+		unselected.CooldownUntil = time.Now().UTC().Add(time.Hour)
+		plugin.ensureStateAccount(state, "auth-external").State = appstate.StateExternallyDisabled
 		return nil
 	}); errUpdate != nil {
 		t.Fatal(errUpdate)
@@ -507,8 +509,8 @@ func TestRestoreSelectedExternalConfirmationAndPreview(t *testing.T) {
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, nil)
 	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
-		state.Accounts["auth-healthy"].State = appstate.StateHealthy
-		state.Accounts["auth-external"].State = appstate.StateExternallyDisabled
+		plugin.ensureStateAccount(state, "auth-healthy").State = appstate.StateHealthy
+		plugin.ensureStateAccount(state, "auth-external").State = appstate.StateExternallyDisabled
 		return nil
 	}); errUpdate != nil {
 		t.Fatal(errUpdate)
@@ -633,8 +635,18 @@ func TestDisableSelectedBatchModes(t *testing.T) {
 			if account.PluginOnlyDisable != !testCase.modifyAuth {
 				t.Fatalf("plugin-only flag = %t, want %t", account.PluginOnlyDisable, !testCase.modifyAuth)
 			}
-			if state.Accounts["auth-external"].State != appstate.StateExternallyDisabled {
-				t.Fatalf("external account state changed: %#v", state.Accounts["auth-external"])
+			if account, exists := state.Accounts["auth-external"]; exists {
+				t.Fatalf("skipped external auth should remain sparse: %#v", account)
+			}
+			externalFound := false
+			for _, external := range plugin.CatalogSnapshot() {
+				if external.ID == "auth-external" && external.Disabled {
+					externalFound = true
+					break
+				}
+			}
+			if !externalFound {
+				t.Fatal("external account should remain disabled in catalog")
 			}
 			if testCase.modifyAuth {
 				saved, errDecode := rawAuthToMap(host.saves["auth-healthy"])
@@ -691,9 +703,9 @@ func TestProbeSelectedBatchManagement(t *testing.T) {
 		cfg.Quality.HardTPS = 2e9
 	})
 	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
-		state.Accounts["auth-healthy"].State = appstate.StateHealthy
-		state.Accounts["auth-suspect"].State = appstate.StateSuspect
-		state.Accounts["auth-external"].State = appstate.StateExternallyDisabled
+		plugin.ensureStateAccount(state, "auth-healthy").State = appstate.StateHealthy
+		plugin.ensureStateAccount(state, "auth-suspect").State = appstate.StateSuspect
+		plugin.ensureStateAccount(state, "auth-external").State = appstate.StateExternallyDisabled
 		return nil
 	}); errUpdate != nil {
 		t.Fatal(errUpdate)
@@ -751,11 +763,51 @@ func TestProbeSelectedBatchManagement(t *testing.T) {
 	if state.Accounts["auth-guard"].State != appstate.StateHealthy {
 		t.Fatalf("guard-disabled account was not restored and probed: %#v", state.Accounts["auth-guard"])
 	}
-	if state.Accounts["auth-external"].State != appstate.StateExternallyDisabled {
-		t.Fatalf("external account should be skipped: %#v", state.Accounts["auth-external"])
+	if account := state.Accounts["auth-external"]; account != nil && account.State != appstate.StateExternallyDisabled {
+		t.Fatalf("external account should be skipped: %#v", account)
+	}
+	externalFound := false
+	for _, account := range plugin.CatalogSnapshot() {
+		if account.ID == "auth-external" && account.Disabled {
+			externalFound = true
+			break
+		}
+	}
+	if !externalFound {
+		t.Fatal("external account should remain disabled in the catalog")
 	}
 }
 
+func TestManualProbeSkipsExternallyDisabledAccount(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-external", "[EMAIL]", map[string]any{"disabled": true})
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		plugin.ensureStateAccount(state, "auth-external").State = appstate.StateExternallyDisabled
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+
+	response := actionManagementForTest(t, plugin, "accounts.probe", map[string]any{"auth_id": "auth-external", "force": true})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("manual probe status = %d body=%s", response.StatusCode, response.Body)
+	}
+	account, exists := plugin.stateAccount("auth-external")
+	if !exists || account.State != appstate.StateExternallyDisabled {
+		t.Fatalf("externally disabled state changed during manual probe: %#v", account)
+	}
+	host.mu.Lock()
+	modelCalls := len(host.modelCalls)
+	saves := len(host.saves)
+	host.mu.Unlock()
+	if modelCalls != 0 {
+		t.Fatalf("externally disabled account triggered %d model calls", modelCalls)
+	}
+	if saves != 0 {
+		t.Fatalf("externally disabled auth was rewritten %d times", saves)
+	}
+}
 func TestProbeSelectedRestoresUsingExecutionTimeState(t *testing.T) {
 	entriesFirst, authsFirst := singleGrokAuth(t, "auth-first", "[EMAIL]", nil)
 	entriesSecond, authsSecond := singleGrokAuth(t, "auth-second", "[EMAIL]", nil)
@@ -776,8 +828,8 @@ func TestProbeSelectedRestoresUsingExecutionTimeState(t *testing.T) {
 		cfg.Quality.HardTPS = 2e9
 	})
 	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
-		state.Accounts["auth-first"].State = appstate.StateSuspect
-		state.Accounts["auth-second"].State = appstate.StateSuspect
+		plugin.ensureStateAccount(state, "auth-first").State = appstate.StateSuspect
+		plugin.ensureStateAccount(state, "auth-second").State = appstate.StateSuspect
 		return nil
 	}); errUpdate != nil {
 		t.Fatal(errUpdate)
@@ -811,7 +863,7 @@ func TestProbeSelectedRestoresUsingExecutionTimeState(t *testing.T) {
 		t.Fatal("first selected probe did not start")
 	}
 	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
-		state.Accounts["auth-second"].State = appstate.StateDisabledByGuard
+		plugin.ensureStateAccount(state, "auth-second").State = appstate.StateDisabledByGuard
 		return nil
 	}); errUpdate != nil {
 		t.Fatal(errUpdate)

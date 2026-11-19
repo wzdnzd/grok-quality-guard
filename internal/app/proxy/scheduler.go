@@ -202,6 +202,7 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 		return
 	}
 	accounts := s.env.ProxyCatalogSnapshot()
+	s.maybePruneProxyObservations(proxyCatalogAccountIDs(accounts))
 	budget := min(len(accounts), max(128, min(4096, config.MaxPerCycle*8)))
 	s.mgr.mu.Lock()
 	offset := s.mgr.scanOffset
@@ -247,7 +248,7 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 		if manualScope.contains(a.ID) {
 			continue
 		}
-		if !observation.Known || observation.URL != "" || accountState.AutoBind.Excluded || accountState.AutoBind.NextAttemptAt.After(time.Now()) || !proxyAccountAllowedAuto(a, accountState.State, accountState.DisableKind, config) {
+		if !observation.Known || observation.Masked != "" || accountState.AutoBind.Excluded || accountState.AutoBind.NextAttemptAt.After(time.Now()) || !proxyAccountAllowedAuto(a, accountState.State, accountState.DisableKind, config) {
 			continue
 		}
 		if accountState.Managed() || s.env.ProxyStore().ProxyPending(a.ID) != "" {
@@ -512,7 +513,7 @@ func (s *Service) proxyBindUnbound(ctx context.Context, opts proxyBindOptions) (
 	}
 	ids := []string{}
 	s.walkProxyCatalog(func(row proxyCatalogRow) {
-		if row.Binding.SourceID == "" && (row.Observation.Known && row.Observation.URL == "" || row.Account.Path == "" && !row.Observation.Known) {
+		if row.Binding.SourceID == "" && (row.Observation.Known && row.Observation.Masked == "" || row.Account.Path == "" && !row.Observation.Known) {
 			ids = append(ids, row.Account.ID)
 		}
 	})

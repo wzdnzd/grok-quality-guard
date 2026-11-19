@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -35,12 +34,18 @@ import (
 
 func (p *Plugin) Store() *appstate.Store { return p.stateStore() }
 
-func (p *Plugin) ListAuths() ([]pluginapi.HostAuthFileEntry, error) {
-	return p.listAuths()
+func (p *Plugin) PruneProxyObservations(authIDs []string) {
+	if p != nil && p.proxySvc != nil {
+		p.proxySvc.PruneProxyObservations(authIDs)
+	}
 }
 
-func (p *Plugin) ListAuthModels() ([]pluginapi.HostAuthModels, error) {
-	return p.listAuthModels()
+func (p *Plugin) ListAuths(ctx context.Context) ([]pluginapi.HostAuthFileEntry, error) {
+	return p.listAuths(ctx)
+}
+
+func (p *Plugin) ListAuthModels(ctx context.Context) ([]pluginapi.HostAuthModels, error) {
+	return p.listAuthModels(ctx)
 }
 
 func (p *Plugin) GetAuth(authIndex string) (pluginapi.HostAuthGetResponse, error) {
@@ -166,18 +171,6 @@ func (p *Plugin) TaskCenter(filter tasks.TaskCenterFilter) (tasks.TaskCenterResu
 
 func (p *Plugin) TaskDetail(taskID string, page, pageSize int, status string) (tasks.TaskDetail, error) {
 	return p.taskDetail(taskID, page, pageSize, status)
-}
-
-func (p *Plugin) AccountProxyURL(ctx context.Context, account model.Account, allowFallback bool) string {
-	proxyURL := strings.TrimSpace(account.ProxyURL)
-	if proxyURL != "" || strings.TrimSpace(account.Path) != "" || !allowFallback {
-		return proxyURL
-	}
-	_, _, raw, errResolve := p.catalogSvc.ResolveAuth(ctx, account.ID)
-	if errResolve != nil {
-		return ""
-	}
-	return strings.TrimSpace(appauth.RawString(raw, "proxy_url"))
 }
 
 func (p *Plugin) IsGrokRouteModel(modelName string) bool {

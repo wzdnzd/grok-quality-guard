@@ -129,6 +129,8 @@ func (s *probeScheduler) scanAndDispatch() {
 		return
 	}
 	policy := s.plugin.env.Policy()
+	now := time.Now().UTC()
+	s.plugin.cleanupProbeSkip(now)
 	if !policy.PassiveGuard && !policy.TransparentGuard {
 		s.dispatch()
 		return
@@ -142,20 +144,39 @@ func (s *probeScheduler) scanAndDispatch() {
 	for index, account := range accounts {
 		ids[index] = account.ID
 	}
-	values := store.AccountStatesForIDs(ids)
-	states := make(map[string]*AccountState, len(accounts))
+	values := store.ProbeStatesForIDs(ids)
+	states := make(map[string]ProbeAccountState, len(accounts))
 	for index, account := range accounts {
-		if values[index].AuthID == "" {
-			continue
-		}
 		value := values[index]
-		states[account.ID] = &value
+		if value.AuthID == "" {
+			value.AuthID = account.ID
+			value.State = StateUnknown
+			value.FirstSeenAt = account.FirstSeenAt
+		}
+		states[account.ID] = value
 	}
-	s.enqueueDue(accounts, State{Accounts: states}, policy, time.Now().UTC())
+	s.enqueueDueProjected(accounts, states, policy, now)
 	s.dispatch()
 }
 
 func (s *probeScheduler) enqueueDue(accounts []Account, state State, policy Policy, now time.Time) int {
+	states := make(map[string]ProbeAccountState, len(state.Accounts))
+	for authID, account := range state.Accounts {
+		if account == nil {
+			continue
+		}
+		states[authID] = ProbeAccountState{
+			AuthID:            authID,
+			State:             account.State,
+			FirstSeenAt:       account.FirstSeenAt,
+			CooldownUntil:     account.CooldownUntil,
+			ProbeBackoffUntil: account.ProbeBackoffUntil,
+		}
+	}
+	return s.enqueueDueProjected(accounts, states, policy, now)
+}
+
+func (s *probeScheduler) enqueueDueProjected(accounts []Account, states map[string]ProbeAccountState, policy Policy, now time.Time) int {
 	if s == nil {
 		return 0
 	}
@@ -174,6 +195,9 @@ func (s *probeScheduler) enqueueDue(accounts []Account, state State, policy Poli
 		if len(s.queue) >= limit {
 			break
 		}
+		if account.Disabled {
+			continue
+		}
 		accountKey := probeQueueKey(account)
 		if _, exists := s.queued[accountKey]; exists {
 			continue
@@ -181,8 +205,16 @@ func (s *probeScheduler) enqueueDue(accounts []Account, state State, policy Poli
 		if _, exists := s.queueKeys[account.ID]; exists {
 			continue
 		}
-		stateAccount, okState := state.Accounts[account.ID]
-		if !probeDueForAccount(stateAccount, okState, account.ID, policy, now) {
+		stateAccount, okState := states[account.ID]
+		if !okState || stateAccount.AuthID == "" {
+			stateAccount = ProbeAccountState{
+				AuthID:      account.ID,
+				State:       StateUnknown,
+				FirstSeenAt: account.FirstSeenAt,
+			}
+			okState = true
+		}
+		if !probeDueForProjected(stateAccount, okState, account.ID, policy, now) {
 			continue
 		}
 		s.queued[accountKey] = struct{}{}
@@ -415,6 +447,19 @@ func probeDueForAccount(account *AccountState, okState bool, authID string, poli
 	if !okState || account == nil {
 		return true
 	}
+	return probeDueForProjected(ProbeAccountState{
+		AuthID:            authID,
+		State:             account.State,
+		FirstSeenAt:       account.FirstSeenAt,
+		CooldownUntil:     account.CooldownUntil,
+		ProbeBackoffUntil: account.ProbeBackoffUntil,
+	}, true, authID, policy, now)
+}
+
+func probeDueForProjected(account ProbeAccountState, okState bool, authID string, policy Policy, now time.Time) bool {
+	if !okState || account.AuthID == "" {
+		return true
+	}
 	switch account.State {
 	case StateHealthy, StateDisabledByGuard, StateExternallyDisabled, StateCredentialInvalid:
 		return false
@@ -618,8 +663,7 @@ func (s *Service) markProbeSuccess(authID string, sig Signals) error {
 	now := time.Now().UTC()
 	qualityCfg := s.env.Policy().Quality
 	verdict := QualityVerdict{Class: ClassNone, Reason: "reason.detail.probe_passed", Signals: sig}
-	var decayEvent *Event
-	errUpdate := s.stateStore().UpdateAccount(authID, func(account *AccountState) (*Event, error) {
+	errUpdate := s.stateStore().RecordObservationEvents(authID, func(account *AccountState) ([]Event, error) {
 		account.State = StateHealthy
 		account.LastProbeAt = now
 		account.LastObservedAt = now
@@ -636,7 +680,7 @@ func (s *Service) markProbeSuccess(authID string, sig Signals) error {
 		account.SoftStrikes = 0
 		account.ErrorStrikes = 0
 		account.ThinkingStrikes = 0
-		decayEvent = noteHealthyObservation(account, now, qualityCfg)
+		decayEvent := noteHealthyObservation(account, now, qualityCfg)
 		account.Metrics = Metrics{
 			FirstTokenMS:    sig.FirstTokenMS,
 			DurationMS:      sig.DurationMS,
@@ -647,20 +691,21 @@ func (s *Service) markProbeSuccess(authID string, sig Signals) error {
 			EncryptedBytes:  sig.EncryptedBytes,
 			TPS:             sig.TPS,
 		}
-		return &Event{
+		events := []Event{{
 			Time:      time.Now().UTC(),
 			AuthID:    authID,
 			Action:    "probe",
 			Result:    "healthy",
 			Detail:    "probe passed",
 			DetailKey: "event.detail.probe_passed",
-		}, nil
+		}}
+		if decayEvent != nil {
+			events = append(events, *decayEvent)
+		}
+		return events, nil
 	})
 	if errUpdate == nil {
 		s.refreshSelectionAccount(authID)
-		if decayEvent != nil {
-			_ = s.stateStore().AppendEvent(*decayEvent)
-		}
 	}
 	return errUpdate
 }
