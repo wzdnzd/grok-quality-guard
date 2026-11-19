@@ -588,6 +588,8 @@ test('Resident queue cards localize technical source errors', () => {
     last_error: 'automatic source availability changed'
   }], {});
   const rendered = get('residentQueues').innerHTML;
+  assert.match(rendered, /class="progress-track"/);
+  assert.match(rendered, /style="width:0%"/);
   assert.match(rendered, /自动绑定使用的代理已变化，将重新选择代理/);
   assert.doesNotMatch(rendered, /automatic source availability changed|auto_bind_source_unavailable/);
 });

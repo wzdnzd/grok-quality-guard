@@ -8448,7 +8448,7 @@
         const completed = Number(queue.completed || 0);
         const percent = total > 0 ? Math.min(100, Math.round(completed / total * 100)) : 0;
         const stats = [queueMetric(i18n.t('ui.queue_running_label'), num(queue.running || 0)), queueMetric(i18n.t('ui.queue_waiting_label'), num(queue.waiting || 0)), queueMetric(i18n.t('ui.queue_succeeded_label'), num(queue.succeeded || 0)), queueMetric(i18n.t('ui.queue_failed_label'), num(queue.failed || 0))].join('');
-        const progress = total > 0 ? '<div class="progress-track"><div class="progress-fill ' + (Number(queue.failed || 0) ? 'bad' : 'good') + '" style="width:' + percent + '%"></div></div>' : '';
+        const progress = '<div class="progress-track"><div class="progress-fill ' + (Number(queue.failed || 0) ? 'bad' : 'good') + '" style="width:' + percent + '%"></div></div>';
         const queueID = String(queue.id || '');
         const selected = queueID === selectedQueueID;
         const buttonID = 'residentQueueView-' + queueID.replace(/[^a-zA-Z0-9_-]/g, '');
