@@ -195,9 +195,6 @@ func (s *probeScheduler) enqueueDueProjected(accounts []Account, states map[stri
 		if len(s.queue) >= limit {
 			break
 		}
-		if account.Disabled {
-			continue
-		}
 		accountKey := probeQueueKey(account)
 		if _, exists := s.queued[accountKey]; exists {
 			continue
@@ -207,6 +204,12 @@ func (s *probeScheduler) enqueueDueProjected(accounts []Account, states map[stri
 		}
 		stateAccount, okState := states[account.ID]
 		if !okState || stateAccount.AuthID == "" {
+			// A catalog-only disabled auth is externally disabled unless the
+			// guard has persisted ownership for it. Do not materialize sparse
+			// disabled accounts just to classify them on every scan.
+			if account.Disabled {
+				continue
+			}
 			stateAccount = ProbeAccountState{
 				AuthID:      account.ID,
 				State:       StateUnknown,
@@ -214,6 +217,9 @@ func (s *probeScheduler) enqueueDueProjected(accounts []Account, states map[stri
 			}
 			okState = true
 		}
+		// Persisted disabled states still need the normal due check. In
+		// particular, guard-owned cooldowns become due after CooldownUntil and
+		// ProbeAccount temporarily re-enables the auth for recovery probing.
 		if !probeDueForProjected(stateAccount, okState, account.ID, policy, now) {
 			continue
 		}

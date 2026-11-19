@@ -195,3 +195,52 @@ func TestServiceQueueDetailReportsActiveAndWaitingAuthIDs(t *testing.T) {
 		t.Fatalf("detail timestamps missing: %#v", detail)
 	}
 }
+
+func TestSchedulerEnqueuesGuardOwnedDisabledRecovery(t *testing.T) {
+	now := time.Now().UTC()
+	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
+	state := State{Accounts: map[string]*AccountState{
+		// A cooldown that has expired must be re-probed by temporarily
+		// re-enabling the guard-owned auth inside ProbeAccount.
+		"auth-cooling": {
+			AuthID:        "auth-cooling",
+			State:         StateCooling,
+			FirstSeenAt:   now.Add(-time.Hour),
+			CooldownUntil: now.Add(-time.Minute),
+			DisableKind:   DisableKindCooldown,
+		},
+		// An interrupted restore may leave the persisted state unknown while
+		// the auth file is still disabled. DisableKind proves plugin ownership,
+		// so the scanner must still schedule a recovery probe.
+		"auth-interrupted": {
+			AuthID:      "auth-interrupted",
+			State:       StateUnknown,
+			FirstSeenAt: now.Add(-time.Hour),
+			DisableKind: DisableKindCooldown,
+		},
+		// Externally disabled auths must never enter the recovery queue.
+		"auth-external": {
+			AuthID:      "auth-external",
+			State:       StateExternallyDisabled,
+			FirstSeenAt: now.Add(-time.Hour),
+		},
+	}}
+	accounts := []Account{
+		{ID: "auth-cooling", Disabled: true},
+		{ID: "auth-interrupted", Disabled: true},
+		{ID: "auth-external", Disabled: true},
+		// Catalog-only disabled auths have no persisted ownership and stay out of
+		// the recovery queue until the catalog sync exposes an explicit state.
+		{ID: "auth-sparse-disabled", Disabled: true},
+	}
+	scheduler := newProbeScheduler(nil, context.Background())
+	if added := scheduler.enqueueDue(accounts, state, policy, now); added != 2 {
+		t.Fatalf("guard-owned disabled recovery enqueued = %d, want 2", added)
+	}
+	scheduler.mu.Lock()
+	queued := append([]string(nil), scheduler.queue...)
+	scheduler.mu.Unlock()
+	if len(queued) != 2 || queued[0] != "auth-cooling" || queued[1] != "auth-interrupted" {
+		t.Fatalf("recovery queue = %#v, want guard-owned auths only", queued)
+	}
+}
