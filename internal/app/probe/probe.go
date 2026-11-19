@@ -599,7 +599,7 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 		ProxyURL:       strings.TrimSpace(authRawString(raw, "proxy_url")),
 	}, callbackID)
 	if errStream != nil {
-		class, reason := classifyTransportFailure(errStream)
+		class, reason := classifyProbeTransportFailure(errStream)
 		return handleFailure(QualityVerdict{Class: class, Reason: reason}, errStream)
 	}
 	var reader *modelStreamReader
@@ -627,7 +627,7 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 		}
 		read, errRead := reader.Next()
 		if errRead != nil {
-			class, reason := classifyTransportFailure(errRead)
+			class, reason := classifyProbeTransportFailure(errRead)
 			return handleFailure(QualityVerdict{Class: class, Reason: reason}, errRead)
 		}
 		if len(read.Payload) > 0 {
@@ -639,7 +639,7 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 		}
 		if read.Error != "" {
 			readErr := fmt.Errorf("%s", read.Error)
-			class, reason := classifyTransportFailure(readErr)
+			class, reason := classifyProbeTransportFailure(readErr)
 			return handleFailure(QualityVerdict{Class: class, Reason: reason}, readErr)
 		}
 		if read.Done {
@@ -722,9 +722,14 @@ func (s *Service) handleProbeFailure(authID string, raw map[string]json.RawMessa
 }
 
 func (s *Service) handleProbeFailureResult(authID string, raw map[string]json.RawMessage, response pluginapi.HostAuthGetResponse, reEnabled bool, verdict QualityVerdict, errProbe error) (VerdictResult, error) {
-	// Keep marker and TPS verdicts out of internal error events
-	if errProbe != nil && verdict.Class == ClassProbeError {
-		_ = s.recordInternalError(authID, errProbe)
+	// Keep marker and TPS verdicts out of internal error events. Transport
+	// failures are useful diagnostics even when they remain non-quality class
+	// (for example, a host model cooldown).
+	if errProbe != nil {
+		switch verdict.Class {
+		case ClassProbeError, ClassProxyError, ClassCredentialInvalid, ClassQuotaExhausted, ClassRateLimited, ClassIgnored:
+			_ = s.recordInternalError(authID, errProbe)
+		}
 	}
 	return s.applyVerdictLocked(
 		context.Background(),

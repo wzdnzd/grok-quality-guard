@@ -3,6 +3,7 @@ package probe
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
@@ -76,6 +77,46 @@ func marshalRawMap(value map[string]json.RawMessage) (json.RawMessage, error) {
 func classifyTransportFailure(err error) (string, string) {
 	return execapp.ClassifyTransportFailure(err)
 }
+
+// A fixed-AuthID probe must make progress even when the host wraps an
+// operational failure in text that the shared classifier treats as a
+// non-quality error. Host model cooldowns remain ignored because they describe
+// a host-wide scheduling state rather than this auth's probe result.
+func classifyProbeTransportFailure(err error) (string, string) {
+	class, reason := classifyTransportFailure(err)
+	if reason == "reason.detail.model_cooldown" || class == ClassProxyError || class == ClassQuotaExhausted {
+		return class, reason
+	}
+	// Only explicit token/key rejection phrases are strong enough to disable
+	// an auth. Bare "no auth", "unauthorized", "expired", or "permission
+	// denied" can describe the host scheduler, WAF, model policy, or quota
+	// state rather than this auth's credentials.
+	if isProbeCredentialRejectionText(strings.ToLower(err.Error())) {
+		return ClassCredentialInvalid, "reason.detail.credential_rejected"
+	}
+	if class == ClassIgnored && reason == "reason.detail.probe_transport_error" {
+		return ClassProbeError, reason
+	}
+	return class, reason
+}
+
+func isProbeCredentialRejectionText(text string) bool {
+	for _, marker := range []string{
+		"invalid token",
+		"token expired",
+		"invalid api key",
+		"incorrect api key",
+		"invalid_grant",
+		"credential rejected",
+		"authentication failed",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func qualityEvidenceFromVerdict(verdict QualityVerdict, source string, at time.Time) *appstate.QualityEvidence {
 	return appstate.QualityEvidenceFromVerdict(verdict, source, at)
 }

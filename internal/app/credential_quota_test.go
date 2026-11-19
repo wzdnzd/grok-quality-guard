@@ -203,8 +203,11 @@ func TestProbeModelCooldownDoesNotDisableAuth(t *testing.T) {
 		t.Fatal(errProbe)
 	}
 	account, okAccount := plugin.stateAccount("auth-1")
-	if !okAccount || account.State != appstate.StateUnknown || account.DisableKind != "" {
+	if !okAccount || account.State != appstate.StateSuspect || account.DisableKind != "" {
 		t.Fatalf("host model cooldown changed auth ownership: %#v", account)
+	}
+	if account.ErrorStrikes != 0 {
+		t.Fatalf("host model cooldown consumed error strikes: %#v", account)
 	}
 	if account.LastAttempt == nil || account.LastAttempt.Class != qualitypkg.ClassIgnored || account.LastAttempt.Reason != "reason.detail.model_cooldown" {
 		t.Fatalf("host model cooldown attempt = %#v", account.LastAttempt)

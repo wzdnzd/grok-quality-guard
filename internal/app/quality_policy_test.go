@@ -100,7 +100,7 @@ func TestNonQualityProbeStatusDoesNotConsumeErrorStrikes(t *testing.T) {
 		}
 	}
 	account, _ := plugin.stateAccount("auth-1")
-	if account.ErrorStrikes != 0 || account.State != appstate.StateUnknown || len(host.saves) != 0 {
+	if account.ErrorStrikes != 0 || account.State != appstate.StateSuspect || len(host.saves) != 0 {
 		t.Fatalf("ignored probe changed quality state: %#v saves=%d", account, len(host.saves))
 	}
 }

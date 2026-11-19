@@ -305,6 +305,14 @@ func (s *Service) applyVerdictLocked(
 				eventDetail += " · " + verdict.Reason
 			}
 
+			// An ignored active probe is still evidence that the account has
+			// not passed a quality check. Move it out of pending/unknown so the
+			// scheduler can continue with suspect backoff instead of leaving it
+			// in the initial-check state forever.
+			if source == "probe" && account.State == StateUnknown {
+				account.State = StateSuspect
+			}
+
 		case ClassMissingThinking:
 			account.ThinkingStrikes++
 			account.SoftStrikes = 0
