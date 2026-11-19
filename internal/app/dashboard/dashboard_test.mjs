@@ -232,6 +232,17 @@ test('Language switching updates document language, persistence, interpolation, 
   assert.equal(ui.i18n.translateSource('账号详情'), '账号详情');
 });
 
+test('Language switching reinterprets already-localized source text', () => {
+  const { dashboard: ui } = harness({ languages: ['zh-TW'], language: 'zh-TW' });
+  assert.equal(ui.i18n.translateLocalizedSource('ui.overview'), '概覽');
+  assert.equal(ui.i18n.applyLocale('en'), 'en');
+  assert.equal(ui.i18n.translateLocalizedSource('概覽'), 'Overview');
+  assert.equal(ui.i18n.translateLocalizedSource('介面語言'), 'Interface language');
+  assert.equal(ui.i18n.applyLocale('zh-CN'), 'zh-CN');
+  assert.equal(ui.i18n.translateLocalizedSource('Interface language'), '界面语言');
+  assert.equal(ui.i18n.translateLocalizedSource('Overview'), '概览');
+});
+
 test('Embedded locale data localizes the page without a fallback request', () => {
   const { dashboard: ui, get } = harness({
     languages: ['en-US'],

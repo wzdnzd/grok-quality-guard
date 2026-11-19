@@ -5007,11 +5007,15 @@
 
       let locale = detectLocale();
       let patternRules = [];
+      let localizedPatternRules = [];
       const sourceExact = new Map();
+      const localizedExact = new Map();
       let suppressMutations = false;
       let resourceRequest = null;
       const textSources = new WeakMap();
       const attributeSources = new WeakMap();
+      const appliedTexts = new WeakMap();
+      const appliedAttributes = new WeakMap();
       const translatedAttributes = ['placeholder', 'title', 'aria-label'];
 
       function formatPlural(template, values) {
@@ -5040,28 +5044,49 @@
 
       function compileSourceIndex() {
         sourceExact.clear();
+        localizedExact.clear();
         patternRules = [];
-        const sourceCatalog = resources['zh-CN'] && typeof resources['zh-CN'] === 'object' ? resources['zh-CN'] : {};
-        for (const [key, sourceValue] of Object.entries(sourceCatalog)) {
-          const source = String(sourceValue == null ? '' : sourceValue);
-          if (!source) continue;
-          if (!source.includes('{')) {
-            if (!sourceExact.has(source.trim())) sourceExact.set(source.trim(), key);
-            continue;
+        localizedPatternRules = [];
+        const localizedCandidates = new Map();
+        const localizedPatterns = new Map();
+        for (const code of I18N_SUPPORTED) {
+          const sourceCatalog = resources[code] && typeof resources[code] === 'object' ? resources[code] : {};
+          for (const [key, sourceValue] of Object.entries(sourceCatalog)) {
+            const source = String(sourceValue == null ? '' : sourceValue);
+            if (!source) continue;
+            if (!source.includes('{')) {
+              const trimmed = source.trim();
+              if (code === 'zh-CN' && !sourceExact.has(trimmed)) sourceExact.set(trimmed, key);
+              if (!localizedCandidates.has(trimmed)) localizedCandidates.set(trimmed, new Set());
+              localizedCandidates.get(trimmed).add(key);
+              continue;
+            }
+            const names = [];
+            let cursor = 0;
+            let regex = '^';
+            for (const match of source.matchAll(/\{(\w+)\}/g)) {
+              regex += source.slice(cursor, match.index).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              regex += '(.+?)';
+              names.push(match[1]);
+              cursor = match.index + match[0].length;
+            }
+            regex += source.slice(cursor).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$';
+            if (code === 'zh-CN') patternRules.push({ regex: new RegExp(regex, 'u'), names, key, source });
+            const patternKey = regex + '\u0000' + names.join('\u0000');
+            let rule = localizedPatterns.get(patternKey);
+            if (!rule) {
+              rule = { regex: new RegExp(regex, 'u'), names, keys: new Set(), source };
+              localizedPatterns.set(patternKey, rule);
+            }
+            rule.keys.add(key);
+            if (source.length > rule.source.length) rule.source = source;
           }
-          const names = [];
-          let cursor = 0;
-          let regex = '^';
-          for (const match of source.matchAll(/\{(\w+)\}/g)) {
-            regex += source.slice(cursor, match.index).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            regex += '(.+?)';
-            names.push(match[1]);
-            cursor = match.index + match[0].length;
-          }
-          regex += source.slice(cursor).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$';
-          patternRules.push({ regex: new RegExp(regex, 'u'), names, key, source });
+        }
+        for (const [source, keys] of localizedCandidates) {
+          if (keys.size === 1) localizedExact.set(source, keys.values().next().value);
         }
         patternRules.sort((left, right) => right.source.length - left.source.length);
+        localizedPatternRules = [...localizedPatterns.values()].sort((left, right) => right.source.length - left.source.length);
       }
 
       function translateSource(source) {
@@ -5073,18 +5098,37 @@
           return leading + t(trimmed) + trailing;
         }
         if (!trimmed || locale === 'zh-CN') return text;
+        const leading = text.match(/^\s*/)?.[0] || '';
+        const trailing = text.match(/\s*$/)?.[0] || '';
         const exactKey = sourceExact.get(trimmed);
-        if (exactKey != null) {
-          const leading = text.match(/^\s*/)?.[0] || '';
-          const trailing = text.match(/\s*$/)?.[0] || '';
-          return leading + t(exactKey) + trailing;
-        }
+        if (exactKey != null) return leading + t(exactKey) + trailing;
         for (const rule of patternRules) {
-          const match = text.trim().match(rule.regex);
+          const match = trimmed.match(rule.regex);
           if (!match) continue;
           const values = {};
           rule.names.forEach((name, index) => { values[name] = match[index + 1]; });
           return t(rule.key, values);
+        }
+        return text;
+      }
+
+      function translateLocalizedSource(source) {
+        const text = String(source == null ? '' : source);
+        const translated = translateSource(text);
+        if (translated !== text) return translated;
+        const trimmed = text.trim();
+        if (!trimmed) return text;
+        const leading = text.match(/^\s*/)?.[0] || '';
+        const trailing = text.match(/\s*$/)?.[0] || '';
+        const exactKey = localizedExact.get(trimmed);
+        if (exactKey != null) return leading + t(exactKey) + trailing;
+        for (const rule of localizedPatternRules) {
+          const match = trimmed.match(rule.regex);
+          if (!match) continue;
+          const values = {};
+          rule.names.forEach((name, index) => { values[name] = match[index + 1]; });
+          const rendered = new Set([...rule.keys].map((key) => t(key, values)));
+          if (rendered.size === 1) return rendered.values().next().value;
         }
         return text;
       }
@@ -5128,25 +5172,33 @@
 
       function translateTextNode(node, refreshSource) {
         if (!node || node.nodeType !== 3 || skipNode(node)) return;
-        if (refreshSource || !textSources.has(node)) textSources.set(node, node.nodeValue || '');
+        const current = node.nodeValue || '';
+        if (refreshSource && current === appliedTexts.get(node)) return;
+        if (refreshSource || !textSources.has(node)) textSources.set(node, current);
         const source = textSources.get(node);
         if (source == null) return;
         const match = String(source).match(/^(\s*)([\s\S]*?)(\s*)$/);
         if (!match || !match[2]) return;
-        const translated = translateSource(match[2]);
+        const translated = translateLocalizedSource(match[2]);
         const next = match[1] + translated + match[3];
         if (node.nodeValue !== next) node.nodeValue = next;
+        appliedTexts.set(node, next);
       }
 
       function translateAttribute(element, name, refreshSource) {
         if (!element || !element.hasAttribute?.(name) || skipNode(element)) return;
+        const current = element.getAttribute(name) || '';
+        let applied = appliedAttributes.get(element);
+        if (!applied) { applied = new Map(); appliedAttributes.set(element, applied); }
+        if (refreshSource && current === applied.get(name)) return;
         let sources = attributeSources.get(element);
         if (!sources) { sources = new Map(); attributeSources.set(element, sources); }
-        if (refreshSource || !sources.has(name)) sources.set(name, element.getAttribute(name) || '');
+        if (refreshSource || !sources.has(name)) sources.set(name, current);
         const source = sources.get(name);
         if (source == null || !source.trim()) return;
-        const translated = translateSource(source);
+        const translated = translateLocalizedSource(source);
         if (element.getAttribute(name) !== translated) element.setAttribute(name, translated);
+        applied.set(name, translated);
       }
 
       function translateTree(root) {
@@ -5224,6 +5276,7 @@
         detectLocale,
         t,
         translateSource,
+        translateLocalizedSource,
         applyLocale,
         translateTree,
         observe,
