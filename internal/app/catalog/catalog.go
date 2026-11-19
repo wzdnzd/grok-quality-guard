@@ -42,7 +42,6 @@ const (
 	authModelsCallTimeout        = 30 * time.Second
 	authMetaRefreshTimeout       = 2 * time.Minute
 	authMetaFailureBackoff       = 5 * time.Minute
-	catalogInitialReadWait       = 5 * time.Second
 	guardCatalogMissingRetention = 24 * time.Hour
 )
 
@@ -63,9 +62,11 @@ func (s *Service) ensureCatalog(ctx context.Context) error {
 		}
 		return nil
 	}
-	waitCtx, cancel := context.WithTimeout(ctx, catalogInitialReadWait)
-	defer cancel()
-	if errAcquire := acquireGate(waitCtx, s.catalogRefreshGate); errAcquire != nil {
+	// Cold reads need a real catalog to be useful. Wait for the in-flight
+	// refresh instead of turning a slow host.auth.list call into a successful
+	// but empty account list. Individual host calls still have their own
+	// timeout in the host bridge.
+	if errAcquire := acquireGate(ctx, s.catalogRefreshGate); errAcquire != nil {
 		return errAcquire
 	}
 	defer releaseGate(s.catalogRefreshGate)
@@ -76,7 +77,7 @@ func (s *Service) ensureCatalog(ctx context.Context) error {
 	if hasCatalog {
 		return nil
 	}
-	return s.refreshCatalogLocked(waitCtx)
+	return s.refreshCatalogLocked(ctx)
 }
 
 func (s *Service) startCatalogRefresh() {
@@ -176,6 +177,7 @@ func (s *Service) refreshCatalogLocked(ctx context.Context) error {
 		return accounts[i].ID < accounts[j].ID
 	})
 	copyCachedAuthMeta(accounts, previousCatalog, previousByID)
+	s.markAuthMetaInspected(accounts)
 	fingerprints := catalogFingerprints(accounts)
 
 	s.catalogMu.Lock()
@@ -354,7 +356,33 @@ func copyCachedAuthMeta(accounts, previousCatalog []Account, previousByID map[st
 		account.ProxyURLKnown = cached.ProxyURLKnown
 		account.ProxyHash = cached.ProxyHash
 		account.ProxyMasked = cached.ProxyMasked
+		account.ProxyMetaInspected = cached.ProxyMetaInspected
 		account.OAuthID = cached.OAuthID
+	}
+}
+
+// markAuthMetaInspected keeps the list-view retry hint honest. A file that is
+// in failure backoff has already been inspected for its current signature, so
+// the dashboard should keep the proxy status unknown without polling as if the
+// read is still in flight.
+func (s *Service) markAuthMetaInspected(accounts []Account) {
+	now := time.Now().UTC()
+	s.authMetaFailuresMu.Lock()
+	defer s.authMetaFailuresMu.Unlock()
+	for index := range accounts {
+		account := &accounts[index]
+		if account.ProxyURLKnown {
+			account.ProxyMetaInspected = true
+			continue
+		}
+		path := strings.TrimSpace(account.Path)
+		if path == "" {
+			account.ProxyMetaInspected = false
+			continue
+		}
+		signature := authMetaFileSignature{path: path, size: account.Size, modTime: account.ModTime}
+		failure, failed := s.authMetaFailures[account.ID]
+		account.ProxyMetaInspected = failed && failure.signature == signature && now.Before(failure.retryAt)
 	}
 }
 
@@ -507,9 +535,6 @@ func (s *Service) applyAuthMeta(jobs []authMetaJob, values []authMetaValue) bool
 	changed := false
 	for index, job := range jobs {
 		value := values[index]
-		if !value.loaded {
-			continue
-		}
 		catalogIndex, exists := s.catalogByID[job.authID]
 		if !exists || catalogIndex < 0 || catalogIndex >= len(next) {
 			continue
@@ -518,15 +543,23 @@ func (s *Service) applyAuthMeta(jobs []authMetaJob, values []authMetaValue) bool
 		if account.Path != job.path || account.Size != job.size || !account.ModTime.Equal(job.modTime) {
 			continue
 		}
+		if !value.loaded {
+			if !account.ProxyMetaInspected {
+				account.ProxyMetaInspected = true
+				changed = true
+			}
+			continue
+		}
 		masked := proxyapp.MaskProxyURL(value.proxyURL)
 		hash := ""
 		if value.proxyURL != "" {
 			hash = proxyapp.URLHash(value.proxyURL)
 		}
-		if account.ProxyURLKnown && account.ProxyMasked == masked && account.ProxyHash == hash && account.OAuthID == value.OAuthID {
+		if account.ProxyURLKnown && account.ProxyMasked == masked && account.ProxyHash == hash && account.OAuthID == value.OAuthID && account.ProxyMetaInspected {
 			continue
 		}
 		account.ProxyURLKnown = true
+		account.ProxyMetaInspected = true
 		account.ProxyMasked = masked
 		account.ProxyHash = hash
 		account.OAuthID = value.OAuthID

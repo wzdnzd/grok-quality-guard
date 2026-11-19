@@ -62,6 +62,16 @@ func (s *Service) actionTaskCenterList(params map[string]any, locales ...string)
 		"resident_queues": s.taskCenterResidentQueues(locale),
 	}, http.StatusOK, nil
 }
+
+// actionTaskCenterQueues is the lightweight companion to tasks.center.list.
+// Resident queue state lives in memory and must not wait for the potentially
+// expensive history index scan performed by the full task-center response.
+func (s *Service) actionTaskCenterQueues(locales ...string) (any, int, error) {
+	locale := localeOrDefault(locales)
+	return map[string]any{
+		"resident_queues": s.taskCenterResidentQueues(locale),
+	}, http.StatusOK, nil
+}
 func (s *Service) actionTaskCenterQueue(params map[string]any) (any, int, error) {
 	queueID := strings.TrimSpace(asString(params["queue_id"]))
 	page := max(1, action.Int(params, "page", 1))

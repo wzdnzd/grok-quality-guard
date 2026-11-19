@@ -135,7 +135,56 @@ func TestSharedHostCallRecoversPanicsAndReleasesFlight(t *testing.T) {
 	}
 }
 
-func TestSharedHostCallTimeoutReleasesFlightBeforeCallbackCompletes(t *testing.T) {
+func TestSharedHostCallWaiterTimeoutKeepsFlightJoinable(t *testing.T) {
+	previous := hostCall
+	defer SetHostCall(previous)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	SetHostCall(func(string, any) (json.RawMessage, error) {
+		calls.Add(1)
+		close(started)
+		<-release
+		return json.RawMessage(`{"call":"first"}`), nil
+	})
+	plugin := NewPlugin()
+	method := "test.host.waiter-timeout"
+	firstResult := make(chan error, 1)
+	go func() {
+		_, errCall := plugin.sharedHostCall(context.Background(), method, nil)
+		firstResult <- errCall
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("host callback did not start")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, errCall := plugin.sharedHostCall(ctx, method, nil); errCall == nil {
+		t.Fatal("second caller did not observe its own timeout")
+	}
+	plugin.hostCallsMu.Lock()
+	_, pending := plugin.hostCalls[method]
+	plugin.hostCallsMu.Unlock()
+	if !pending {
+		t.Fatal("waiter timeout removed a host flight that was still running")
+	}
+	close(release)
+	select {
+	case errCall := <-firstResult:
+		if errCall != nil {
+			t.Fatalf("first caller failed after callback completed: %v", errCall)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first caller did not receive the callback result")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("host callback calls = %d, want 1", got)
+	}
+}
+
+func TestSharedHostCallExpiresHungCallbackForFutureRetry(t *testing.T) {
 	previous := hostCall
 	defer SetHostCall(previous)
 	started := make(chan struct{})
@@ -152,7 +201,7 @@ func TestSharedHostCallTimeoutReleasesFlightBeforeCallbackCompletes(t *testing.T
 		return json.RawMessage(`{"call":"second"}`), nil
 	})
 	plugin := NewPlugin()
-	method := "test.host.timeout-before-finish"
+	method := "test.host.expired-flight"
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	_, errCall := plugin.sharedHostCall(ctx, method, nil)
 	cancel()
@@ -164,11 +213,18 @@ func TestSharedHostCallTimeoutReleasesFlightBeforeCallbackCompletes(t *testing.T
 	case <-time.After(time.Second):
 		t.Fatal("host callback did not start")
 	}
-	plugin.hostCallsMu.Lock()
-	_, pending := plugin.hostCalls[method]
-	plugin.hostCallsMu.Unlock()
-	if pending {
-		t.Fatal("timed-out host flight remained in the map while the callback was still blocked")
+	deadline := time.Now().Add(time.Second)
+	for {
+		plugin.hostCallsMu.Lock()
+		_, pending := plugin.hostCalls[method]
+		plugin.hostCallsMu.Unlock()
+		if !pending {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("hung host flight was not expired for future callers")
+		}
+		time.Sleep(time.Millisecond)
 	}
 	raw, errRetry := plugin.sharedHostCall(context.Background(), method, nil)
 	if errRetry != nil {

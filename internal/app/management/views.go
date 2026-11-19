@@ -47,10 +47,10 @@ func (s *Service) accountSummaryWithHash(account Account, stateAccount AccountSt
 	}
 	binding, hasBinding := s.proxyBindingForAccount(stateAccount)
 	proxyStatus, sourceID, sourceKind, _ := s.proxyAccountBindingViewWithHash(stateAccount, proxyURL, proxyHash)
-	if authProxyMetadataPending(account, proxyURL) {
+	if authProxyMetadataUnknown(account, proxyURL) {
 		// Auth-file metadata is enriched asynchronously after the host catalog is
-		// published. Keep that interval explicitly unknown instead of claiming
-		// the account is unbound or drifted before the file has been inspected.
+		// published. Keep both the in-flight and failed-read cases explicitly
+		// unknown instead of claiming the account is unbound or drifted.
 		proxyStatus = "unknown"
 	}
 	view.ProxyStatus = proxyStatus
@@ -70,8 +70,12 @@ func (s *Service) accountSummaryWithHash(account Account, stateAccount AccountSt
 	return view
 }
 
-func authProxyMetadataPending(account Account, proxyURL string) bool {
+func authProxyMetadataUnknown(account Account, proxyURL string) bool {
 	return !account.ProxyURLKnown && strings.TrimSpace(account.Path) != "" && strings.TrimSpace(proxyURL) == ""
+}
+
+func authProxyMetadataPending(account Account, proxyURL string) bool {
+	return authProxyMetadataUnknown(account, proxyURL) && !account.ProxyMetaInspected
 }
 
 func accountStateFromSummary(summary AccountStateSummary) AccountState {

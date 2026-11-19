@@ -132,6 +132,48 @@ func (e taskCenterQueueTestEnvironment) ProxyQueueDetail(queueID string) (proxya
 }
 func (e taskCenterQueueTestEnvironment) Proxy() *proxyapp.Service { return e.proxy }
 
+type taskCenterQueuesOnlyEnvironment struct {
+	taskCenterQueueTestEnvironment
+	taskCenterCalls int
+}
+
+func (e *taskCenterQueuesOnlyEnvironment) TaskCenter(filter taskapp.TaskCenterFilter) (taskapp.TaskCenterResult, error) {
+	e.taskCenterCalls++
+	return taskapp.TaskCenterResult{}, errors.New("task history must not load for the queue-only action")
+}
+
+func TestTaskCenterQueuesActionDoesNotLoadTaskHistory(t *testing.T) {
+	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
+	policy.TransparentGuard = true
+	env := &taskCenterQueuesOnlyEnvironment{
+		taskCenterQueueTestEnvironment: taskCenterQueueTestEnvironment{
+			store:   appstate.NewStore(""),
+			policy:  policy,
+			enabled: true,
+			probeQueue: ProbeQueueSnapshot{
+				Started: true,
+				Waiting: 2,
+				Active:  1,
+			},
+		},
+	}
+	service := NewService(env)
+	result, status, errAction := service.actionTaskCenterQueues("en")
+	if errAction != nil || status != http.StatusOK {
+		t.Fatalf("queue action status = %d err=%v", status, errAction)
+	}
+	response, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("queue action result type = %T", result)
+	}
+	queues, ok := response["resident_queues"].([]map[string]any)
+	if !ok || len(queues) != 1 || queues[0]["id"] != "quality_probe" {
+		t.Fatalf("resident queues = %#v", response["resident_queues"])
+	}
+	if env.taskCenterCalls != 0 {
+		t.Fatalf("queue-only action called TaskCenter %d times", env.taskCenterCalls)
+	}
+}
 func TestTaskCenterShowsQualityProbeQueueWithoutProxy(t *testing.T) {
 	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
 	policy.TransparentGuard = true

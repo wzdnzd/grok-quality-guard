@@ -155,7 +155,7 @@ function harness(options = {}) {
   const runtimeSource = options.i18nResources === undefined
     ? source
     : source.replace(/const I18N_RESOURCE_DATA = [^\n]*; \/\/ i18n-resource-data/, `const I18N_RESOURCE_DATA = ${JSON.stringify(options.i18nResources)}; // i18n-resource-data`);
-  vm.runInContext(runtimeSource + '\n globalThis.dashboard = { i18n, state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderOverview, renderAccounts, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyNodeEditor, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, closeResidentQueueDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, taskKindLabel, taskStatusLabel, taskOutcomeCounts, taskResultSummary, collectPolicy, populatePolicyForm, applyLocationHash, setTab, refreshAll, refreshAccounts, ensureAccountData, ensureProxyData, loadProxyData, renderAll, scheduleDeferredRefresh, scheduleAccountMetadataRefresh };', context);
+  vm.runInContext(runtimeSource + '\n globalThis.dashboard = { i18n, state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderOverview, renderAccounts, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyNodeEditor, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, refreshTaskCenterQueues, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, closeResidentQueueDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, taskKindLabel, taskStatusLabel, taskOutcomeCounts, taskResultSummary, collectPolicy, populatePolicyForm, applyLocationHash, setTab, refreshAll, refreshAccounts, ensureAccountData, ensureProxyData, loadProxyData, renderAll, scheduleDeferredRefresh, scheduleAccountMetadataRefresh };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -460,6 +460,54 @@ test('Account tab refresh renders proxy unknown before proxy data resolves', asy
   assert.equal(ui.state.proxyLoadPromise, null);
 });
 
+test('Account rows render while the overview request is still pending', async () => {
+  const { dashboard: ui, get, mock } = harness();
+  const overview = deferred();
+  const proxySummary = deferred();
+  const proxySources = deferred();
+  mock('api', (action) => {
+    if (action === 'accounts.list') {
+      return Promise.resolve({
+        items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown', proxy_status: 'unknown' }],
+        total: 1, page: 1, page_size: 50, state_counts: { unknown: 1 }, proxy_metadata_pending: false
+      });
+    }
+    if (action === 'overview') return overview.promise;
+    if (action === 'proxy.summary') return proxySummary.promise;
+    if (action === 'proxy.sources.list') return proxySources.promise;
+    throw new Error('unexpected request ' + action);
+  });
+  ui.state.activeTab = 'accounts';
+  const refresh = ui.refreshAll(true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(get('accountRows').innerHTML, /a\*\*\*@example\.com/);
+  assert.equal(ui.state.refreshing, true);
+  overview.resolve({ auth_count: 1, states: { unknown: 1 } });
+  proxySummary.resolve({ binding_counts: { unknown: 1 } });
+  proxySources.resolve({ items: [], total: 0, page: 1, page_size: 50 });
+  await refresh;
+  assert.equal(ui.state.refreshing, false);
+});
+test('Proxy source rows render before proxy summary finishes', async () => {
+  const { dashboard: ui, get, mock } = harness();
+  const summary = deferred();
+  mock('api', (action) => {
+    if (action === 'proxy.summary') return summary.promise;
+    if (action === 'proxy.sources.list') {
+      return Promise.resolve({
+        items: [{ id: 'node-1', kind: 'node', name: 'Node one', enabled: true, valid: true, endpoint: 'socks5h://u***@host:1080', binding_count: 0 }],
+        total: 1, page: 1, page_size: 50
+      });
+    }
+    throw new Error('unexpected request ' + action);
+  });
+
+  const request = ui.ensureProxyData(true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(get('proxySourceRows').innerHTML, /Node one/);
+  summary.resolve({ binding_counts: {} });
+  await request;
+});
 test('Proxy data loading is single-flight', async () => {
   const { dashboard: ui, mock } = harness();
   const summary = deferred();
@@ -1584,6 +1632,31 @@ test('Task center keeps filters and refresh on one row with equal-height cards',
   assert.match(html, /\.task-list-card,\s*\.task-detail-card\s*\{[\s\S]*?align-self:\s*stretch/);
 });
 
+test('Resident queues render while the full task history request is still loading', async () => {
+  const { dashboard: ui, get, mock } = harness();
+  const history = deferred();
+  const requests = [];
+  mock('api', (action) => {
+    requests.push(action);
+    if (action === 'tasks.center.queues') {
+      return Promise.resolve({
+        resident_queues: [{ id: 'auto_bind', label: 'Auto bind queue', description: 'Proxy workers', status: 'running', total: 2, completed: 1, running: 1, waiting: 1, succeeded: 1, failed: 0 }]
+      });
+    }
+    if (action === 'tasks.center.list') return history.promise;
+    throw new Error('unexpected request ' + action);
+  });
+
+  ui.setTab('tasks', false);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(requests.includes('tasks.center.queues'));
+  assert.ok(requests.includes('tasks.center.list'));
+  assert.match(get('residentQueues').innerHTML, /Auto bind queue/);
+
+  history.resolve({ items: [], total: 0, page: 1, page_size: 20, counts: {}, history: { enabled: true }, resident_queues: [] });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
 test('Task center refresh keeps filters and page size in the list request', async () => {
   const { dashboard: ui, get, mock } = harness();
   let request = null;

@@ -284,3 +284,55 @@ func TestWaitAuthMetaRefreshStartsQueuedPass(t *testing.T) {
 		t.Fatalf("queued auth metadata pass was not applied: %#v", account)
 	}
 }
+func TestAuthMetadataFailureMarksFileSignatureInspected(t *testing.T) {
+	now := time.Now().UTC()
+	env := &authModelsRefreshEnvironment{
+		blockingAuthEnvironment: &blockingAuthEnvironment{
+			getStarted: make(chan struct{}, 1),
+			getRelease: make(chan struct{}),
+		},
+	}
+	env.setAuths([]pluginapi.HostAuthFileEntry{{
+		ID: "auth-1", AuthIndex: "auth-1", Type: "xai", Provider: "xai",
+		Path: "unreadable-auth.json", Size: 10, ModTime: now,
+	}})
+	service := NewService(env)
+	t.Cleanup(service.Close)
+	var reads atomic.Int32
+	service.authMetaRead = func(string) (string, string, bool) {
+		reads.Add(1)
+		return "", "", false
+	}
+
+	if errRefresh := service.RefreshCatalog(context.Background()); errRefresh != nil {
+		t.Fatal(errRefresh)
+	}
+	service.WaitAuthMetaRefresh()
+	account, ok := service.FindAccount("auth-1")
+	if !ok || account.ProxyURLKnown || !account.ProxyMetaInspected {
+		t.Fatalf("failed auth metadata read was not marked inspected: %#v", account)
+	}
+	if jobs := service.pendingAuthMetaJobs(service.catalogSnapshot()); len(jobs) != 0 {
+		t.Fatalf("failed auth metadata remained pending during backoff: %#v", jobs)
+	}
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("first auth metadata reads = %d, want 1", got)
+	}
+
+	env.setAuths([]pluginapi.HostAuthFileEntry{{
+		ID: "auth-1", AuthIndex: "auth-1", Type: "xai", Provider: "xai",
+		Path: "unreadable-auth.json", Size: 11, ModTime: now.Add(time.Second),
+	}})
+	if errRefresh := service.RefreshCatalog(context.Background()); errRefresh != nil {
+		t.Fatal(errRefresh)
+	}
+	service.WaitAuthMetaRefresh()
+	account, ok = service.FindAccount("auth-1")
+	if !ok || account.ProxyURLKnown || !account.ProxyMetaInspected {
+		t.Fatalf("changed auth file was not retried and inspected: %#v", account)
+	}
+	if got := reads.Load(); got != 2 {
+		t.Fatalf("changed auth metadata reads = %d, want 2", got)
+	}
+	service.WaitAuthModelsRefresh()
+}

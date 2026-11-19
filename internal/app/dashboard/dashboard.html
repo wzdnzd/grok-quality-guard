@@ -5312,6 +5312,7 @@
       proxyTasks: new Map(),
       taskCenter: null,
       taskCenterRefreshing: false,
+      taskCenterQueuesPromise: null,
       taskCenterListRequest: 0,
       taskCenterPage: 1,
       taskCenterPageSize: 20,
@@ -5830,7 +5831,10 @@
         window.history.replaceState(null, '', '#' + hash);
       }
       if (name === 'resin') setProxySubtab(state.proxySubtab);
-      if (name === 'tasks') window.setTimeout(() => refreshTaskCenter(Boolean(state.taskCenter)), 0);
+      if (name === 'tasks') window.setTimeout(() => {
+        refreshTaskCenterQueues(Boolean(state.taskCenter));
+        refreshTaskCenter(Boolean(state.taskCenter));
+      }, 0);
       else window.setTimeout(() => refreshAll(true), 0);
     }
     function openSettings(section) {
@@ -5978,12 +5982,13 @@
     }
     function scheduleAccountMetadataRefresh() {
       if (accountMetadataRefreshTimer || !state.accountProxyPending) return;
-      if (state.accountProxyRetryCount >= 6) return;
+      if (state.accountProxyRetryCount >= 24) return;
       state.accountProxyRetryCount += 1;
       armAccountMetadataRefresh();
     }
     function armAccountMetadataRefresh() {
       if (accountMetadataRefreshTimer || !state.accountProxyPending) return;
+      const retryDelay = Math.min(5000, 1000 * Math.max(1, state.accountProxyRetryCount));
       accountMetadataRefreshTimer = window.setTimeout(async () => {
         accountMetadataRefreshTimer = 0;
         if (!state.accountProxyPending || state.activeTab !== 'accounts') return;
@@ -6000,7 +6005,7 @@
           // permanently unreadable auth file from creating a polling loop.
           if (state.accountProxyPending) scheduleAccountMetadataRefresh();
         }
-      }, 1000);
+      }, retryDelay);
     }
     async function refreshSection(button, label, refresh) {
       if (state.refreshing) return;
@@ -6024,7 +6029,10 @@
       if (!state.refreshPending && state.activeTab === previousTab) return false;
       state.refreshPending = false;
       window.setTimeout(() => {
-        if (state.activeTab === 'tasks') refreshTaskCenter(Boolean(state.taskCenter));
+        if (state.activeTab === 'tasks') {
+          refreshTaskCenterQueues(Boolean(state.taskCenter));
+          refreshTaskCenter(Boolean(state.taskCenter));
+        }
         else refreshAll(true);
       }, 0);
       return true;
@@ -6032,19 +6040,37 @@
     function refreshAccounts(button) {
       state.accountProxyRetryCount = 0;
       return refreshSection(button, i18n.t("ui.account_quality"), async () => {
-        const [overview] = await Promise.all([api('overview'), loadList('accounts')]);
-        state.overview = overview || {};
-        if (state.overview.policy) state.policy = state.overview.policy;
-        renderOverview();
-        renderAccounts();
-        renderResin();
-        renderProxySources();
         ensureProxyData(true).catch(() => {});
+        const tasks = await Promise.allSettled([
+          api('overview').then((overview) => {
+            state.overview = overview || {};
+            if (state.overview.policy) state.policy = state.overview.policy;
+            renderOverview();
+          }),
+          loadList('accounts').then(() => {
+            renderAccounts();
+            renderOverview();
+          })
+        ]);
+        const errors = tasks.filter((task) => task.status === 'rejected').map((task) => task.reason);
+        if (errors.length) throw errors[0];
       });
     }
     async function loadProxyData() {
-      const [summary] = await Promise.all([api('proxy.summary'), loadList('sources')]);
-      state.proxy = summary || {};
+      const summaryPromise = api('proxy.summary').then((summary) => {
+        state.proxy = summary || {};
+        renderOverview();
+        renderResin();
+        populateProxyAutoBindForm();
+        return state.proxy;
+      });
+      const sourcesPromise = loadList('sources').then(() => {
+        renderProxySources();
+        return state.proxySourceList;
+      });
+      const results = await Promise.allSettled([summaryPromise, sourcesPromise]);
+      const errors = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
+      if (errors.length) throw errors[0];
     }
     function ensureProxyData(force) {
       if (!force && state.proxy && state.proxySourceList) return Promise.resolve();
@@ -6071,14 +6097,19 @@
     }
     function refreshResin(button) {
       return refreshSection(button, i18n.t("ui.proxy_management"), async () => {
-        const [overview] = await Promise.all([api('overview'), loadList('leases')]);
-        state.overview = overview || {};
-        await loadProxyData();
-        renderOverview();
-        renderAccounts();
-        renderResin();
-        renderProxySources();
-        populateProxyAutoBindForm();
+        ensureProxyData(true).catch(() => {});
+        const tasks = await Promise.allSettled([
+          api('overview').then((overview) => {
+            state.overview = overview || {};
+            renderOverview();
+          }),
+          loadList('leases').then(() => {
+            renderResin();
+            renderOverview();
+          })
+        ]);
+        const errors = tasks.filter((task) => task.status === 'rejected').map((task) => task.reason);
+        if (errors.length) throw errors[0];
       });
     }
     function refreshEvents(button) {
@@ -6096,45 +6127,62 @@
       }
       const tab = state.activeTab;
       state.refreshing = true;
+      const errors = [];
       try {
         document.getElementById('syncLabel').textContent = i18n.t("ui.syncing");
         const loadAccounts = tab === 'accounts';
         const loadLeases = tab === 'resin';
         const loadEvents = tab === 'overview' || tab === 'events';
-        const loadProxy = tab === 'resin';
         if (loadAccounts) state.accountProxyRetryCount = 0;
-        const tasks = await Promise.allSettled([
-          tab === 'tasks' ? Promise.resolve(null) : api('overview'),
-          loadAccounts ? loadList('accounts') : (loadLeases ? loadList('leases') : Promise.resolve(null)),
-          loadEvents ? api('events.list', { limit: 1000 }) : Promise.resolve(null),
-          tab === 'settings' ? api('policy.get') : Promise.resolve(null),
-          loadProxy ? api('proxy.summary') : Promise.resolve(null),
-          loadProxy ? loadList('sources') : Promise.resolve(null)
-        ]);
-        const errors = [];
-        if (tasks[0].status === 'fulfilled' && tasks[0].value != null) {
-          state.overview = tasks[0].value || {};
-          if (state.overview.policy) state.policy = state.overview.policy;
-        } else if (tasks[0].status === 'rejected') errors.push(tasks[0].reason);
+        if (tab === 'accounts' || tab === 'overview' || tab === 'resin') {
+          ensureProxyData(tab === 'resin').catch(() => {});
+        }
+        const overviewTask = tab === 'tasks'
+          ? Promise.resolve(null)
+          : api('overview').then((value) => {
+              state.overview = value || {};
+              if (state.overview.policy) state.policy = state.overview.policy;
+              renderOverview();
+              return value;
+            });
+        const listTask = loadAccounts
+          ? loadList('accounts').then(() => {
+              renderAccounts();
+              renderOverview();
+              return state.accountList;
+            })
+          : (loadLeases
+            ? loadList('leases').then(() => {
+                renderResin();
+                renderOverview();
+                return state.leaseList;
+              })
+            : Promise.resolve(null));
+        const eventsTask = loadEvents
+          ? api('events.list', { limit: 1000 }).then((value) => {
+              state.events = (value && value.items) || [];
+              renderEvents();
+              if (tab === 'overview') renderOverview();
+              return value;
+            })
+          : Promise.resolve(null);
+        const policyTask = tab === 'settings'
+          ? api('policy.get').then((value) => {
+              state.policy = value || {};
+              populatePolicyForm();
+              renderOverview();
+              return value;
+            })
+          : Promise.resolve(null);
+        const tasks = await Promise.allSettled([overviewTask, listTask, eventsTask, policyTask]);
+        if (tasks[0].status === 'rejected') errors.push(tasks[0].reason);
         if ((loadAccounts || loadLeases) && tasks[1].status === 'rejected') errors.push(tasks[1].reason || new Error(i18n.t("ui.account_data_load_failed")));
-        if (loadEvents) {
-          if (tasks[2].status === 'fulfilled') state.events = (tasks[2].value && tasks[2].value.items) || [];
-          else errors.push(tasks[2].reason);
-        }
-        if (tab === 'settings') {
-          if (tasks[3].status === 'fulfilled') state.policy = tasks[3].value || {};
-          else errors.push(tasks[3].reason);
-        }
-        if (loadProxy) {
-          if (tasks[4].status === 'fulfilled') state.proxy = tasks[4].value || {};
-          else errors.push(tasks[4].reason);
-          if (tasks[5].status === 'rejected') errors.push(tasks[5].reason);
-        }
+        if (loadEvents && tasks[2].status === 'rejected') errors.push(tasks[2].reason);
+        if (tab === 'settings' && tasks[3].status === 'rejected') errors.push(tasks[3].reason);
         renderAll();
         document.getElementById('syncLabel').textContent = i18n.t('ui.updated_at_value', { time: formatTime(new Date().toISOString()) });
         if (errors.length) toast((errors[0] && errors[0].message) || i18n.t("ui.partial_data_load_failed"), 'error');
         else if (!silent) toast(i18n.t("ui.data_refreshed"), 'success');
-        if (tab === 'accounts' || tab === 'overview') ensureProxyData().catch(() => {});
         if ((state.activeTab === 'accounts' && !state.accountList) || (state.activeTab === 'resin' && !state.leaseList)) {
           window.setTimeout(() => ensureAccountData(), 0);
         }
@@ -8660,7 +8708,7 @@
     function renderResidentQueues(queues, history) {
       const container = document.getElementById('residentQueues');
       if (!container) return;
-      document.getElementById('taskHistorySummary').textContent = taskHistoryText(history);
+      if (history !== undefined) document.getElementById('taskHistorySummary').textContent = taskHistoryText(history);
       const selectedQueueID = String(state.taskCenterSelectedQueue?.id || '');
       if (!queues || !queues.length) {
         container.innerHTML = '<div class="empty" style="grid-column:1/-1"><svg class="icon"><use href="#i-activity"></use></svg><div>' + esc(i18n.t('ui.no_active_resident_queues')) + '</div></div>';
@@ -8955,6 +9003,22 @@
       renderTaskQueueDetail();
       renderTaskDetail();
     }
+    function refreshTaskCenterQueues(silent) {
+      if (state.taskCenterQueuesPromise) return state.taskCenterQueuesPromise;
+      state.taskCenterQueuesPromise = (async () => {
+        try {
+          const result = await api('tasks.center.queues');
+          const queues = Array.isArray(result?.resident_queues) ? result.resident_queues : [];
+          state.taskCenter = Object.assign({}, state.taskCenter || {}, { resident_queues: queues });
+          renderResidentQueues(queues);
+        } catch (error) {
+          if (!silent) toast(error.message || i18n.t('ui.partial_data_load_failed'), 'error');
+        } finally {
+          state.taskCenterQueuesPromise = null;
+        }
+      })();
+      return state.taskCenterQueuesPromise;
+    }
     async function refreshTaskCenter(silent) {
       if (state.taskCenterRefreshing && silent) return;
       const request = ++state.taskCenterListRequest;
@@ -9066,10 +9130,11 @@
       }
     }
     async function refreshTaskCenterQueue(queueID, announce) {
-      await refreshTaskCenter(true);
+      await refreshTaskCenterQueues(true);
       const latest = (state.taskCenter?.resident_queues || []).find((item) => item.id === queueID);
       if (!latest) closeResidentQueueDetail(true);
       if (announce) toast(i18n.t("ui.queue_status_refreshed"), 'success');
+      refreshTaskCenter(true);
     }
     function watchTaskInBackground(value, label) {
       if (!value || !value.task_id) return;
@@ -10132,6 +10197,7 @@
       if (state.activeTab !== 'tasks' || document.hidden) return;
       const counts = state.taskCenter?.counts || {};
       const queuesRunning = (state.taskCenter?.resident_queues || []).some((queue) => queue.status === 'running' || Number(queue.running || 0) > 0 || Number(queue.waiting || 0) > 0);
+      refreshTaskCenterQueues(true);
       if (Number(counts.active || 0) > 0 || Number(counts.running_items || 0) > 0 || queuesRunning) refreshTaskCenter(true);
     }, 5000);
     function relocalizeDashboard() {

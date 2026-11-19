@@ -42,3 +42,13 @@ func TestAuthProxyMetadataPendingKeepsUnreadFilesUnknown(t *testing.T) {
 		t.Fatal("runtime-only auth should preserve existing unbound handling")
 	}
 }
+
+func TestAuthProxyMetadataInspectedFailureIsNotPending(t *testing.T) {
+	account := Account{Path: "auth.json", ProxyMetaInspected: true}
+	if !authProxyMetadataUnknown(account, "") {
+		t.Fatal("failed auth metadata read should keep proxy status unknown")
+	}
+	if authProxyMetadataPending(account, "") {
+		t.Fatal("failed auth metadata read should not advertise pending work")
+	}
+}

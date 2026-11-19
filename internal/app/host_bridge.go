@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
@@ -22,8 +23,20 @@ type hostCallResult struct {
 
 type hostCallFlight struct {
 	done chan struct{}
+	once sync.Once
 	raw  json.RawMessage
 	err  error
+}
+
+func (flight *hostCallFlight) finish(raw json.RawMessage, err error) {
+	if flight == nil {
+		return
+	}
+	flight.once.Do(func() {
+		flight.raw = raw
+		flight.err = err
+		close(flight.done)
+	})
 }
 
 func invokeHostCall(call func(string, any) (json.RawMessage, error), method string, payload any) (raw json.RawMessage, err error) {
@@ -112,37 +125,58 @@ func (p *Plugin) sharedHostCall(ctx context.Context, method string, payload any)
 		p.hostCalls = make(map[string]*hostCallFlight)
 	}
 	flight := p.hostCalls[method]
-	if flight == nil {
+	created := flight == nil
+	if created {
 		flight = &hostCallFlight{done: make(chan struct{})}
 		p.hostCalls[method] = flight
 		go func() {
 			raw, errCall := invokeHostCall(call, method, payload)
 			p.hostCallsMu.Lock()
-			flight.raw = raw
-			flight.err = errCall
 			if p.hostCalls[method] == flight {
 				delete(p.hostCalls, method)
 			}
-			close(flight.done)
+			flight.finish(raw, errCall)
 			p.hostCallsMu.Unlock()
 		}()
 	}
 	p.hostCallsMu.Unlock()
+	if created {
+		// The callback itself cannot be cancelled. Keep the flight joinable for
+		// later callers, but bound how long a permanently hung callback can
+		// poison future requests. A caller timeout must not remove the flight
+		// immediately: that would launch a duplicate host call while the first
+		// one is still running.
+		expiresAt := time.Now().Add(hostAuthListTimeout)
+		if deadline, ok := ctx.Deadline(); ok && deadline.Before(expiresAt) {
+			expiresAt = deadline
+		}
+		go p.expireHostCallFlight(method, flight, time.Until(expiresAt))
+	}
 	select {
 	case <-ctx.Done():
-		// The host callback has no cancellation handle. Drop our map entry so
-		// a permanently blocked callback cannot poison every future caller of
-		// this method. Existing waiters still observe flight.done if the old
-		// callback eventually returns.
-		p.hostCallsMu.Lock()
-		if p.hostCalls[method] == flight {
-			delete(p.hostCalls, method)
-		}
-		p.hostCallsMu.Unlock()
 		return nil, ctx.Err()
 	case <-flight.done:
 		return flight.raw, flight.err
 	}
+}
+
+func (p *Plugin) expireHostCallFlight(method string, flight *hostCallFlight, delay time.Duration) {
+	if delay < time.Millisecond {
+		delay = time.Millisecond
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-flight.done:
+		return
+	case <-timer.C:
+	}
+	p.hostCallsMu.Lock()
+	if p.hostCalls[method] == flight {
+		delete(p.hostCalls, method)
+	}
+	p.hostCallsMu.Unlock()
+	flight.finish(nil, fmt.Errorf("host callback %s timed out", method))
 }
 
 func (p *Plugin) listAuths(ctx context.Context) ([]pluginapi.HostAuthFileEntry, error) {

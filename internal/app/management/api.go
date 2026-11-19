@@ -384,6 +384,8 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 		return s.actionTaskList(request.Params, requestLocaleFromContext(ctx))
 	case "tasks.center.list":
 		return s.actionTaskCenterList(request.Params, requestLocaleFromContext(ctx))
+	case "tasks.center.queues":
+		return s.actionTaskCenterQueues(requestLocaleFromContext(ctx))
 	case "tasks.center.queue":
 		return s.actionTaskCenterQueue(request.Params)
 	case "tasks.center.get", "tasks.center.items":
@@ -398,7 +400,9 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 }
 
 func (s *Service) actionOverview(ctx context.Context) (any, int, error) {
-	_ = s.ensureCatalog(ctx)
+	if errCatalog := s.ensureCatalog(ctx); errCatalog != nil {
+		return nil, http.StatusBadGateway, errCatalog
+	}
 	catalog := s.catalogSnapshot()
 	store := s.stateStore()
 	counts := catalogStateCounts(store, catalog)
@@ -426,7 +430,9 @@ func (s *Service) actionOverview(ctx context.Context) (any, int, error) {
 }
 
 func (s *Service) actionAccountsList(ctx context.Context, params map[string]any) (any, int, error) {
-	_ = s.ensureCatalog(ctx)
+	if errCatalog := s.ensureCatalog(ctx); errCatalog != nil {
+		return nil, http.StatusBadGateway, errCatalog
+	}
 	store := s.stateStore()
 	catalog := s.catalogSnapshot()
 	filterState := strings.ToLower(strings.TrimSpace(asString(params["state"])))

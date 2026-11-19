@@ -29,4 +29,8 @@ type Account struct {
 	ProxyURLKnown bool
 	ProxyHash     string
 	ProxyMasked   string
+	// ProxyMetaInspected records that the current auth-file signature has
+	// already been read, including unreadable/invalid files. A failed read stays
+	// proxy-status unknown but no longer advertises itself as pending work.
+	ProxyMetaInspected bool
 }
