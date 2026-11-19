@@ -1,17 +1,27 @@
+// Catalog tests cover refresh retention, ownership, loading failures and large-catalog management.
 package app
 
 import (
 	"context"
-	catalogapp "grok-quality-guard/internal/app/catalog"
-	appstate "grok-quality-guard/internal/app/state"
-	appconfig "grok-quality-guard/internal/config"
-	coreproxy "grok-quality-guard/internal/proxy"
-	qualitypkg "grok-quality-guard/internal/quality"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 	"gopkg.in/yaml.v3"
+
+	catalogapp "grok-quality-guard/internal/app/catalog"
+	managementapp "grok-quality-guard/internal/app/management"
+	appstate "grok-quality-guard/internal/app/state"
+	appconfig "grok-quality-guard/internal/config"
+	coreproxy "grok-quality-guard/internal/proxy"
+	qualitypkg "grok-quality-guard/internal/quality"
 )
 
 func TestCatalogRefreshKeepsGuardOwnedStateDuringTemporaryOmission(t *testing.T) {
@@ -324,5 +334,173 @@ func TestCatalogSyncPreservesLegacyDefaultStateAndFirstSeen(t *testing.T) {
 	catalog := plugin.CatalogSnapshot()
 	if len(catalog) != 1 || !catalog[0].FirstSeenAt.Equal(legacyFirstSeen) {
 		t.Fatalf("FirstSeenAt was not preserved for legacy default state: %#v", catalog)
+	}
+}
+
+// Catalog loading failures.
+
+func TestCatalogDependentManagementActionsSurfaceLoadFailure(t *testing.T) {
+	host := newMockHostCall(nil, nil)
+	previousHostCall := hostCall
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostAuthList {
+			return nil, errors.New("catalog backend unavailable")
+		}
+		return host.call(method, payload)
+	}
+	t.Cleanup(func() { hostCall = previousHostCall })
+
+	cfg := appconfig.DefaultConfig()
+	cfg.Enabled = false
+	cfg.StateFile = filepath.Join(t.TempDir(), "state", "state.json")
+	rawConfig, errMarshal := yaml.Marshal(cfg)
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	plugin := NewPlugin()
+	if errConfigure := plugin.Configure(rawConfig); errConfigure != nil {
+		t.Fatal(errConfigure)
+	}
+	t.Cleanup(plugin.Shutdown)
+
+	for _, action := range []string{"overview", "accounts.list"} {
+		response := actionManagementForTest(t, plugin, action, map[string]any{
+			"page": 1, "page_size": 50, "summary": true,
+		})
+		if response.StatusCode != http.StatusBadGateway {
+			t.Fatalf("%s status = %d, want %d; body=%s", action, response.StatusCode, http.StatusBadGateway, response.Body)
+		}
+		if !strings.Contains(string(response.Body), `"code":"upstream_error"`) {
+			t.Fatalf("%s did not expose upstream_error: %s", action, response.Body)
+		}
+	}
+}
+
+// Large-catalog management.
+
+func TestLargeCatalogManagementAvoidsPerAccountHostReads(t *testing.T) {
+	const authCount = 3000
+	entries := make([]pluginapi.HostAuthFileEntry, 0, authCount)
+	auths := make(map[string]json.RawMessage, authCount)
+	for index := 0; index < authCount; index++ {
+		authID := fmt.Sprintf("auth-%04d", index)
+		entries = append(entries, pluginapi.HostAuthFileEntry{
+			ID:        authID,
+			AuthIndex: authID,
+			Name:      authID,
+			Type:      "xai",
+			Provider:  "xai",
+			Label:     authID + "@example.com",
+			Email:     authID + "@example.com",
+			Priority:  1,
+		})
+		auths[authID] = makeAuthJSON(t, map[string]any{
+			"type":          "xai",
+			"email":         authID + "@example.com",
+			"access_token":  "access-" + authID,
+			"refresh_token": "refresh-" + authID,
+			"disabled":      false,
+		})
+	}
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	host.resetCatalogCallCounts()
+
+	response := actionManagementForTest(t, plugin, "accounts.list", map[string]any{
+		"page":      1,
+		"page_size": 10000,
+		"summary":   true,
+	})
+	if response.StatusCode != 200 {
+		t.Fatalf("accounts.list status = %d body=%s", response.StatusCode, response.Body)
+	}
+	t.Logf("3000-account summary response bytes: %d", len(response.Body))
+	var decoded struct {
+		Data struct {
+			Items []managementapp.AccountSummaryView `json:"items"`
+			Total int                                `json:"total"`
+		} `json:"data"`
+	}
+	if errUnmarshal := json.Unmarshal(response.Body, &decoded); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	if decoded.Data.Total != authCount || len(decoded.Data.Items) != authCount {
+		t.Fatalf("unexpected account page: total=%d items=%d", decoded.Data.Total, len(decoded.Data.Items))
+	}
+
+	idsResponse := actionManagementForTest(t, plugin, "accounts.list", map[string]any{
+		"page":      1,
+		"page_size": 10000,
+		"ids_only":  true,
+	})
+	if idsResponse.StatusCode != 200 {
+		t.Fatalf("accounts.list ids_only status = %d body=%s", idsResponse.StatusCode, idsResponse.Body)
+	}
+	var idsDecoded struct {
+		Data struct {
+			Items []string `json:"items"`
+			Total int      `json:"total"`
+		} `json:"data"`
+	}
+	if errUnmarshal := json.Unmarshal(idsResponse.Body, &idsDecoded); errUnmarshal != nil {
+		t.Fatalf("decode ids_only response: %v", errUnmarshal)
+	}
+	firstID := ""
+	if len(idsDecoded.Data.Items) > 0 {
+		firstID = idsDecoded.Data.Items[0]
+	}
+	if idsDecoded.Data.Total != authCount || len(idsDecoded.Data.Items) != authCount || firstID != "auth-0000" {
+		t.Fatalf("unexpected ids_only page: total=%d items=%d first=%q", idsDecoded.Data.Total, len(idsDecoded.Data.Items), firstID)
+	}
+	if len(idsResponse.Body)*3 >= len(response.Body) {
+		t.Fatalf("ids_only response is not materially smaller: ids=%d summary=%d", len(idsResponse.Body), len(response.Body))
+	}
+
+	overview := actionManagementForTest(t, plugin, "overview", nil)
+	if overview.StatusCode != 200 {
+		t.Fatalf("overview status = %d body=%s", overview.StatusCode, overview.Body)
+	}
+	listCalls, modelCalls, getCalls := host.catalogCallCounts()
+	if listCalls != 0 || modelCalls != 0 || getCalls != 0 {
+		t.Fatalf("management requests used host catalog calls: list=%d models=%d get=%d", listCalls, modelCalls, getCalls)
+	}
+
+	if errRefresh := plugin.RefreshCatalog(t.Context()); errRefresh != nil {
+		t.Fatal(errRefresh)
+	}
+	listCalls, modelCalls, getCalls = host.catalogCallCounts()
+	if listCalls != 1 || modelCalls != 0 || getCalls != 0 {
+		t.Fatalf("unchanged refresh used extra host calls: list=%d models=%d get=%d", listCalls, modelCalls, getCalls)
+	}
+}
+
+func TestAccountListSummaryOmitsDetailFields(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "alice@example.com", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		account := plugin.ensureStateAccount(state, "auth-1")
+		account.LastEvidence = &appstate.QualityEvidence{Class: qualitypkg.ClassMissingThinking, Reason: "quality detail"}
+		account.LastProbeAt = time.Now().UTC()
+		account.SoftStrikes = 2
+		account.Metrics.FirstTokenMS = 123
+		account.Metrics.VisibleTokens = 456
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	response := actionManagementForTest(t, plugin, "accounts.list", map[string]any{"summary": true})
+	if response.StatusCode != 200 {
+		t.Fatalf("accounts.list status = %d body=%s", response.StatusCode, response.Body)
+	}
+	t.Logf("3000-account summary response bytes: %d", len(response.Body))
+	text := string(response.Body)
+	for _, detail := range []string{"\"evidence\"", "\"last_probe_at\"", "\"soft_strikes\"", "\"ttft_ms\"", "\"visible_tokens\""} {
+		if strings.Contains(text, detail) {
+			t.Fatalf("summary response leaked detail field %s: %s", detail, text)
+		}
+	}
+	if !strings.Contains(text, "alice@example.com") || !strings.Contains(text, "\"state\"") {
+		t.Fatalf("summary response missing expected fields: %s", text)
 	}
 }

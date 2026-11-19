@@ -1,13 +1,33 @@
+// Plugin tests cover account-lock sharding and stale model stream cleanup.
 package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 )
+
+// Account lock sharding.
+
+func TestAccountLocksUseBoundedShards(t *testing.T) {
+	plugin := NewPlugin()
+	if len(plugin.accountLocks) != 256 {
+		t.Fatalf("account lock shards = %d, want 256", len(plugin.accountLocks))
+	}
+	first := plugin.accountLock("auth-1")
+	for index := 0; index < 10000; index++ {
+		_ = plugin.accountLock(fmt.Sprintf("auth-%d", index))
+	}
+	if plugin.accountLock("auth-1") != first {
+		t.Fatal("same auth ID resolved to a different lock shard")
+	}
+}
+
+// Model stream lifecycle.
 
 func TestSweepStaleModelStreamsClosesAndRemovesExpiredEntries(t *testing.T) {
 	previous := hostCall

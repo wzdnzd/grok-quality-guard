@@ -1,14 +1,21 @@
+// Quality state tests cover verdict application, policy thresholds, cooldown and strike decay.
 package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	appauth "grok-quality-guard/internal/app/auth"
-	appstate "grok-quality-guard/internal/app/state"
-	appconfig "grok-quality-guard/internal/config"
-	qualitypkg "grok-quality-guard/internal/quality"
+	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
+
+	appauth "grok-quality-guard/internal/app/auth"
+	managementapp "grok-quality-guard/internal/app/management"
+	appstate "grok-quality-guard/internal/app/state"
+	apptasks "grok-quality-guard/internal/app/tasks"
+	appconfig "grok-quality-guard/internal/config"
+	qualitypkg "grok-quality-guard/internal/quality"
 )
 
 func TestSuccessfulVerdictResetsCountersAndPreservesStrike(t *testing.T) {
@@ -355,5 +362,404 @@ func TestCooldownOnlyAppliesCooldownOnConfirmedAnomaly(t *testing.T) {
 	}
 	if account.CooldownUntil.IsZero() {
 		t.Fatal("cooldown deadline is missing")
+	}
+}
+
+// Policy thresholds.
+
+func TestConsecutiveSoftTPSThreshold(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) { cfg.AutoAction = "cooldown_only" })
+	verdict := qualitypkg.QualityVerdict{Class: qualitypkg.ClassSoftTPS, Signals: qualitypkg.Signals{OutputTokens: 40, TPS: 600}}
+	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "passive", ""); errApply != nil {
+		t.Fatal(errApply)
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.State != appstate.StateSuspect || account.SoftStrikes != 1 || len(host.saves) != 0 {
+		t.Fatalf("first soft observation should only be suspect: %#v saves=%d", account, len(host.saves))
+	}
+	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "passive", ""); errApply != nil {
+		t.Fatal(errApply)
+	}
+	account, _ = plugin.stateAccount("auth-1")
+	if account.State != appstate.StateCooling || account.SoftStrikes != 2 || len(host.saves) != 1 {
+		t.Fatalf("second soft observation should trigger cooldown: %#v saves=%d", account, len(host.saves))
+	}
+}
+
+func TestConsecutiveErrorsThreshold(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) { cfg.AutoAction = "cooldown_only" })
+	verdict := qualitypkg.QualityVerdict{Class: qualitypkg.ClassProbeError}
+	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "probe", ""); errApply != nil {
+		t.Fatal(errApply)
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.State != appstate.StateSuspect || account.ErrorStrikes != 1 || len(host.saves) != 0 {
+		t.Fatalf("first error should only be suspect: %#v saves=%d", account, len(host.saves))
+	}
+	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "probe", ""); errApply != nil {
+		t.Fatal(errApply)
+	}
+	account, _ = plugin.stateAccount("auth-1")
+	if account.State != appstate.StateCooling || account.ErrorStrikes != 2 || len(host.saves) != 1 {
+		t.Fatalf("second error should trigger cooldown: %#v saves=%d", account, len(host.saves))
+	}
+}
+
+func TestConsecutiveMissingThinkingThreshold(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.AutoAction = "cooldown_then_disable"
+		cfg.Quality.ConsecutiveMissingThinking = 2
+	})
+	verdict := qualitypkg.QualityVerdict{Class: qualitypkg.ClassMissingThinking}
+	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "passive", ""); errApply != nil {
+		t.Fatal(errApply)
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.State != appstate.StateSuspect || account.ThinkingStrikes != 1 || len(host.saves) != 0 {
+		t.Fatalf("first missing-thinking should only be suspect: %#v saves=%d", account, len(host.saves))
+	}
+	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "passive", ""); errApply != nil {
+		t.Fatal(errApply)
+	}
+	account, _ = plugin.stateAccount("auth-1")
+	if account.State != appstate.StateCooling || account.ThinkingStrikes != 2 || !account.QualityStrikeMissingThinking || len(host.saves) != 1 {
+		t.Fatalf("second missing-thinking should trigger cooldown: %#v saves=%d", account, len(host.saves))
+	}
+}
+
+func TestNonQualityProbeStatusDoesNotConsumeErrorStrikes(t *testing.T) {
+	if class := classifyProbeStatus(401); class != qualitypkg.ClassCredentialInvalid {
+		t.Fatalf("401 classified as %q, want %q", class, qualitypkg.ClassCredentialInvalid)
+	}
+	if class := classifyProbeStatus(500); class != qualitypkg.ClassIgnored {
+		t.Fatalf("500 classified as %q, want %q", class, qualitypkg.ClassIgnored)
+	}
+	if class := classifyProbeStatus(407); class != qualitypkg.ClassProxyError {
+		t.Fatalf("407 classified as %q, want %q", class, qualitypkg.ClassProxyError)
+	}
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) { cfg.AutoAction = "cooldown_only" })
+	for index := 0; index < 3; index++ {
+		verdict := qualitypkg.QualityVerdict{Class: qualitypkg.ClassIgnored}
+		if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "probe", ""); errApply != nil {
+			t.Fatal(errApply)
+		}
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.ErrorStrikes != 0 || account.State != appstate.StateSuspect || len(host.saves) != 0 {
+		t.Fatalf("ignored probe changed quality state: %#v saves=%d", account, len(host.saves))
+	}
+}
+
+func TestSoftCrossVerifySchedulesProbeBeforeAction(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.AutoAction = "cooldown_then_disable"
+		cfg.Quality.ConsecutiveSoft = 1
+		cfg.Quality.SoftCrossVerify = true
+	})
+	verdict := qualitypkg.QualityVerdict{Class: qualitypkg.ClassSoftTPS, Signals: qualitypkg.Signals{OutputTokens: 40, TPS: 600}}
+	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "passive", ""); errApply != nil {
+		t.Fatal(errApply)
+	}
+	if len(host.saves) != 0 {
+		t.Fatalf("cross-verify threshold wrote auth before confirmation: %d", len(host.saves))
+	}
+	found := false
+	for _, task := range plugin.listTasks(20) {
+		if task.Kind == "quality.cross_verify" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("soft cross-verify task was not scheduled")
+	}
+}
+
+func TestObserveModeNeverWritesAuthAtThreshold(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) { cfg.AutoAction = "observe" })
+	verdict := qualitypkg.QualityVerdict{Class: qualitypkg.ClassSoftTPS, Signals: qualitypkg.Signals{OutputTokens: 40, TPS: 600}}
+	for index := 0; index < 2; index++ {
+		if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "passive", ""); errApply != nil {
+			t.Fatal(errApply)
+		}
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.State != appstate.StateDegraded || len(host.saves) != 0 {
+		t.Fatalf("observe mode modified auth: %#v saves=%d", account, len(host.saves))
+	}
+}
+
+func TestStateStorePersistsPolicyAndStrikes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store := appstate.NewStore(path)
+	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
+	policy.Quality.ConsecutiveSoft = 4
+	policy.Quality.ConsecutiveErrors = 3
+	policy.Quality.ConsecutiveMissingThinking = 2
+	policy.Quality.ThinkingGuard = false
+	policy.Quality.SoftCrossVerify = true
+	policy.Quality.ThinkingCrossVerify = true
+	if errLoad := store.Load(policy, "revision"); errLoad != nil {
+		t.Fatal(errLoad)
+	}
+	if errUpdate := store.Update(func(state *appstate.State) error {
+		state.Accounts["auth-1"] = &appstate.AccountState{
+			AuthID:          "auth-1",
+			State:           appstate.StateSuspect,
+			FirstSeenAt:     time.Now().UTC(),
+			SoftStrikes:     2,
+			ErrorStrikes:    1,
+			ThinkingStrikes: 3,
+		}
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	reloaded := appstate.NewStore(path)
+	if errLoad := reloaded.Load(appconfig.PolicyFromConfig(appconfig.DefaultConfig()), "revision-2"); errLoad != nil {
+		t.Fatal(errLoad)
+	}
+	snapshot := reloaded.Snapshot()
+	quality := snapshot.Policy.Quality
+	if quality.ConsecutiveSoft != 4 || quality.ConsecutiveErrors != 3 || quality.ConsecutiveMissingThinking != 2 {
+		t.Fatalf("consecutive policy was not persisted: %#v", quality)
+	}
+	if quality.ThinkingGuard || !quality.SoftCrossVerify || !quality.ThinkingCrossVerify {
+		t.Fatalf("thinking policy was not persisted: %#v", quality)
+	}
+	account := snapshot.Accounts["auth-1"]
+	if account == nil || account.SoftStrikes != 2 || account.ErrorStrikes != 1 || account.ThinkingStrikes != 3 {
+		t.Fatalf("strikes were not persisted: %#v", account)
+	}
+}
+
+func TestProbeManagementReturnsAcceptedTask(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	body, errMarshal := json.Marshal(managementapp.ActionRequest{Action: "accounts.probe", Params: map[string]any{"auth_id": "auth-1", "force": true}})
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	response := callManagementForTest(t, plugin, http.MethodPost, "/plugins/grok-quality-guard/api", http.Header{"Content-Type": []string{"application/json"}}, body)
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("probe status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var envelope struct {
+		Data apptasks.Task `json:"data"`
+	}
+	if errUnmarshal := json.Unmarshal(response.Body, &envelope); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	if envelope.Data.ID == "" || envelope.Data.Kind != "accounts.probe" {
+		t.Fatalf("unexpected task response: %#v", envelope.Data)
+	}
+	finished := waitTaskForTest(t, plugin, envelope.Data.ID)
+	if finished.Status != taskStatusSucceeded && finished.Status != taskStatusFailed {
+		t.Fatalf("task did not finish: %#v", finished)
+	}
+}
+
+// Strike decay.
+
+func seedStrikeAccount(t *testing.T, plugin *Plugin, authID string, startedAt time.Time, streak int) {
+	t.Helper()
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		account := plugin.ensureStateAccount(state, authID)
+		account.State = appstate.StateHealthy
+		account.QualityStrikeMissingThinking = true
+		account.QualityFailureAt = startedAt
+		account.HealthyStreak = streak
+		account.HealthyStreakStartedAt = startedAt
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+}
+
+func TestStrikeDecayRequiresWindowAndHealthySamples(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "a1@example.com", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.AutoAction = "cooldown_then_disable"
+		cfg.Quality.StrikeDecayAfterHours = 48
+		cfg.Quality.StrikeDecayMinHealthy = 3
+	})
+	startedAt := time.Now().UTC().Add(-49 * time.Hour)
+	seedStrikeAccount(t, plugin, "auth-1", startedAt, 0)
+
+	for index := 0; index < 2; index++ {
+		if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassNone, Signals: qualitypkg.Signals{OutputTokens: 10, VisibleTokens: 10}}, "passive", ""); errApply != nil {
+			t.Fatal(errApply)
+		}
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if !account.QualityStrikeMissingThinking || account.HealthyStreak != 2 {
+		t.Fatalf("strike decayed before enough healthy samples: %#v", account)
+	}
+	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassNone, Signals: qualitypkg.Signals{OutputTokens: 10, VisibleTokens: 10}}, "passive", ""); errApply != nil {
+		t.Fatal(errApply)
+	}
+	account, _ = plugin.stateAccount("auth-1")
+	if account.QualityStrikeMissingThinking || account.HealthyStreak != 0 {
+		t.Fatalf("strike did not decay after window and healthy samples: %#v", account)
+	}
+	decayed := false
+	for _, event := range plugin.stateStore().Snapshot().Events {
+		if event.AuthID == "auth-1" && event.Action == "strike_decay" && event.Result == "expired" {
+			decayed = true
+			break
+		}
+	}
+	if !decayed {
+		t.Fatal("strike decay event was not recorded")
+	}
+}
+
+func TestStrikeDecayDoesNotClearBeforeWindow(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "a1@example.com", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.Quality.StrikeDecayAfterHours = 48
+		cfg.Quality.StrikeDecayMinHealthy = 1
+	})
+	seedStrikeAccount(t, plugin, "auth-1", time.Now().UTC().Add(-47*time.Hour), 0)
+	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassNone, Signals: qualitypkg.Signals{OutputTokens: 10}}, "passive", ""); errApply != nil {
+		t.Fatal(errApply)
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if !account.QualityStrikeMissingThinking {
+		t.Fatalf("strike decayed before the configured window: %#v", account)
+	}
+}
+
+func TestProbeSuccessCountsTowardStrikeDecay(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "a1@example.com", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.Quality.StrikeDecayAfterHours = 48
+		cfg.Quality.StrikeDecayMinHealthy = 3
+	})
+	startedAt := time.Now().UTC().Add(-49 * time.Hour)
+	seedStrikeAccount(t, plugin, "auth-1", startedAt, 2)
+	if errProbe := plugin.markProbeSuccess("auth-1", qualitypkg.Signals{Terminal: true, OutputTokens: 40, VisibleTokens: 40, HasThinking: true, ReasoningTokens: 10}); errProbe != nil {
+		t.Fatal(errProbe)
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.QualityStrikeMissingThinking {
+		t.Fatalf("probe success did not count toward decay: %#v", account)
+	}
+}
+
+func TestProbeErrorDoesNotAdvanceStrikeDecay(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "a1@example.com", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.Quality.StrikeDecayAfterHours = 48
+		cfg.Quality.StrikeDecayMinHealthy = 3
+	})
+	seedStrikeAccount(t, plugin, "auth-1", time.Now().UTC().Add(-49*time.Hour), 2)
+	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassProbeError, Reason: "reason.detail.probe_transport_error"}, "probe", ""); errApply != nil {
+		t.Fatal(errApply)
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if !account.QualityStrikeMissingThinking || account.HealthyStreak != 2 {
+		t.Fatalf("probe error changed strike decay state: %#v", account)
+	}
+}
+
+func TestRateLimitedDoesNotResetConsecutiveCounters(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "a1@example.com", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		account := plugin.ensureStateAccount(state, "auth-1")
+		account.State = appstate.StateHealthy
+		account.SoftStrikes = 1
+		account.ErrorStrikes = 1
+		account.ThinkingStrikes = 1
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassRateLimited, Reason: "reason.detail.upstream_status_429_rate_limited"}, "transparent", ""); errApply != nil {
+		t.Fatal(errApply)
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.SoftStrikes != 1 || account.ErrorStrikes != 1 || account.ThinkingStrikes != 1 {
+		t.Fatalf("rate limit reset consecutive counters: %#v", account)
+	}
+}
+
+func TestBufferOverflowDoesNotRecordHealthyVerdict(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "a1@example.com", nil)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1", badStreamScript()...)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.Quality.HoldMaxBufferBytes = 1
+	})
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		account := plugin.ensureStateAccount(state, "auth-1")
+		account.State = appstate.StateHealthy
+		account.SoftStrikes = 1
+		account.ErrorStrikes = 1
+		account.ThinkingStrikes = 1
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	streamID := "plugin-stream-overflow-no-verdict"
+	plugin.runTransparentStreamBridge(context.Background(), nonReasoningStreamRequestForTest(), streamID)
+	host.mu.Lock()
+	emitted := len(host.emitted[streamID])
+	detail := host.closes[streamID]
+	host.mu.Unlock()
+	if emitted == 0 || detail != nil {
+		t.Fatalf("overflow was not delivered cleanly: emitted=%d detail=%#v", emitted, detail)
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.State != appstate.StateHealthy || account.SoftStrikes != 1 || account.ErrorStrikes != 1 || account.ThinkingStrikes != 1 {
+		t.Fatalf("overflow changed account quality state: %#v", account)
+	}
+}
+
+func TestDumpVerdictWaitsForFinalVisibleWindow(t *testing.T) {
+	config := appconfig.DefaultQualityConfig()
+	base := qualitypkg.Signals{
+		HasThinking:     true,
+		VisibleTokens:   20,
+		OutputTokens:    420,
+		ReasoningTokens: 400,
+		EncryptedBytes:  2048,
+		EncryptedFloor:  256,
+		FirstVisible:    true,
+		VisibleChunks:   12,
+		VisibleSpanMS:   224,
+	}
+	if verdict := ClassifyQualityHold(base, config.MinHoldOutputTokens); verdict.Action != qualitypkg.QualityActionWait {
+		t.Fatalf("open visible window produced %s/%s, want wait", verdict.Action, verdict.Class)
+	}
+	base.Terminal = true
+	if verdict := ClassifyQualityHold(base, config.MinHoldOutputTokens); verdict.Action != qualitypkg.QualityActionDeliver {
+		t.Fatalf("healthy terminal stream produced %s/%s, want deliver", verdict.Action, verdict.Class)
+	}
+	single := base
+	single.VisibleChunks = 1
+	single.VisibleSpanMS = 0
+	if verdict := ClassifyQualityHold(single, config.MinHoldOutputTokens); !isDumpClass(verdict.Class) {
+		t.Fatalf("single-chunk terminal dump was not caught: %#v", verdict)
 	}
 }

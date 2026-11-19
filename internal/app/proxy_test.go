@@ -1,4 +1,4 @@
-// Proxy integration tests cover source selection, binding, recovery and scale.
+// Proxy tests cover source selection, binding, recovery, scale, failure rotation and resin lifecycle.
 package app
 
 import (
@@ -7,36 +7,38 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
 	appauth "grok-quality-guard/internal/app/auth"
 	appmodel "grok-quality-guard/internal/app/model"
 	proxyapp "grok-quality-guard/internal/app/proxy"
-	statepkg "grok-quality-guard/internal/app/state"
+	appstate "grok-quality-guard/internal/app/state"
 	appconfig "grok-quality-guard/internal/config"
 	proxy "grok-quality-guard/internal/proxy"
-
-	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
-	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
 func BenchmarkProxySourceSelection(b *testing.B) {
 	for _, accounts := range []int{100, 10000, 100000} {
 		b.Run(fmt.Sprint(accounts), func(b *testing.B) {
-			store := statepkg.NewStore("")
-			store.SetStateForTest(statepkg.State{Accounts: make(map[string]*statepkg.AccountState, accounts)})
-			store.UpdateStateForTest(func(state *statepkg.State) {
+			store := appstate.NewStore("")
+			store.SetStateForTest(appstate.State{Accounts: make(map[string]*appstate.AccountState, accounts)})
+			store.UpdateStateForTest(func(state *appstate.State) {
 				for i := 0; i < 10; i++ {
 					state.Proxy.Nodes = append(state.Proxy.Nodes, proxy.Node{ID: fmt.Sprint(i), Name: fmt.Sprint(i), Enabled: true, Revision: 1, ConfigVersion: 1, Endpoint: proxy.Endpoint{Protocol: proxy.ProtocolHTTP, Host: "proxy.example", Port: 8000 + i}})
 				}
 				for i := 0; i < accounts; i++ {
 					id := fmt.Sprint(i)
-					state.Accounts[id] = &statepkg.AccountState{AuthID: id, Proxy: proxy.Binding{SourceID: fmt.Sprint(i % 10), SourceKind: proxy.SourceNode}}
+					state.Accounts[id] = &appstate.AccountState{AuthID: id, Proxy: proxy.Binding{SourceID: fmt.Sprint(i % 10), SourceKind: proxy.SourceNode}}
 				}
 			})
 			store.RebuildProxyIndexesForTest()
@@ -405,7 +407,7 @@ func TestProxyAutoBindRequireHealthyUsesOnlyFreshHealthyNode(t *testing.T) {
 	if _, errCreate := plugin.createProxyNode(proxyapp.NodeInput{URL: "http://u:p@unknown.example:8080"}); errCreate != nil {
 		t.Fatal(errCreate)
 	}
-	if errState := plugin.stateStore().Update(func(state *statepkg.State) error {
+	if errState := plugin.stateStore().Update(func(state *appstate.State) error {
 		for index := range state.Proxy.Nodes {
 			if state.Proxy.Nodes[index].ID == healthy.ID {
 				state.Proxy.Nodes[index].Health = proxy.HealthHealthy
@@ -551,7 +553,7 @@ func TestAccountSummaryDoesNotAdoptExternalProxyAsManaged(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
 	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
 	account := appmodel.Account{ID: "auth-1", Type: "xai", Provider: "xai", Email: "user@example.com"}
-	summary := plugin.accountSummary(account, statepkg.AccountState{AuthID: "auth-1"}, "socks5h://Default.external:secret@resin:2260")
+	summary := plugin.accountSummary(account, appstate.AccountState{AuthID: "auth-1"}, "socks5h://Default.external:secret@resin:2260")
 	if summary.ProxyManaged {
 		t.Fatalf("external proxy was incorrectly adopted as managed: %#v", summary)
 	}
@@ -1101,7 +1103,7 @@ func TestProxyFinalizeFailureRetainsQuotaAndRecoversFromJournal(t *testing.T) {
 	}
 	store.StopFlushTimerForTest()
 	store.SetPathForTest(path)
-	reloaded := statepkg.NewStore(path)
+	reloaded := appstate.NewStore(path)
 	if err := reloaded.Load(plugin.policy, "test"); err != nil {
 		t.Fatal(err)
 	}
@@ -1264,12 +1266,12 @@ func TestAuthProxyMetadataFailuresRemainUnknown(t *testing.T) {
 }
 
 func TestProxyJournalTailRecoveryAndCheckpointProtection(t *testing.T) {
-	store := statepkg.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	store := appstate.NewStore(filepath.Join(t.TempDir(), "state.json"))
 	if err := store.Load(appconfig.PolicyFromConfig(appconfig.DefaultConfig()), "test"); err != nil {
 		t.Fatal(err)
 	}
 	op := proxy.Operation{ID: "prepared", AuthID: "auth", Action: "proxy_bind", Status: "prepared", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
-	if err := store.CommitProxy(statepkg.ProxyCommit{Operation: &op}); err != nil {
+	if err := store.CommitProxy(appstate.ProxyCommit{Operation: &op}); err != nil {
 		t.Fatal(err)
 	}
 	store.StopFlushTimerForTest()
@@ -1282,7 +1284,7 @@ func TestProxyJournalTailRecoveryAndCheckpointProtection(t *testing.T) {
 		t.Fatal(err)
 	}
 	file.Close()
-	reloaded := statepkg.NewStore(store.Path())
+	reloaded := appstate.NewStore(store.Path())
 	if err := reloaded.Load(appconfig.PolicyFromConfig(appconfig.DefaultConfig()), "test"); err != nil {
 		t.Fatal(err)
 	}
@@ -1296,17 +1298,17 @@ func TestProxyJournalTailRecoveryAndCheckpointProtection(t *testing.T) {
 	if err := os.Remove(store.Path()); err != nil {
 		t.Fatal(err)
 	}
-	if err := statepkg.NewStore(store.Path()).Load(appconfig.PolicyFromConfig(appconfig.DefaultConfig()), "test"); err == nil {
+	if err := appstate.NewStore(store.Path()).Load(appconfig.PolicyFromConfig(appconfig.DefaultConfig()), "test"); err == nil {
 		t.Fatal("missing base checkpoint silently discarded configuration")
 	}
 }
 
 func TestProxyHistoryGCKeepsReferencedVersionsAndOrder(t *testing.T) {
-	state := statepkg.State{Accounts: map[string]*statepkg.AccountState{"auth": {Proxy: proxy.Binding{SourceID: "template", SourceRevision: 1}}}, Proxy: proxy.ProxyState{TemplateVersions: []proxy.Template{{ID: "template", Revision: 1}, {ID: "template", Revision: 2}}}}
+	state := appstate.State{Accounts: map[string]*appstate.AccountState{"auth": {Proxy: proxy.Binding{SourceID: "template", SourceRevision: 1}}}, Proxy: proxy.ProxyState{TemplateVersions: []proxy.Template{{ID: "template", Revision: 1}, {ID: "template", Revision: 2}}}}
 	for i := 0; i < 105; i++ {
 		state.Proxy.Changes = append(state.Proxy.Changes, proxy.SourceChange{ID: fmt.Sprint(i), Status: "succeeded"})
 	}
-	statepkg.GCProxyHistory(&state)
+	appstate.GCProxyHistory(&state)
 	if len(state.Proxy.TemplateVersions) != 1 || state.Proxy.TemplateVersions[0].Revision != 1 {
 		t.Fatal("referenced template version was collected")
 	}
@@ -1316,19 +1318,19 @@ func TestProxyHistoryGCKeepsReferencedVersionsAndOrder(t *testing.T) {
 }
 
 func TestProxyChangeProgressTracksCommittedItems(t *testing.T) {
-	store := statepkg.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	store := appstate.NewStore(filepath.Join(t.TempDir(), "state.json"))
 	if err := store.Load(appconfig.PolicyFromConfig(appconfig.DefaultConfig()), "test"); err != nil {
 		t.Fatal(err)
 	}
 	defer store.Flush()
-	if err := store.Update(func(state *statepkg.State) error {
+	if err := store.Update(func(state *appstate.State) error {
 		state.Proxy.Changes = []proxy.SourceChange{{ID: "progress", Status: "running", Counts: proxy.ChangeCounts{Total: 2, Pending: 2}, Items: []proxy.ChangeItem{{AuthID: "one", Status: "pending"}, {AuthID: "two", Status: "pending"}}}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 	item := proxy.ChangeItem{AuthID: "one", Status: "succeeded"}
-	if err := store.CommitProxy(statepkg.ProxyCommit{ChangeID: "progress", ChangeItem: &item}); err != nil {
+	if err := store.CommitProxy(appstate.ProxyCommit{ChangeID: "progress", ChangeItem: &item}); err != nil {
 		t.Fatal(err)
 	}
 	change, _ := store.ProxyChange("progress")
@@ -1473,5 +1475,433 @@ func TestProxyImportRecognizesHostPortAtCredentialsFormat(t *testing.T) {
 	endpoint := state.Proxy.Nodes[0].Endpoint
 	if endpoint.Host != "proxy.example" || endpoint.Port != 8080 || endpoint.Username != "u@x" || endpoint.Password != "p%3A@" {
 		t.Fatalf("unexpected imported endpoint: %#v", endpoint)
+	}
+}
+
+// Failure rotation.
+
+func TestProbeProxyErrorsRotateManagedProxyAtThreshold(t *testing.T) {
+	oldProxy := "socks5h://Default.grok-alice-old1:proxy-secret@resin:2260"
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{"proxy_url": oldProxy})
+	host := newMockHostCall(entries, auths)
+	host.scriptStreamStatus("auth-1", http.StatusProxyAuthRequired)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.AutoAction = "cooldown_only"
+		cfg.Proxy.AutoRotateAfterQualityFailure = true
+	})
+	seedResinBinding(t, plugin, "grok-alice-old1", 0)
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if errProbe := plugin.ProbeAccount(context.Background(), "auth-1", true, ""); errProbe != nil {
+			t.Fatal(errProbe)
+		}
+	}
+
+	saved, errDecode := rawAuthToMap(host.auths["auth-1"])
+	if errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	rotatedProxy := appauth.RawString(saved, "proxy_url")
+	if rotatedProxy == "" || rotatedProxy == oldProxy {
+		t.Fatalf("probe did not rotate the managed proxy: %q", rotatedProxy)
+	}
+	account, okAccount := plugin.stateAccount("auth-1")
+	if !okAccount || account.State != appstate.StateUnknown || account.ErrorStrikes != 0 {
+		t.Fatalf("rotation did not clear proxy error strikes: %#v", account)
+	}
+	rotations := 0
+	disables := 0
+	recoveries := 0
+	for _, event := range plugin.stateStore().Snapshot().Events {
+		switch event.Action {
+		case "proxy_rotate":
+			rotations++
+		case "guard_disable":
+			disables++
+		case "proxy_error_rotation":
+			recoveries++
+		}
+	}
+	if rotations != 1 || disables != 0 || recoveries != 1 {
+		t.Fatalf("unexpected events: rotations=%d disables=%d recoveries=%d", rotations, disables, recoveries)
+	}
+	if len(host.modelCalls) != 2 {
+		t.Fatalf("probe used %d upstream calls, want 2", len(host.modelCalls))
+	}
+}
+func TestProbeProxyErrorsKeepCooldownWhenAutoRotateDisabled(t *testing.T) {
+	oldProxy := "socks5h://Default.grok-alice-old1:proxy-secret@resin:2260"
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{"proxy_url": oldProxy})
+	host := newMockHostCall(entries, auths)
+	host.scriptStreamStatus("auth-1", http.StatusProxyAuthRequired)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.AutoAction = "cooldown_only"
+		cfg.Proxy.AutoRotateAfterQualityFailure = false
+	})
+	seedResinBinding(t, plugin, "grok-alice-old1", 0)
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if errProbe := plugin.ProbeAccount(context.Background(), "auth-1", true, ""); errProbe != nil {
+			t.Fatal(errProbe)
+		}
+	}
+
+	account, okAccount := plugin.stateAccount("auth-1")
+	if !okAccount || account.State != appstate.StateCooling || account.ErrorStrikes != 2 {
+		t.Fatalf("disabled auto-rotation did not keep the cooldown fallback: %#v", account)
+	}
+	for _, event := range plugin.stateStore().Snapshot().Events {
+		if event.Action == "proxy_rotate" || event.Action == "proxy_error_rotation" {
+			t.Fatalf("disabled auto-rotation still rotated the proxy: %#v", event)
+		}
+	}
+	if len(host.saves) != 1 {
+		t.Fatalf("cooldown fallback saved auth %d times, want 1", len(host.saves))
+	}
+}
+
+func TestTransparentProxyErrorRotatesManagedProxyAtThreshold(t *testing.T) {
+	oldProxy := "socks5h://Default.grok-alice-old1:proxy-secret@resin:2260"
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{"proxy_url": oldProxy})
+	host := newMockHostCall(entries, auths)
+	host.scriptStreamStatus("auth-1", http.StatusProxyAuthRequired)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.AutoAction = "cooldown_only"
+		cfg.Proxy.AutoRotateAfterQualityFailure = true
+	})
+	seedResinBinding(t, plugin, "grok-alice-old1", 0)
+
+	plugin.runTransparentStreamBridge(context.Background(), streamRequestForTest(), "plugin-stream-proxy-rotation-1")
+	account, okAccount := plugin.stateAccount("auth-1")
+	if !okAccount || account.State != appstate.StateUnknown || account.ErrorStrikes != 1 {
+		t.Fatalf("first proxy failure should stay selectable: %#v", account)
+	}
+	if len(host.modelCalls) != 1 {
+		t.Fatalf("first transparent request used %d attempts, want 1", len(host.modelCalls))
+	}
+
+	plugin.runTransparentStreamBridge(context.Background(), streamRequestForTest(), "plugin-stream-proxy-rotation-2")
+	if len(host.modelCalls) != 3 {
+		t.Fatalf("two transparent requests used %d attempts, want 3 with one rotation retry", len(host.modelCalls))
+	}
+	if host.modelCalls[1].ProxyURL == host.modelCalls[2].ProxyURL {
+		t.Fatalf("retry reused the failed proxy: %#v", host.modelCalls)
+	}
+	if host.modelCalls[1].AuthID != "auth-1" || host.modelCalls[2].AuthID != "auth-1" {
+		t.Fatalf("retry switched auth instead of retrying the rotated proxy: %#v", host.modelCalls)
+	}
+	rotations := 0
+	for _, event := range plugin.stateStore().Snapshot().Events {
+		if event.Action == "proxy_rotate" {
+			rotations++
+		}
+	}
+	if rotations != 1 {
+		t.Fatalf("transparent proxy failures rotated %d times, want 1", rotations)
+	}
+}
+
+func TestProbeTransportErrorsRotateManagedProxyAtThreshold(t *testing.T) {
+	oldProxy := "socks5h://Default.grok-alice-old1:proxy-secret@resin:2260"
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{"proxy_url": oldProxy})
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.AutoAction = "cooldown_only"
+		cfg.Proxy.AutoRotateAfterQualityFailure = true
+	})
+	seedResinBinding(t, plugin, "grok-alice-old1", 0)
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if errProbe := plugin.ProbeAccount(context.Background(), "auth-1", true, ""); errProbe != nil {
+			t.Fatal(errProbe)
+		}
+	}
+
+	saved, errDecode := rawAuthToMap(host.auths["auth-1"])
+	if errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	if rotated := appauth.RawString(saved, "proxy_url"); rotated == "" || rotated == oldProxy {
+		t.Fatalf("probe transport errors did not rotate the managed proxy: %q", rotated)
+	}
+	account, okAccount := plugin.stateAccount("auth-1")
+	if !okAccount || account.State != appstate.StateUnknown || account.ErrorStrikes != 0 {
+		t.Fatalf("transport error rotation did not clear strikes: %#v", account)
+	}
+	rotations := 0
+	for _, event := range plugin.stateStore().Snapshot().Events {
+		if event.Action == "proxy_rotate" {
+			rotations++
+		}
+	}
+	if rotations != 1 {
+		t.Fatalf("transport errors rotated %d times, want 1", rotations)
+	}
+}
+
+func TestTransparentProxyFailureSwitchesAccountBeforeAsyncRotation(t *testing.T) {
+	oldProxy := "socks5h://Default.grok-alice-old1:proxy-secret@resin:2260"
+	entries1, auths1 := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{"proxy_url": oldProxy})
+	entries2, auths2 := singleGrokAuth(t, "auth-2", "[EMAIL]", nil)
+	entries1[0].Priority = 2
+	entries2[0].Priority = 1
+	auths := make(map[string]json.RawMessage, len(auths1)+len(auths2))
+	for key, value := range auths1 {
+		auths[key] = value
+	}
+	for key, value := range auths2 {
+		auths[key] = value
+	}
+	host := newMockHostCall(append(entries1, entries2...), auths)
+	host.scriptStreamStatus("auth-1", http.StatusProxyAuthRequired)
+	host.scriptStream("auth-2", goodStreamScript()...)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.AutoAction = "cooldown_only"
+		cfg.Proxy.AutoRotateAfterQualityFailure = true
+	})
+	seedResinBinding(t, plugin, "grok-alice-old1", 0)
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		account := plugin.ensureStateAccount(state, "auth-1")
+		account.ErrorStrikes = 1
+		account.State = appstate.StateUnknown
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+
+	plugin.runTransparentStreamBridge(context.Background(), streamRequestForTest(), "plugin-stream-account-first")
+	plugin.taskMgr.Wait()
+
+	if len(host.modelCalls) != 2 {
+		t.Fatalf("request used %d upstream calls, want auth switch without same-auth retry", len(host.modelCalls))
+	}
+	if host.modelCalls[0].AuthID != "auth-1" || host.modelCalls[1].AuthID != "auth-2" {
+		t.Fatalf("proxy failure did not switch account first: %#v", host.modelCalls)
+	}
+	saved, errDecode := rawAuthToMap(host.auths["auth-1"])
+	if errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	if rotated := appauth.RawString(saved, "proxy_url"); rotated == "" || rotated == oldProxy {
+		t.Fatalf("async task did not rotate the managed proxy: %q", rotated)
+	}
+	if appauth.Disabled(saved) {
+		t.Fatal("async rotation left the first auth disabled")
+	}
+	if len(host.saves) != 1 {
+		t.Fatalf("auth switch path saved auth %d times, want only the async rotation save", len(host.saves))
+	}
+	account, okAccount := plugin.stateAccount("auth-1")
+	if !okAccount || account.State != appstate.StateUnknown || account.ErrorStrikes != 0 {
+		t.Fatalf("async rotation did not restore the first auth: %#v", account)
+	}
+	rotations := 0
+	for _, event := range plugin.stateStore().Snapshot().Events {
+		if event.Action == "proxy_rotate" {
+			rotations++
+		}
+		if event.Action == "guard_disable" {
+			t.Fatalf("auth switch path synchronously disabled the failed account: %#v", event)
+		}
+	}
+	if rotations != 1 {
+		t.Fatalf("async rotation count = %d, want 1", rotations)
+	}
+}
+
+// Resin source lifecycle.
+
+func TestResinSourcesUseTemplateLifecycleAndSupportMultipleEntries(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "alice@example.com", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+
+	create := func(name, format string, placeholders []proxy.Placeholder) map[string]any {
+		t.Helper()
+		response := actionManagementForTest(t, plugin, "proxy.sources.create", map[string]any{
+			"kind": "resin",
+			"source": map[string]any{
+				"name": name, "enabled": true, "local_only": true,
+				"account_format": format, "placeholders": placeholders,
+			},
+		})
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("create %s status=%d body=%s", name, response.StatusCode, response.Body)
+		}
+		var envelope struct {
+			Data map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal(response.Body, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		return envelope.Data
+	}
+
+	first := create("Resin A", "xai-{account}-{region}", []proxy.Placeholder{{
+		Name: "region", Kind: proxy.PlaceholderEnum, Enum: &proxy.EnumSpec{Separator: ",", Input: "us,jp"},
+	}})
+	second := create("Resin B", "svc-{account}-{suffix}", []proxy.Placeholder{{
+		Name: "suffix", Kind: proxy.PlaceholderRandom, Random: &proxy.RandomSpec{Length: 6},
+	}})
+	if first["id"] == "" || second["id"] == "" || first["id"] == second["id"] {
+		t.Fatalf("resin sources did not receive stable unique IDs: first=%#v second=%#v", first, second)
+	}
+	if first["kind"] != "resin" || second["kind"] != "resin" || first["local_only"] != true {
+		t.Fatalf("unexpected resin source views: first=%#v second=%#v", first, second)
+	}
+
+	list := actionManagementForTest(t, plugin, "proxy.sources.list", map[string]any{"kind": "resin"})
+	if list.StatusCode != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", list.StatusCode, list.Body)
+	}
+	var listed struct {
+		Data struct {
+			Items []map[string]any `json:"items"`
+			Total int              `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(list.Body, &listed); err != nil {
+		t.Fatal(err)
+	}
+	if listed.Data.Total != 2 || len(listed.Data.Items) != 2 {
+		t.Fatalf("expected two Resin sources, got total=%d items=%d", listed.Data.Total, len(listed.Data.Items))
+	}
+
+	update := actionManagementForTest(t, plugin, "proxy.sources.update", map[string]any{
+		"kind": "resin",
+		"source": map[string]any{
+			"id": first["id"], "name": "Resin A", "enabled": true, "local_only": true,
+			"account_format": "xai-{account}-{plan}-{suffix}",
+			"placeholders": []proxy.Placeholder{
+				{Name: "plan", Kind: proxy.PlaceholderEnum, Enum: &proxy.EnumSpec{Separator: ",", Input: "basic,pro"}},
+				{Name: "suffix", Kind: proxy.PlaceholderRandom, Random: &proxy.RandomSpec{Length: 4}},
+			},
+			"expected_version": first["config_version"],
+		},
+	})
+	if update.StatusCode != http.StatusOK {
+		t.Fatalf("update status=%d body=%s", update.StatusCode, update.Body)
+	}
+
+	remove := actionManagementForTest(t, plugin, "proxy.sources.delete", map[string]any{"source_id": second["id"], "force": true})
+	if remove.StatusCode != http.StatusOK {
+		t.Fatalf("delete status=%d body=%s", remove.StatusCode, remove.Body)
+	}
+	state := plugin.stateStore().Snapshot()
+	if len(state.Proxy.ResinSources) != 1 {
+		t.Fatalf("resin source map was not cleaned up: %#v", state.Proxy.ResinSources)
+	}
+	resinTemplates := 0
+	for _, template := range state.Proxy.Templates {
+		if template.Kind == proxy.TemplateResin {
+			resinTemplates++
+			if template.ID != first["id"] {
+				t.Fatalf("unexpected remaining resin template: %#v", template)
+			}
+			if template.UsernamePattern != "xai-{account}-{plan}-{suffix}" {
+				t.Fatalf("updated account format was not stored in the template: %q", template.UsernamePattern)
+			}
+		}
+	}
+	if resinTemplates != 1 {
+		t.Fatalf("resin template count=%d, want 1", resinTemplates)
+	}
+}
+
+// Resin lease removal.
+
+func TestCatalogRemovalQueuesResinLeaseDeleteFromSnapshot(t *testing.T) {
+	const platformID = "11111111-1111-1111-1111-111111111111"
+	var deleted atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodDelete {
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if request.Header.Get("Authorization") != "Bearer admin-token" {
+			writer.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if request.URL.Path != "/api/v1/platforms/"+platformID+"/leases/grok-alice-old1" {
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
+		deleted.Add(1)
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	snapshot := proxy.ResinSnapshot{AdminURL: server.URL, PlatformID: platformID, AdminToken: "admin-token"}
+	snapshotID, errSnapshot := plugin.stateStore().EnsureResinSnapshot(snapshot)
+	if errSnapshot != nil {
+		t.Fatal(errSnapshot)
+	}
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		account := plugin.ensureStateAccount(state, "auth-1")
+		account.Proxy = proxy.Binding{
+			AuthID:         "auth-1",
+			SourceID:       "resin-test",
+			SourceKind:     proxy.SourceResin,
+			SourceRevision: 1,
+			Generation:     1,
+			Lease: &proxy.LeaseRef{
+				Provider: "resin", PlatformID: platformID, Account: "grok-alice-old1", SnapshotID: snapshotID,
+			},
+		}
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+
+	host.mu.Lock()
+	host.entries = nil
+	host.mu.Unlock()
+	if errRefresh := plugin.RefreshCatalog(context.Background()); errRefresh != nil {
+		t.Fatal(errRefresh)
+	}
+	state := plugin.stateStore().Snapshot()
+	account, exists := state.Accounts["auth-1"]
+	if !exists || account.CatalogMissingSince.IsZero() {
+		t.Fatalf("temporary catalog omission did not retain the managed auth: %#v", account)
+	}
+	if len(state.ResinLeaseDeletes) != 0 {
+		t.Fatalf("temporary catalog omission queued lease deletes: %#v", state.ResinLeaseDeletes)
+	}
+
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		state.Accounts["auth-1"].CatalogMissingSince = time.Now().UTC().Add(-guardCatalogMissingRetention - time.Minute)
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if errRefresh := plugin.RefreshCatalog(context.Background()); errRefresh != nil {
+		t.Fatal(errRefresh)
+	}
+	state = plugin.stateStore().Snapshot()
+	if _, exists := state.Accounts["auth-1"]; exists {
+		t.Fatalf("removed auth remained in state after retention: %#v", state.Accounts["auth-1"])
+	}
+	if len(state.ResinLeaseDeletes) != 1 {
+		t.Fatalf("queued lease deletes = %d, want 1: %#v", len(state.ResinLeaseDeletes), state.ResinLeaseDeletes)
+	}
+	job := state.ResinLeaseDeletes[0]
+	if job.AuthID != "auth-1" || job.Account != "grok-alice-old1" || job.AdminURL != server.URL || job.PlatformID != platformID || job.SnapshotID != snapshotID {
+		t.Fatalf("unexpected lease delete job: %#v", job)
+	}
+	if deleted.Load() != 0 {
+		t.Fatal("catalog refresh deleted the lease synchronously")
+	}
+	if processed := plugin.proxySvc.ProcessDueResinLeaseDeletes(context.Background(), time.Now().UTC()); processed != 1 {
+		t.Fatalf("processed lease deletes = %d, want 1", processed)
+	}
+	if deleted.Load() != 1 {
+		t.Fatalf("resin delete calls = %d, want 1", deleted.Load())
+	}
+	if jobs := plugin.stateStore().Snapshot().ResinLeaseDeletes; len(jobs) != 0 {
+		t.Fatalf("successful lease delete remained queued: %#v", jobs)
 	}
 }
