@@ -104,6 +104,19 @@ func TestProbeQueueConfigDefaultsAndBounds(t *testing.T) {
 	if cfg.Probe.ScanInterval.Duration != defaultProbeScanInterval {
 		t.Fatalf("probe.scan_interval = %s, want %s", cfg.Probe.ScanInterval.Duration, defaultProbeScanInterval)
 	}
+	if cfg.Probe.HealthyIntervalHours != defaultProbeHealthyIntervalHours {
+		t.Fatalf("probe.healthy_interval_hours = %d, want %d", cfg.Probe.HealthyIntervalHours, defaultProbeHealthyIntervalHours)
+	}
+	configured, errConfigured := Decode([]byte("probe:\n  healthy_interval_hours: 6\n"))
+	if errConfigured != nil {
+		t.Fatalf("Decode() configured healthy interval error = %v", errConfigured)
+	}
+	if configured.Probe.HealthyIntervalHours != 6 {
+		t.Fatalf("probe.healthy_interval_hours = %d, want 6", configured.Probe.HealthyIntervalHours)
+	}
+	if _, errNegative := Decode([]byte("probe:\n  healthy_interval_hours: -1\n")); errNegative == nil {
+		t.Fatal("expected negative probe healthy interval error")
+	}
 
 	tooLarge := DefaultConfig()
 	tooLarge.Probe.QueueSize = maxProbeQueueSize + 1

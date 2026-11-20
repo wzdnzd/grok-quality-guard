@@ -4862,8 +4862,9 @@
                       <option value="fail_closed">ui.fail_closed</option>
                       <option value="fail_open">ui.fail_open</option>
                     </select></div>
-                  <label class="check-card compact" title="ui.do_not_periodically_probe_healthy_accounts"><input id="p_probe_recovery_only"
-                      type="checkbox"><span class="check-copy"><span class="check-title">ui.recovery_probes_only</span></span></label>
+                  <div class="field"><label for="p_probe_healthy_interval_hours">ui.healthy_account_probe_interval</label><input
+                      id="p_probe_healthy_interval_hours" type="number" min="0" step="1" placeholder="0"><span
+                      class="hint">ui.hours_zero_disables_active_healthy_probes</span></div>
                   <div class="field"><label for="p_probe_model">ui.probe_model</label><input id="p_probe_model" type="text"
                       autocomplete="off" placeholder="grok-4.5"></div>
                   <div class="field"><label for="p_probe_timeout">ui.probe_timeout</label><input id="p_probe_timeout" type="text"
@@ -9499,6 +9500,7 @@
     function setChecked(id, value) { const el = document.getElementById(id); if (el) el.checked = Boolean(value); }
     function valueOf(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
     function numberValue(id, fallback) { const parsed = Number(valueOf(id)); return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback; }
+    function nonNegativeIntegerValue(id, fallback) { const text = valueOf(id); if (!text) return fallback; const parsed = Number(text); return Number.isInteger(parsed) && parsed >= 0 ? parsed : NaN; }
     function signedNumberValue(id, fallback) { const raw = valueOf(id); if (raw === '') return fallback; const parsed = Number(raw); return Number.isFinite(parsed) ? parsed : fallback; }
     function populatePolicyForm() {
       if (isFormDirty('policyForm')) return;
@@ -9545,7 +9547,7 @@
       setValue('p_empty_cooldown', quality.empty_stream_cooldown || '15m');
       setValue('p_max_attempts', quality.max_attempts || 6);
       setValue('p_on_exhausted', quality.on_exhausted || 'fail_closed');
-      setChecked('p_probe_recovery_only', probe.recovery_only !== false);
+      setValue('p_probe_healthy_interval_hours', probe.healthy_interval_hours ?? 0);
       setValue('p_probe_model', probe.model || 'grok-4.5');
       setValue('p_probe_timeout', probe.timeout || '90s');
       setValue('p_probe_max_output', probe.max_output_tokens || 768);
@@ -9601,7 +9603,7 @@
       policy.quality.max_attempts = numberValue('p_max_attempts', 6);
       policy.quality.on_exhausted = valueOf('p_on_exhausted');
       policy.probe = policy.probe || {};
-      policy.probe.recovery_only = document.getElementById('p_probe_recovery_only').checked;
+      policy.probe.healthy_interval_hours = nonNegativeIntegerValue('p_probe_healthy_interval_hours', 0);
       policy.probe.model = valueOf('p_probe_model');
       policy.probe.timeout = valueOf('p_probe_timeout');
       policy.probe.max_output_tokens = numberValue('p_probe_max_output', 768);
@@ -9620,6 +9622,7 @@
       const nextStateFile = valueOf('p_state_file');
       if (!(policy.quality.soft_tps < policy.quality.hard_tps)) { toast(i18n.t("ui.soft_tps_below_hard"), 'error'); return; }
       if (!(policy.probe.queue_size >= 1 && policy.probe.queue_size <= 1000000)) { toast(i18n.t("ui.queue_capacity_range"), 'error'); return; }
+      if (!Number.isInteger(policy.probe.healthy_interval_hours) || policy.probe.healthy_interval_hours < 0) { toast(i18n.t("ui.healthy_probe_interval_range"), 'error'); return; }
       if (!policy.routing.session_affinity_ttl) { toast(i18n.t("ui.session_ttl_required"), 'error'); return; }
       if (!nextStateFile) { toast(i18n.t("ui.state_file_required"), 'error'); return; }
       const taskHistory = policy.task_history || {};

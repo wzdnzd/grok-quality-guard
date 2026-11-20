@@ -242,13 +242,13 @@ plugins:
         on_exhausted: "fail_closed"
 
       probe:
-        recovery_only: true
         model: "grok-4.5"
         timeout: "90s"
         max_output_tokens: 768
         concurrency: 1
         queue_size: 10000
         scan_interval: "15s"
+        healthy_interval_hours: 0
         unknown_delay: "30s"
         unknown_jitter: "30s"
         suspect_backoff: "15m"
@@ -310,7 +310,7 @@ plugins:
 - `soft_cross_verify=true` 或 `thinking_cross_verify=true`：被动样本达到阈值后先启动后台主动探测，由探测结果确认后再处置；默认关闭
 - 任一健康样本会清零 `soft_strikes`、`error_strikes`、`thinking_strikes`，与旧插件的连续计数语义一致
 
-主动探测调度器在插件启动后立即建立并执行第一次扫描，不再等待状态修复完成；之后按 `probe.scan_interval` 定时扫描（默认 `15s`，允许 `1s..24h`），先过滤出当前到期的非健康账号，再放入有界队列。等待中和执行中的账号优先按 auth 文件里的 OAuth `sub`/`subject` 去重，缺失时才回退到宿主 auth ID，因此同一 OAuth 账号不会重复入队。`probe.queue_size` 默认 `10000`，最大 `1000000`；`probe.concurrency` 控制探测以及批量账号操作实际使用的 worker 数。`probe.unknown_jitter` 为 `unknown` 账号的首次探测增加稳定抖动，避免大量账号在同一时刻到期。
+主动探测调度器在插件启动后立即建立并执行第一次扫描，不再等待状态修复完成；之后按 `probe.scan_interval` 定时扫描（默认 `15s`，允许 `1s..24h`），先过滤出当前到期账号，再放入有界队列。`probe.healthy_interval_hours` 为健康账号的周期探测间隔，单位小时，默认 `0`（不主动探测）；配置为大于 `0` 的整数后，健康账号距上次主动探测达到该间隔时也会进入同一队列，尚无 `last_probe_at` 的健康账号在启用后视为到期。等待中和执行中的账号优先按 auth 文件里的 OAuth `sub`/`subject` 去重，缺失时才回退到宿主 auth ID，因此同一 OAuth 账号不会重复入队。`probe.queue_size` 默认 `10000`，最大 `1000000`；`probe.concurrency` 控制探测以及批量账号操作实际使用的 worker 数。`probe.unknown_jitter` 为 `unknown` 账号的首次探测增加稳定抖动，避免大量账号在同一时刻到期。
 
 账号页显示的“待检测”是当前 Catalog 中状态为 `unknown` 的账号数，不是常驻队列的 `waiting`。只有按 `unknown_delay`、`unknown_jitter`、冷却时间和退避时间计算后已到期的账号才会进入队列；首次批量导入后通常会有一个逐步到期的窗口。
 

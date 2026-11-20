@@ -1581,9 +1581,9 @@ test('Routing affinity cards share a row and parameter hints explain their effec
   assert.match(html, /:password@proxy\.example:1080/);
   assert.doesNotMatch(html, /:密码@proxy\.example:1080/);
   assert.match(html, /\.check-card\.compact\s*\{[^}]*min-height: 33px;[^}]*margin-top: 20px;/s);
-  assert.match(html, /class="check-card compact" title="ui.do_not_periodically_probe_healthy_accounts"><input id="p_probe_recovery_only"/);
+  assert.match(html, /id="p_probe_healthy_interval_hours" type="number" min="0" step="1"/);
+  assert.match(html, /id="p_probe_healthy_interval_hours"[\s\S]*ui\.hours_zero_disables_active_healthy_probes/);
   assert.match(html, /id="p_probe_scan_interval"/);
-  assert.doesNotMatch(html, /class="check-desc">ui.do_not_periodically_probe_healthy_accounts/);
   assert.match(html, /ui.bind_nodes_templates_and_proxy_services_in_one_place/);
   assert.match(html, /<th>ui.endpoint<\/th>/);
   assert.match(html, /<option value="resin">Resin<\/option>/);
@@ -2055,6 +2055,22 @@ test('Task history settings explain defaults and convert MiB to bytes', () => {
   assert.equal(policy.task_history.max_items_per_task, 20000);
 });
 
+test('Healthy account probe interval defaults to zero and round-trips configured hours', () => {
+  const { dashboard: ui, get } = harness();
+  assert.match(html, /id="p_probe_healthy_interval_hours"/);
+  ui.state.policy = { probe: { healthy_interval_hours: 6 } };
+  ui.populatePolicyForm();
+  assert.equal(get('p_probe_healthy_interval_hours').value, '6');
+  ui.state.policy.probe.healthy_interval_hours = 0;
+  ui.populatePolicyForm();
+  assert.equal(get('p_probe_healthy_interval_hours').value, '0');
+  get('p_probe_healthy_interval_hours').value = '0';
+  assert.equal(ui.collectPolicy().probe.healthy_interval_hours, 0);
+  get('p_probe_healthy_interval_hours').value = '12';
+  assert.equal(ui.collectPolicy().probe.healthy_interval_hours, 12);
+  get('p_probe_healthy_interval_hours').value = '1.5';
+  assert.ok(Number.isNaN(ui.collectPolicy().probe.healthy_interval_hours));
+});
 test('Resident queue details expand inline and close without opening task details', async () => {
   const { dashboard: ui, get, mock } = harness();
   mock('api', async () => ({ queue_id: 'auto_bind', active: [], waiting: { items: [], total: 0, page: 1, page_size: 20 } }));

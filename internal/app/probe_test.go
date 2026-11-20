@@ -652,6 +652,67 @@ func TestProbeDueUnknownRespectsBackoff(t *testing.T) {
 	}
 }
 
+func TestProbeDueHealthyUsesConfiguredInterval(t *testing.T) {
+	now := time.Now().UTC()
+	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
+	account := &appstate.AccountState{
+		State:       appstate.StateHealthy,
+		LastProbeAt: now.Add(-5 * time.Hour),
+	}
+	if probeDueForAccount(account, true, "auth-1", policy, now) {
+		t.Fatal("healthy account must not be due while healthy interval is disabled")
+	}
+
+	policy.Probe.HealthyIntervalHours = 6
+	if probeDueForAccount(account, true, "auth-1", policy, now) {
+		t.Fatal("healthy account was due before the configured interval elapsed")
+	}
+	account.LastProbeAt = now.Add(-7 * time.Hour)
+	if !probeDueForAccount(account, true, "auth-1", policy, now) {
+		t.Fatal("healthy account was not due after the configured interval elapsed")
+	}
+	account.ProbeBackoffUntil = now.Add(time.Hour)
+	if probeDueForAccount(account, true, "auth-1", policy, now) {
+		t.Fatal("healthy account ignored an active probe backoff")
+	}
+
+	account.LastProbeAt = time.Time{}
+	account.ProbeBackoffUntil = time.Time{}
+	if !probeDueForAccount(account, true, "auth-1", policy, now) {
+		t.Fatal("healthy account without a prior probe was not due")
+	}
+}
+
+func TestProbeSchedulerIncludesHealthyAccountsAfterConfiguredInterval(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.Probe.HealthyIntervalHours = 6
+	})
+	ageAccountsForProbe(t, plugin)
+	now := time.Now().UTC()
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		first := plugin.ensureStateAccount(state, "auth-1")
+		first.State = appstate.StateHealthy
+		first.LastProbeAt = now.Add(-7 * time.Hour)
+		second := plugin.ensureStateAccount(state, "auth-2")
+		second.State = appstate.StateHealthy
+		second.LastProbeAt = now.Add(-time.Hour)
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+
+	scheduler := newProbeScheduler(plugin, context.Background())
+	plugin.mu.RLock()
+	policy := plugin.policy
+	plugin.mu.RUnlock()
+	added := scheduler.enqueueDue(plugin.CatalogSnapshot(), plugin.stateStore().Snapshot(), policy, now)
+	if added != 1 || len(scheduler.queueEntries()) != 1 || scheduler.queueEntries()[0] != "auth-1" {
+		t.Fatalf("queued probes = %#v, added = %d, want only overdue auth-1", scheduler.queueEntries(), added)
+	}
+}
+
 func TestProbeSchedulerUsesCatalogFirstSeenForSparseAccounts(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	host := newMockHostCall(entries, auths)

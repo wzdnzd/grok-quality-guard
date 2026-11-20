@@ -428,3 +428,27 @@ func TestRawPolicyTaskHistoryProbeSkipsLargeUnrelatedValues(t *testing.T) {
 		t.Fatal("malformed state unexpectedly reported task history")
 	}
 }
+
+func TestProbeStatesForIDsIncludesLastProbeAt(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "state.json"))
+	policy := config.PolicyFromConfig(config.DefaultConfig())
+	if errLoad := store.Load(policy, "revision-1"); errLoad != nil {
+		t.Fatal(errLoad)
+	}
+	lastProbe := time.Now().UTC().Add(-6 * time.Hour)
+	if errUpdate := store.Update(func(state *State) error {
+		state.Accounts["auth-1"] = &AccountState{
+			AuthID:      "auth-1",
+			State:       StateHealthy,
+			FirstSeenAt: lastProbe.Add(-time.Hour),
+			LastProbeAt: lastProbe,
+		}
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	states := store.ProbeStatesForIDs([]string{"auth-1"})
+	if len(states) != 1 || !states[0].LastProbeAt.Equal(lastProbe) {
+		t.Fatalf("probe projection = %#v, want last probe %s", states, lastProbe)
+	}
+}

@@ -169,6 +169,7 @@ func (s *probeScheduler) enqueueDue(accounts []Account, state State, policy Poli
 			AuthID:            authID,
 			State:             account.State,
 			FirstSeenAt:       account.FirstSeenAt,
+			LastProbeAt:       account.LastProbeAt,
 			CooldownUntil:     account.CooldownUntil,
 			ProbeBackoffUntil: account.ProbeBackoffUntil,
 		}
@@ -457,6 +458,7 @@ func probeDueForAccount(account *AccountState, okState bool, authID string, poli
 		AuthID:            authID,
 		State:             account.State,
 		FirstSeenAt:       account.FirstSeenAt,
+		LastProbeAt:       account.LastProbeAt,
 		CooldownUntil:     account.CooldownUntil,
 		ProbeBackoffUntil: account.ProbeBackoffUntil,
 	}, true, authID, policy, now)
@@ -467,7 +469,19 @@ func probeDueForProjected(account ProbeAccountState, okState bool, authID string
 		return true
 	}
 	switch account.State {
-	case StateHealthy, StateDisabledByGuard, StateExternallyDisabled, StateCredentialInvalid:
+	case StateHealthy:
+		if policy.Probe.HealthyIntervalHours <= 0 {
+			return false
+		}
+		if !account.ProbeBackoffUntil.IsZero() && now.Before(account.ProbeBackoffUntil) {
+			return false
+		}
+		interval := healthyProbeInterval(policy.Probe.HealthyIntervalHours)
+		if account.LastProbeAt.IsZero() {
+			return true
+		}
+		return !now.Before(account.LastProbeAt.Add(interval))
+	case StateDisabledByGuard, StateExternallyDisabled, StateCredentialInvalid:
 		return false
 	case StateCooling, StateQuotaExhausted:
 		if account.CooldownUntil.IsZero() {
@@ -492,6 +506,18 @@ func probeDueForProjected(account ProbeAccountState, okState bool, authID string
 	default:
 		return false
 	}
+}
+
+func healthyProbeInterval(hours int) time.Duration {
+	if hours <= 0 {
+		return 0
+	}
+	const maxDuration = time.Duration(1<<63 - 1)
+	maxHours := int64(maxDuration / time.Hour)
+	if int64(hours) > maxHours {
+		return maxDuration
+	}
+	return time.Duration(hours) * time.Hour
 }
 
 func unknownProbeJitter(authID string, max time.Duration) time.Duration {

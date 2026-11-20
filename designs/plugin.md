@@ -1546,12 +1546,12 @@ QUALITY_OK
 - 新发现账号：`unknown`，延迟 30s 后探测一次
 - `suspect`：15m 后探测一次，失败 backoff 最大 1h
 - `cooling`：冷却到期后探测一次
-- `healthy`：没有周期探测
+- `healthy`：`probe.healthy_interval_hours=0`（默认）时没有周期探测；大于 `0` 时，距上次主动探测达到该小时数后到期
 - 管理员可随时手动触发 force probe
 
 并发：
 
-- 扫描阶段一次性过滤出到期的非健康账号，再放入有界队列
+- 扫描阶段一次性过滤出到期账号，再放入有界队列；健康账号仅在 `probe.healthy_interval_hours` 启用且间隔已到或尚无 `last_probe_at` 时参与周期探测
 - 队列容量由 `probe.queue_size` 控制，默认 10000，最大 1000000
 - 单类探测或批量任务内部只启动与 `probe.concurrency` 相同数量的 worker
 - 同一账号同时最多 1 个 probe
@@ -2025,12 +2025,12 @@ plugins:
         on_exhausted: "fail_closed"
 
       probe:
-        recovery_only: true
         model: "grok-4.5"
         timeout: "90s"
         max_output_tokens: 768
         concurrency: 1
         queue_size: 10000
+        healthy_interval_hours: 0
         unknown_delay: "30s"
         unknown_jitter: "30s"
         suspect_backoff: "15m"
@@ -2119,7 +2119,7 @@ YAML 决定以下部署级字段：
 - `quality.thinking_guard=true`
 - `quality.soft_cross_verify=false`
 - `quality.thinking_cross_verify=false`
-- `probe.recovery_only=true`
+- `probe.healthy_interval_hours=0`
 - `probe.concurrency=1`
 - `proxy.auto_rotate_after_quality_failure=true`
 - `proxy.auto_bind.enabled=false`

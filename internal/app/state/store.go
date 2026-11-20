@@ -134,6 +134,7 @@ type ProbeAccountState struct {
 	AuthID            string
 	State             string
 	FirstSeenAt       time.Time
+	LastProbeAt       time.Time
 	CooldownUntil     time.Time
 	ProbeBackoffUntil time.Time
 }
@@ -753,6 +754,7 @@ func (s *Store) ProbeStatesForIDs(authIDs []string) []ProbeAccountState {
 			AuthID:            authID,
 			State:             account.State,
 			FirstSeenAt:       account.FirstSeenAt,
+			LastProbeAt:       account.LastProbeAt,
 			CooldownUntil:     account.CooldownUntil,
 			ProbeBackoffUntil: account.ProbeBackoffUntil,
 		}

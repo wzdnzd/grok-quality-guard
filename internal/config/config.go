@@ -16,19 +16,20 @@ import (
 )
 
 const (
-	defaultEventsLimit              = 1000
-	defaultProbeQueueSize           = 10000
-	maxProbeQueueSize               = 1000000
-	defaultProbeUnknownJitter       = 30 * time.Second
-	defaultProbeScanInterval        = 15 * time.Second
-	defaultTaskHistoryRetentionDays = 3
-	defaultTaskHistoryMaxRecords    = 500
-	defaultTaskHistoryMaxBytes      = int64(128 << 20)
-	defaultTaskHistoryMaxItems      = 10000
-	maxTaskHistoryRetentionDays     = 365
-	maxTaskHistoryMaxRecords        = 10000
-	maxTaskHistoryMaxBytes          = int64(4 << 30)
-	maxTaskHistoryMaxItems          = 100000
+	defaultEventsLimit               = 1000
+	defaultProbeQueueSize            = 10000
+	maxProbeQueueSize                = 1000000
+	defaultProbeUnknownJitter        = 30 * time.Second
+	defaultProbeScanInterval         = 15 * time.Second
+	defaultProbeHealthyIntervalHours = 0
+	defaultTaskHistoryRetentionDays  = 3
+	defaultTaskHistoryMaxRecords     = 500
+	defaultTaskHistoryMaxBytes       = int64(128 << 20)
+	defaultTaskHistoryMaxItems       = 10000
+	maxTaskHistoryRetentionDays      = 365
+	maxTaskHistoryMaxRecords         = 10000
+	maxTaskHistoryMaxBytes           = int64(4 << 30)
+	maxTaskHistoryMaxItems           = 100000
 )
 
 // Duration accepts YAML and JSON duration strings while keeping a stable text form
@@ -110,19 +111,19 @@ type QualityConfig struct {
 }
 
 type ProbeConfig struct {
-	RecoveryOnly    bool     `yaml:"recovery_only" json:"recovery_only"`
-	Model           string   `yaml:"model" json:"model"`
-	Timeout         Duration `yaml:"timeout" json:"timeout"`
-	MaxOutputTokens int      `yaml:"max_output_tokens" json:"max_output_tokens"`
-	Concurrency     int      `yaml:"concurrency" json:"concurrency"`
-	QueueSize       int      `yaml:"queue_size" json:"queue_size"`
-	ScanInterval    Duration `yaml:"scan_interval" json:"scan_interval"`
-	UnknownDelay    Duration `yaml:"unknown_delay" json:"unknown_delay"`
-	UnknownJitter   Duration `yaml:"unknown_jitter" json:"unknown_jitter"`
-	SuspectBackoff  Duration `yaml:"suspect_backoff" json:"suspect_backoff"`
-	MaxBackoff      Duration `yaml:"max_backoff" json:"max_backoff"`
-	EntryProtocol   string   `yaml:"entry_protocol" json:"entry_protocol"`
-	ExitProtocol    string   `yaml:"exit_protocol" json:"exit_protocol"`
+	Model                string   `yaml:"model" json:"model"`
+	Timeout              Duration `yaml:"timeout" json:"timeout"`
+	MaxOutputTokens      int      `yaml:"max_output_tokens" json:"max_output_tokens"`
+	Concurrency          int      `yaml:"concurrency" json:"concurrency"`
+	QueueSize            int      `yaml:"queue_size" json:"queue_size"`
+	ScanInterval         Duration `yaml:"scan_interval" json:"scan_interval"`
+	HealthyIntervalHours int      `yaml:"healthy_interval_hours" json:"healthy_interval_hours"`
+	UnknownDelay         Duration `yaml:"unknown_delay" json:"unknown_delay"`
+	UnknownJitter        Duration `yaml:"unknown_jitter" json:"unknown_jitter"`
+	SuspectBackoff       Duration `yaml:"suspect_backoff" json:"suspect_backoff"`
+	MaxBackoff           Duration `yaml:"max_backoff" json:"max_backoff"`
+	EntryProtocol        string   `yaml:"entry_protocol" json:"entry_protocol"`
+	ExitProtocol         string   `yaml:"exit_protocol" json:"exit_protocol"`
 }
 
 type RoutingConfig struct {
@@ -226,19 +227,19 @@ func DefaultQualityConfig() QualityConfig {
 
 func DefaultProbeConfig() ProbeConfig {
 	return ProbeConfig{
-		RecoveryOnly:    true,
-		Model:           "grok-4.5",
-		Timeout:         NewDuration(90 * time.Second),
-		MaxOutputTokens: 768,
-		Concurrency:     1,
-		QueueSize:       defaultProbeQueueSize,
-		ScanInterval:    NewDuration(defaultProbeScanInterval),
-		UnknownDelay:    NewDuration(30 * time.Second),
-		UnknownJitter:   NewDuration(defaultProbeUnknownJitter),
-		SuspectBackoff:  NewDuration(15 * time.Minute),
-		MaxBackoff:      NewDuration(time.Hour),
-		EntryProtocol:   "codex",
-		ExitProtocol:    "codex",
+		Model:                "grok-4.5",
+		Timeout:              NewDuration(90 * time.Second),
+		MaxOutputTokens:      768,
+		Concurrency:          1,
+		QueueSize:            defaultProbeQueueSize,
+		ScanInterval:         NewDuration(defaultProbeScanInterval),
+		HealthyIntervalHours: defaultProbeHealthyIntervalHours,
+		UnknownDelay:         NewDuration(30 * time.Second),
+		UnknownJitter:        NewDuration(defaultProbeUnknownJitter),
+		SuspectBackoff:       NewDuration(15 * time.Minute),
+		MaxBackoff:           NewDuration(time.Hour),
+		EntryProtocol:        "codex",
+		ExitProtocol:         "codex",
 	}
 }
 
@@ -498,6 +499,9 @@ func normalizeProbe(p *ProbeConfig) error {
 	}
 	if p.UnknownJitter.Duration < 0 {
 		return fmt.Errorf("probe.unknown_jitter must be >= 0")
+	}
+	if p.HealthyIntervalHours < 0 {
+		return fmt.Errorf("probe.healthy_interval_hours must be >= 0")
 	}
 	if p.SuspectBackoff.Duration <= 0 {
 		p.SuspectBackoff = defaults.SuspectBackoff
