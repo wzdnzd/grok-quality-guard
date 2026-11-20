@@ -200,6 +200,8 @@
   "api.error.unknown_cleanup_action": "Unknown lease cleanup action",
   "api.error.unknown_method": "Unknown method: {method}",
   "api.error.update_policy_invalid": "The template update policy is invalid",
+  "api.error.catalog_loading": "The account directory is still loading. Retry shortly.",
+  "api.error.busy": "The management service is busy. Retry shortly.",
   "api.error.upstream_error": "The upstream service is temporarily unavailable. Try again later",
   "api.error.upstream_stream_error": "The upstream stream failed after output started",
   "api.error.username_invalid": "The proxy username contains invalid characters",

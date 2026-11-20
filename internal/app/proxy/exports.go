@@ -102,8 +102,8 @@ func (s *Service) ApplyTemplateToAccounts(ctx context.Context, template proxy.Te
 func (s *Service) ActionSummary(ctx context.Context) (any, int, error) {
 	return s.actionProxySummary(ctx)
 }
-func (s *Service) ActionSourcesList(params map[string]any) (any, int, error) {
-	return s.actionProxySourcesList(params)
+func (s *Service) ActionSourcesList(ctx context.Context, params map[string]any) (any, int, error) {
+	return s.actionProxySourcesList(ctx, params)
 }
 func (s *Service) ActionSourceGet(params map[string]any) (any, int, error) {
 	return s.actionProxySourceGet(params)

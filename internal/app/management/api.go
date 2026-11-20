@@ -233,6 +233,10 @@ func (s *Service) HandleManagement(request []byte) ([]byte, error) {
 		if status == 0 {
 			status = http.StatusBadRequest
 		}
+		if errors.Is(errAction, context.DeadlineExceeded) || errors.Is(errAction, context.Canceled) {
+			status = http.StatusServiceUnavailable
+			errAction = newAPIActionError("busy", "api.error.busy", status, nil)
+		}
 		code := actionErrorCode(status)
 		messageKey := ""
 		var args map[string]any
@@ -273,15 +277,135 @@ func (s *Service) HandleManagement(request []byte) ([]byte, error) {
 		}
 		detail["code"] = code
 		body, _ := json.Marshal(map[string]any{"ok": false, "error": detail})
-		return okEnvelope(managementResponse{StatusCode: status, Headers: jsonHeadersFor(locale), Body: body})
+		headers := jsonHeadersFor(locale)
+		if code == "catalog_loading" || code == "busy" {
+			headers.Set("Retry-After", "1")
+		}
+		return okEnvelope(managementResponse{StatusCode: status, Headers: headers, Body: body})
 	}
 	if status == 0 {
 		status = http.StatusOK
 	}
 	return okEnvelope(managementResponse{StatusCode: status, Headers: jsonHeadersFor(locale), Body: jsonOK(localizeResponseData(locale, data))})
 }
-func (s *Service) handleAction(ctx context.Context, request action.Request) (any, int, error) {
-	switch strings.ToLower(strings.TrimSpace(request.Action)) {
+
+const heavyActionBudget = 2 * time.Second
+
+func isHeavyManagementAction(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "accounts.list", "proxy.summary", "proxy.bindings.list", "proxy.sources.list", "tasks.center.list":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) acquireHeavyAction() bool {
+	if s == nil || s.heavyGate == nil {
+		return true
+	}
+	select {
+	case s.heavyGate <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) releaseHeavyAction() {
+	if s == nil || s.heavyGate == nil {
+		return
+	}
+	<-s.heavyGate
+}
+
+func (s *Service) heavyFlightKey(ctx context.Context, request action.Request, actionName string) (string, bool) {
+	raw, err := json.Marshal(request.Params)
+	if err != nil {
+		return "", false
+	}
+	return actionName + "\x00" + requestLocaleFromContext(ctx) + "\x00" + string(raw), true
+}
+
+func (s *Service) beginHeavyFlight(key string) (*heavyFlight, bool) {
+	s.heavyMu.Lock()
+	defer s.heavyMu.Unlock()
+	if s.heavyFlights == nil {
+		s.heavyFlights = make(map[string]*heavyFlight)
+	}
+	if flight := s.heavyFlights[key]; flight != nil {
+		return flight, false
+	}
+	flight := &heavyFlight{done: make(chan struct{})}
+	s.heavyFlights[key] = flight
+	return flight, true
+}
+
+func (s *Service) finishHeavyFlight(key string, flight *heavyFlight, data any, status int, err error) {
+	s.heavyMu.Lock()
+	if s.heavyFlights[key] == flight {
+		delete(s.heavyFlights, key)
+	}
+	flight.data = data
+	flight.status = status
+	flight.err = err
+	close(flight.done)
+	s.heavyMu.Unlock()
+}
+
+func (s *Service) awaitHeavyFlight(ctx context.Context, flight *heavyFlight) (any, int, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return nil, http.StatusServiceUnavailable, ctx.Err()
+	case <-flight.done:
+		return flight.data, flight.status, flight.err
+	}
+}
+
+func (s *Service) handleAction(ctx context.Context, request action.Request) (data any, status int, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	actionName := strings.ToLower(strings.TrimSpace(request.Action))
+	if !isHeavyManagementAction(actionName) {
+		return s.executeAction(ctx, request, actionName)
+	}
+	key, shareable := s.heavyFlightKey(ctx, request, actionName)
+	if !shareable {
+		if !s.acquireHeavyAction() {
+			return nil, http.StatusServiceUnavailable, newAPIActionError("busy", "api.error.busy", http.StatusServiceUnavailable, nil)
+		}
+		defer s.releaseHeavyAction()
+		actionCtx, cancel := context.WithTimeout(ctx, heavyActionBudget)
+		defer cancel()
+		return s.executeAction(actionCtx, request, actionName)
+	}
+	flight, leader := s.beginHeavyFlight(key)
+	if !leader {
+		return s.awaitHeavyFlight(ctx, flight)
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			s.finishHeavyFlight(key, flight, nil, http.StatusInternalServerError, errors.New("management action panic"))
+			panic(recovered)
+		}
+		s.finishHeavyFlight(key, flight, data, status, err)
+	}()
+	if !s.acquireHeavyAction() {
+		return nil, http.StatusServiceUnavailable, newAPIActionError("busy", "api.error.busy", http.StatusServiceUnavailable, nil)
+	}
+	defer s.releaseHeavyAction()
+	actionCtx, cancel := context.WithTimeout(ctx, heavyActionBudget)
+	defer cancel()
+	data, status, err = s.executeAction(actionCtx, request, actionName)
+	return data, status, err
+}
+
+func (s *Service) executeAction(ctx context.Context, request action.Request, actionName string) (any, int, error) {
+	switch actionName {
 	case "overview":
 		return s.actionOverview(ctx)
 	case "accounts.list":
@@ -309,7 +433,7 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 	case "proxy.summary":
 		return s.actionProxySummary(ctx)
 	case "proxy.sources.list":
-		return s.actionProxySourcesList(request.Params)
+		return s.actionProxySourcesList(ctx, request.Params)
 	case "proxy.sources.get":
 		return s.actionProxySourceGet(request.Params)
 	case "proxy.sources.endpoint":
@@ -388,7 +512,7 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 	case "tasks.list":
 		return s.actionTaskList(request.Params, requestLocaleFromContext(ctx))
 	case "tasks.center.list":
-		return s.actionTaskCenterList(request.Params, requestLocaleFromContext(ctx))
+		return s.actionTaskCenterList(ctx, request.Params, requestLocaleFromContext(ctx))
 	case "tasks.center.queues":
 		return s.actionTaskCenterQueues(requestLocaleFromContext(ctx))
 	case "tasks.center.queue":
@@ -402,15 +526,53 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 	default:
 		return nil, http.StatusBadRequest, newAPIActionError("unknown_action", "api.error.unknown_action", http.StatusBadRequest, nil)
 	}
+
+}
+
+const overviewCountsTTL = 5 * time.Second
+
+func cloneIntMap(value map[string]int) map[string]int {
+	cloned := make(map[string]int, len(value))
+	for key, count := range value {
+		cloned[key] = count
+	}
+	return cloned
+}
+
+func (s *Service) overviewStateCounts(store *Store, catalog []Account, order []int32, key overviewCountsKey) map[string]int {
+	s.overviewMu.Lock()
+	defer s.overviewMu.Unlock()
+	if s.overviewCounts != nil && s.overviewKey == key && time.Since(s.overviewAt) < overviewCountsTTL {
+		return cloneIntMap(s.overviewCounts)
+	}
+	counts := catalogStateCountsForOrder(store, catalog, order)
+	if store == nil || store.OverviewRevision() == key.StateRevision {
+		s.overviewKey = key
+		s.overviewCounts = cloneIntMap(counts)
+		s.overviewAt = time.Now()
+	}
+	return counts
+}
+
+func (s *Service) rememberOverviewStateCounts(store *Store, key overviewCountsKey, counts map[string]int) {
+	if counts == nil || store != nil && store.OverviewRevision() != key.StateRevision {
+		return
+	}
+	s.overviewMu.Lock()
+	s.overviewKey = key
+	s.overviewCounts = cloneIntMap(counts)
+	s.overviewAt = time.Now()
+	s.overviewMu.Unlock()
 }
 
 func (s *Service) actionOverview(ctx context.Context) (any, int, error) {
 	if errCatalog := s.ensureCatalog(ctx); errCatalog != nil {
 		return nil, http.StatusBadGateway, errCatalog
 	}
-	catalog := s.catalogSnapshot()
+	catalog, idOrder, catalogRevision := s.env.CatalogIDOrderSnapshot()
 	store := s.stateStore()
-	counts := catalogStateCounts(store, catalog)
+	key := overviewCountsKey{CatalogRevision: catalogRevision, StateRevision: store.OverviewRevision(), AuthCount: len(catalog)}
+	counts := s.overviewStateCounts(store, catalog, catalogIDOrderFallback(catalog, idOrder), key)
 	recentAnomalies := 0
 	if store != nil {
 		recentAnomalies = store.RecentEventCount(time.Now().UTC().Add(-24 * time.Hour))
@@ -434,12 +596,16 @@ func (s *Service) actionOverview(ctx context.Context) (any, int, error) {
 	}, http.StatusOK, nil
 }
 
+const accountListChunk = 1024
+
 func (s *Service) actionAccountsList(ctx context.Context, params map[string]any) (any, int, error) {
 	if errCatalog := s.ensureCatalog(ctx); errCatalog != nil {
 		return nil, http.StatusBadGateway, errCatalog
 	}
 	store := s.stateStore()
-	catalog := s.catalogSnapshot()
+	catalog, idOrder, catalogRevision := s.env.CatalogIDOrderSnapshot()
+	overviewKey := overviewCountsKey{CatalogRevision: catalogRevision, StateRevision: store.OverviewRevision(), AuthCount: len(catalog)}
+	idOrder = catalogIDOrderFallback(catalog, idOrder)
 	filterState := strings.ToLower(strings.TrimSpace(asString(params["state"])))
 	query := strings.ToLower(strings.TrimSpace(asString(params["query"])))
 	page := action.Int(params, "page", 1)
@@ -450,48 +616,73 @@ func (s *Service) actionAccountsList(ctx context.Context, params map[string]any)
 	if pageSize < 1 || pageSize > 10000 {
 		pageSize = 50
 	}
-	var stateValues map[string]string
-	if store != nil {
-		stateValues = store.AccountStateValues()
-	}
 	idsOnly := action.Bool(params, "ids_only")
+	allIDs := idsOnly && action.Bool(params, "all_ids")
 	stateCounts := make(map[string]int, 8)
-	filteredIndexes := make([]int, 0, len(catalog))
-	for index, account := range catalog {
-		state := catalogAccountState(account, stateValues[account.ID])
-		stateCounts[state]++
-		if filterState != "" && state != filterState {
-			continue
+	pageCap := min(pageSize, len(catalog))
+	pageIndexes := make([]int, 0, pageCap)
+	pageIDs := make([]string, 0, pageCap)
+	allMatchedIDs := make([]string, 0)
+	chunkIDs := make([]string, accountListChunk)
+	chunkStates := make([]string, accountListChunk)
+	start := int64(page-1) * int64(pageSize)
+	matched := 0
+	for base := 0; base < len(idOrder); base += accountListChunk {
+		if ctx != nil && ctx.Err() != nil {
+			return nil, http.StatusServiceUnavailable, newAPIActionError("busy", "api.error.busy", http.StatusServiceUnavailable, nil)
 		}
-		if query != "" && !catalogAccountMatches(account, query) {
-			continue
+		end := min(base+accountListChunk, len(idOrder))
+		count := end - base
+		ids := chunkIDs[:count]
+		states := chunkStates[:count]
+		for offset, catalogIndex := range idOrder[base:end] {
+			ids[offset] = catalog[int(catalogIndex)].ID
 		}
-		filteredIndexes = append(filteredIndexes, index)
+		store.FillRoutingStates(ids, states)
+		for offset, catalogIndex := range idOrder[base:end] {
+			account := catalog[int(catalogIndex)]
+			state := catalogAccountState(account, states[offset])
+			stateCounts[state]++
+			if filterState != "" && state != filterState {
+				continue
+			}
+			if query != "" && !catalogAccountMatches(account, query) {
+				continue
+			}
+			matchIndex := int64(matched)
+			matched++
+			if allIDs {
+				allMatchedIDs = append(allMatchedIDs, account.ID)
+				continue
+			}
+			if matchIndex < start || len(pageIndexes)+len(pageIDs) >= pageSize {
+				continue
+			}
+			if idsOnly {
+				pageIDs = append(pageIDs, account.ID)
+			} else {
+				pageIndexes = append(pageIndexes, int(catalogIndex))
+			}
+		}
 	}
-	sort.Slice(filteredIndexes, func(i, j int) bool { return catalog[filteredIndexes[i]].ID < catalog[filteredIndexes[j]].ID })
-	start := (page - 1) * pageSize
-	if start > len(filteredIndexes) {
-		start = len(filteredIndexes)
+	s.rememberOverviewStateCounts(store, overviewKey, stateCounts)
+	proxyService := s.env.Proxy()
+	if idsOnly {
+		if allIDs {
+			pageIDs = allMatchedIDs
+		}
+		return map[string]any{
+			"items":           pageIDs,
+			"page":            page,
+			"page_size":       pageSize,
+			"total":           matched,
+			"state_counts":    stateCounts,
+			"binding_version": proxyService.BindingVersion(),
+		}, http.StatusOK, nil
 	}
-	end := start + pageSize
-	if end > len(filteredIndexes) {
-		end = len(filteredIndexes)
-	}
-	pageIndexes := filteredIndexes[start:end]
 	pageAccounts := make([]Account, len(pageIndexes))
 	for index, catalogIndex := range pageIndexes {
 		pageAccounts[index] = catalog[catalogIndex]
-	}
-	if idsOnly {
-		ids := catalogAccountIDs(pageAccounts)
-		return map[string]any{
-			"items":           ids,
-			"page":            page,
-			"page_size":       pageSize,
-			"total":           len(filteredIndexes),
-			"state_counts":    stateCounts,
-			"binding_version": s.env.Proxy().BindingVersion(),
-		}, http.StatusOK, nil
 	}
 	proxyMetadataPending := false
 	proxyMetadataPendingIDs := make([]string, 0)
@@ -501,9 +692,9 @@ func (s *Service) actionAccountsList(ctx context.Context, params map[string]any)
 			proxyMetadataPendingIDs = append(proxyMetadataPendingIDs, account.ID)
 		}
 	}
-	pageIDs := catalogAccountIDs(pageAccounts)
-	bindings := s.env.Proxy().BindingStatesForAccounts(pageAccounts)
-	bindingVersion := s.env.Proxy().BindingVersion()
+	pageIDs = catalogAccountIDs(pageAccounts)
+	bindings := proxyService.BindingStatesForAccounts(pageAccounts)
+	bindingVersion := proxyService.BindingVersion()
 	if len(bindings) > 0 {
 		bindingVersion = bindings[0].Version
 	}
@@ -524,31 +715,70 @@ func (s *Service) actionAccountsList(ctx context.Context, params map[string]any)
 		views = items
 	}
 	return map[string]any{
-		"items":        views,
-		"page":         page,
-		"page_size":    pageSize,
-		"total":        len(filteredIndexes),
-		"state_counts": stateCounts,
-		// The dashboard retries this page after asynchronous auth-file
-		// enrichment finishes. This is a per-row display hint, not a trigger
-		// for a host auth read in the list request itself.
+		"items":                      views,
+		"page":                       page,
+		"page_size":                  pageSize,
+		"total":                      matched,
+		"state_counts":               stateCounts,
 		"proxy_metadata_pending":     proxyMetadataPending,
 		"proxy_metadata_pending_ids": proxyMetadataPendingIDs,
 		"binding_version":            bindingVersion,
 	}, http.StatusOK, nil
 }
 
-func catalogStateCounts(store *Store, catalog []Account) map[string]int {
-	counts := make(map[string]int, 8)
-	var values map[string]string
-	if store != nil {
-		values = store.AccountStateValues()
+func catalogIDOrderFallback(catalog []Account, order []int32) []int32 {
+	if len(order) == len(catalog) {
+		valid := true
+		for _, index := range order {
+			if index < 0 || int(index) >= len(catalog) {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			return order
+		}
 	}
-	for _, account := range catalog {
-		state := catalogAccountState(account, values[account.ID])
-		counts[state]++
+	order = make([]int32, len(catalog))
+	for index := range catalog {
+		order[index] = int32(index)
+	}
+	sort.Slice(order, func(i, j int) bool { return catalog[order[i]].ID < catalog[order[j]].ID })
+	return order
+}
+
+func catalogStateCountsForOrder(store *Store, catalog []Account, order []int32) map[string]int {
+	counts := make(map[string]int, 8)
+	if len(order) != len(catalog) {
+		order = make([]int32, len(catalog))
+		for index := range catalog {
+			order[index] = int32(index)
+		}
+	}
+	chunkIDs := make([]string, accountListChunk)
+	chunkStates := make([]string, accountListChunk)
+	for base := 0; base < len(order); base += accountListChunk {
+		end := min(base+accountListChunk, len(order))
+		count := end - base
+		ids := chunkIDs[:count]
+		states := chunkStates[:count]
+		for offset, catalogIndex := range order[base:end] {
+			ids[offset] = catalog[int(catalogIndex)].ID
+		}
+		store.FillRoutingStates(ids, states)
+		for offset, catalogIndex := range order[base:end] {
+			counts[catalogAccountState(catalog[int(catalogIndex)], states[offset])]++
+		}
 	}
 	return counts
+}
+
+func catalogStateCounts(store *Store, catalog []Account) map[string]int {
+	order := make([]int32, len(catalog))
+	for index := range catalog {
+		order[index] = int32(index)
+	}
+	return catalogStateCountsForOrder(store, catalog, order)
 }
 
 func catalogAccountIDs(accounts []Account) []string {
@@ -570,13 +800,80 @@ func catalogAccountState(account Account, state string) string {
 }
 
 func catalogAccountMatches(account Account, query string) bool {
-	text := strings.ToLower(strings.Join([]string{
+	if query == "" {
+		return true
+	}
+	// Keep the historical search domain exactly: the four fields were joined
+	// with spaces before matching, so a query may cross a field boundary.
+	parts := [4]string{
 		firstNonEmpty(account.Email, account.Label, account.ID),
 		account.ID,
 		account.Label,
 		account.Email,
-	}, " "))
-	return strings.Contains(text, query)
+	}
+	for _, part := range parts {
+		for index := 0; index < len(part); index++ {
+			if part[index] >= 0x80 {
+				return strings.Contains(strings.ToLower(strings.Join(parts[:], " ")), query)
+			}
+		}
+	}
+	for index := 0; index < len(query); index++ {
+		if query[index] >= 0x80 {
+			return strings.Contains(strings.ToLower(strings.Join(parts[:], " ")), query)
+		}
+	}
+	return containsFoldPartsASCII(parts[:], query)
+}
+
+// containsFoldPartsASCII matches a case-insensitive ASCII needle against the
+// virtual string parts[0] + " " + parts[1] + ... without allocating a joined
+// lowercase copy for every account.
+func containsFoldPartsASCII(parts []string, needle string) bool {
+	if needle == "" {
+		return true
+	}
+	total := len(parts) - 1
+	for _, part := range parts {
+		total += len(part)
+	}
+	if len(needle) > total {
+		return false
+	}
+	byteAt := func(index int) byte {
+		for _, part := range parts {
+			if index < len(part) {
+				return part[index]
+			}
+			index -= len(part)
+			if index == 0 {
+				return ' '
+			}
+			index--
+		}
+		return 0
+	}
+	for start := 0; start+len(needle) <= total; start++ {
+		matched := true
+		for offset := 0; offset < len(needle); offset++ {
+			haystack := byteAt(start + offset)
+			needleByte := needle[offset]
+			if haystack >= 'A' && haystack <= 'Z' {
+				haystack += 'a' - 'A'
+			}
+			if needleByte >= 'A' && needleByte <= 'Z' {
+				needleByte += 'a' - 'A'
+			}
+			if haystack != needleByte {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) selectedAccountCandidates(ctx context.Context, authIDs []string) ([]accountCandidate, error) {

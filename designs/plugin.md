@@ -3,8 +3,8 @@
 > 状态：已确认
 > 目标运行时：CLIProxyAPI v8 插件 ABI
 > 插件 ID：`grok-quality-guard`
-> 版本：设计 v1
-> 日期：2026-11-11
+> 版本：设计 v2
+> 日期：2026-11-20
 
 ## 1. 背景与目标
 
@@ -195,6 +195,7 @@ dump 检测必须先于“已有 thinking 就放行”，否则 fake reasoning �
 8. `host.model.execute_stream` 返回的是 host 管理的 stream，需要 `stream_read` 和 `stream_close`。
 9. 插件管理路由路径不得包含 `:`、`*`、空白字符。Action API 注册为 `/plugins/grok-quality-guard/api`。
 10. `host.auth.save` 会写物理 auth JSON 并 upsert runtime auth；保存时必须保留 access/refresh token 等所有非代理字段。
+11. 管理 ABI 只稳定传递 locale，宿主不保证把客户端取消传播到插件；管理请求必须在插件内设置时间预算，并在分块边界主动检查。
 
 ### 2.6 Resin 租约语义
 
@@ -1865,14 +1866,14 @@ Content-Type: application/json
 }
 ```
 
-状态码：200 成功、202 已接受异步任务、400 参数错误或 Resin 验证失败、403 动作不允许、404 auth/事件不存在、409 状态冲突、429 操作过于频繁、500 插件内部错误、502 Resin Admin API/代理不可达、503 CPA host 回调或上游不可用。异步任务的最终失败通过 `tasks.get` 的 `error` 和 `error_status` 返回。任务状态包括 `queued`、`running`、`succeeded`、`failed`、`cancelled` 和重启后恢复的 `interrupted`。
+状态码：200 成功、202 已接受异步任务、400 参数错误或 Resin 验证失败、403 动作不允许、404 auth/事件不存在、409 状态冲突、429 操作过于频繁、500 插件内部错误、502 Resin Admin API/代理不可达、503 CPA host 回调、上游不可用、目录未就绪或管理服务繁忙。所有可预期的管理 API 错误都必须返回 JSON envelope，不能让业务错误以非 JSON 502 形式出现。503 的 `catalog_loading` 表示账号目录仍在加载，`busy` 表示重动作超过并发闸门或时间预算；这两类错误携带 `Retry-After: 1`，客户端按退避重试。异步任务的最终失败通过 `tasks.get` 的 `error` 和 `error_status` 返回。任务状态包括 `queued`、`running`、`succeeded`、`failed`、`cancelled` 和重启后恢复的 `interrupted`。
 
 ### 10.4 Action 列表
 
 | Action | 参数 | 说明 |
 | --- | --- | --- |
 | `overview` | 无 | 汇总状态和计数 |
-| `accounts.list` | `page`、`page_size`、`state`、`query`、`summary` | 分页账号列表 |
+| `accounts.list` | `page`、`page_size`、`state`、`query`、`summary`、`ids_only`、`all_ids` | 分页账号列表；`ids_only` 返回当前筛选页的 ID，`ids_only + all_ids` 在单次扫描中返回全部命中 ID |
 | `accounts.get` | `auth_id` | 单个账号详情 |
 | `accounts.probe` | `auth_id`、`force` | 提交异步探测任务，返回 `task_id` |
 | `accounts.probe_selected` | `auth_ids` | 将选中账号放入有界探测队列，需要恢复时先恢复再检测 |
@@ -1887,7 +1888,7 @@ Content-Type: application/json
 | `proxy.sources.validate/preview/test` | `kind`、`source` 等 | 配置验证、条件预览和端点检测 |
 | `proxy.sources.create/import_nodes/update/delete` | `kind`、`source`、`source_id` | 来源 CRUD 和批量节点导入 |
 | `proxy.sources.test_selected/delete_selected` | `source_ids` | 来源页多选后的异步批量检测与删除 |
-| `proxy.bindings.list` | 分页、筛选参数 | 账号绑定、external、drifted、unknown 筛选 |
+| `proxy.bindings.list` | 分页、筛选参数、`ids_only` | 账号绑定、external、drifted、unknown 筛选；`ids_only` 返回全部命中 ID |
 | `proxy.bindings.bind/clear/rotate/adopt` | `auth_id`、`source_id` 等 | 手动绑定、清除、轮换、接管 |
 | `proxy.bindings.endpoint` | `auth_id` | 按单个 auth 显式读取完整代理端点 |
 | `proxy.bindings.set_auto_bind` | `auth_ids`、`excluded` | 批量排除或恢复自动绑定 |
@@ -1901,7 +1902,8 @@ Content-Type: application/json
 | `policy.reset` | 无 | 重置为 YAML 默认值 |
 | `state_file.update` | `state_file` | 写入并切换状态文件路径；目标文件必须不存在 |
 | `events.list` | `limit`、`cursor`、`auth_id` | 事件列表 |
-| `tasks.center.list` | `page`、`page_size`、`category`、`status`、`query` | 查询任务中心的任务索引和常驻队列 |
+| `tasks.center.list` | `page`、`page_size`、`category`、`status`、`query` | 查询任务中心的任务索引；常驻队列使用独立的 `tasks.center.queues` |
+| `tasks.center.queues` | 无 | 读取常驻队列的计数摘要 |
 | `tasks.center.queue` | `queue_id`、`page`、`page_size` | 读取质量检测、自动绑定或代理健康检查队列的执行中与等待项 |
 | `tasks.center.get` | `task_id`、`page`、`page_size`、`item_status` | 按页读取逐项结果；历史任务从归档懒加载 |
 | `tasks.center.cancel` | `task_id` | 请求取消等待中或执行中的任务 |
@@ -1910,6 +1912,7 @@ Content-Type: application/json
 | `tasks.list` | `limit` | 列出最近异步任务 |
 
 不存在 `resin.config.*`、`resin.bind`、`resin.bind_unbound`、`resin.rotate` 或 `resin.clear`。Resin 的配置、绑定、清除和轮换统一使用上述 `proxy.*` action；只保留 `resin.cleanup.*` 处理已排队远端租约。
+
 ### 10.5 管理页与 host 认证
 
 管理 API 由 CPA management 层认证。插件额外约束：
@@ -1919,6 +1922,56 @@ Content-Type: application/json
 - 不信任客户端传入的 auth ID 之外的代理或 token 字段
 - 不返回任何 secret 原值
 - 对 destructive action 返回明确结果
+
+### 10.6 管理页性能、缓存与可靠性契约
+
+本节约束账号、代理绑定、代理来源、任务中心和常驻队列等管理读取路径。目标是让交互请求的响应时间、峰值临时内存和失败方式具有上界，同时不引入随查询组合或使用时间增长的常驻内存。
+
+#### 10.6.1 列表读取与内存边界
+
+- 交互式列表的临时分配必须与 `page_size`、块大小同阶，不得与账号总数、代理来源总数、历史条目数或队列长度同阶。全量计数可以扫描全部数据，但不得为全量数据构造完整行视图、状态 map、下标切片或第二份排序结果。
+- 账号目录发布时生成按账号 ID 升序的 `[]int32` 下标索引；`accounts.list` 沿该索引按 1024 个账号分块批量读取状态，只物化当前页，或 `ids_only` 所需的结果。不得在每次请求中复制整张状态 map、收集全表下标或全表排序。
+- ID 序索引是目录的派生物，不写入 `state.json`、不升级 schema，可在目录刷新时重建；允许的常驻成本约为每账号 4 字节。不得再维护与状态桶并行的多份完整索引，除非基准证明它替代了全量扫描而不是增加常驻复杂度。
+- `state_counts` 始终按全量账号计算，不受页码、状态筛选和查询条件影响。只有计数来自同一版本且完整可用时才允许提前结束扫描，否则必须完成计数扫描。
+- 账号查询保持大小写不敏感的子串匹配，范围为显示名（邮箱、标签、ID 取第一个非空）、ID、标签和邮箱。ASCII 查询必须走零分配的大小写折叠比较；只有非 ASCII 输入才允许构造小规模小写字符串。查询首尾空白按既有规则裁剪。
+- 列表排序和分页必须稳定：账号列表按账号 ID 升序；代理绑定和代理来源继续使用各自既有排序。空结果返回 `items: []`，不得返回 `null`。
+- `ids_only + all_ids` 是显式批量选择的接口：服务端在同一趟流式扫描中收集全部命中 ID，调用方不得通过提高 `page_size` 或循环分页模拟全量选择。批量结果仍须携带完整 `total` 和筛选相关计数。
+- 账号列表、代理摘要、代理绑定列表、代理来源列表和任务中心属于重管理动作，必须使用统一的并发闸门和时间预算。分块循环在每个块边界检查预算；不得依赖客户端取消信号终止已经进入同步 Host 或磁盘调用的工作。
+
+#### 10.6.2 缓存边界
+
+- 不缓存按“页码 + 页码大小 + 筛选条件 + 查询词 + 标志位”组合的整表列表响应。该键空间无界，常驻内存会随管理操作轨迹增长，并且 TTL 窗口内可能展示已经失效的状态或归因。
+- 浏览器侧可以保留短时视图缓存，以减少同一 Tab 内的重复请求；服务端只缓存不承担账号归因的纯聚合结果。列表正确性的主要手段是版本化索引和分块扫描，不是响应缓存。
+- 聚合缓存每个端点只保留一个条目，键至少包含目录 revision、状态 revision、账号数或绑定 revision 等必要版本；任一开始计算后版本发生变化，本次结果不得写入缓存。TTL 必须短，作为漏更新兜底而不是主要失效机制。
+- `overview` 使用单条目、版本键控、默认 5 秒 TTL 的计数缓存；失败结果不得写入。`proxy.summary` 复用代理绑定计数的版本键控缓存，同样只在扫描期间 binding revision 未变化时回填。
+- `tasks.center.queues` 只读取队列长度和整数聚合，不复制队列明细；队列深度读取为常数级，变更和清理摘要为线性整数累加但临时内存为常数级，因此不增加响应缓存。`tasks.center.list` 不得重复打包常驻队列摘要。
+- 并发相同的重请求使用 single-flight 合并：键由 action、locale 和规范化参数组成，只共享正在执行的计算。结果完成后立即释放，不保留响应；失败和超时结果也不得转为缓存条目。
+- 如果未来把聚合 TTL 暴露为配置，只允许设置短且有上限的秒数，不能把缓存键改为查询参数，也不能用 TTL 取代 revision 失效。未明确配置前，TTL 是实现内常量而不是用户可调参数。
+
+#### 10.6.3 时间预算、错误与重试
+
+- 管理 ABI 不保证传播客户端取消，因此插件内部必须设置时间预算。冷账号目录最多等待 2 秒；超时返回 HTTP 503、JSON 错误码 `catalog_loading` 和 `Retry-After: 1`。
+- 重管理动作超过并发闸门或 2 秒预算时返回 HTTP 503、JSON 错误码 `busy` 和 `Retry-After: 1`。默认并发闸门为 4；阈值可以按现场负载调整，但必须有界，不能让慢请求无限排队并叠加内存。
+- 所有可预期的业务错误必须返回 JSON envelope。前端收到非 JSON 的 502 时，应优先判断为宿主处理器 panic、宿主错误页或反向代理超时，不得把它当作插件常规业务错误或通过改文案掩盖。
+- 前端只对 `catalog_loading` 和 `busy` 自动退避重试，默认最多 2 次；其他 4xx 不自动重试。重试耗尽后显示可操作的错误提示，不覆盖已有数据。
+- 加载失败时必须保留旧表格、计数和滚动位置。被取消或被新请求取代的旧请求不得弹出错误 toast，也不得覆盖较新的响应。
+- 冷目录失败、busy 失败、空结果和部分元数据不可读必须是不同状态；不得把读取失败当作 `unknown`、空列表或永久无数据。
+
+#### 10.6.4 前端交互
+
+- 搜索框和筛选下拉统一使用 200ms 防抖；同一类列表请求使用 `AbortController`，后发出的请求胜出，并用请求序号防止旧响应回写。
+- 翻页、筛选或搜索变化时只刷新受影响的列表，不重建无关 Tab；强制刷新和普通轮询区分优先级，不能把多个慢请求串行叠成体感延迟。
+- 账号全选使用服务端 `ids_only + all_ids`，账号绑定全选使用 `ids_only`；服务端负责一次完整命中扫描，前端只把 ID 加入选择集合。
+- 加载中不得清空表格；错误提示放在表格上方，保留当前页数据和滚动锚点。筛选切换后若新结果为空，应显示空结果而不是上一筛选的残留行。
+
+#### 10.6.5 队列、任务历史与响应本地化
+
+- 常驻队列摘要只读取 active、waiting 和是否支持该队列等计数，不得复制、排序或序列化完整等待队列。常驻队列由独立 `tasks.center.queues` 提供，`tasks.center.list` 不重复返回同一批摘要。
+- 任务中心历史每次列表请求只加载一次；清理机会合并进同一次加载，不得先加载一次做清理、再加载一次参与列表。
+- 内存任务与历史条目按 `CreatedAt` 合并和排序，保持旧界面语义；计数、过滤和分页扫描在块边界检查请求预算。实现可以保留一次 `historyIndex` 浅拷贝和排序，但历史上限必须使该成本与页面大小解耦并有基准约束；若未来提高历史上限，应演进为按时间有序、不可变的索引。
+- 历史归档保留策略、磁盘上限、清理时机和逐项解压边界不变；列表只读取紧凑索引，逐项结果只在打开任务时按页解压。
+- 新列表端点应在构造行时直接生成本地化字段，包括 `last_reason`、`disable_reason`、`last_error` 等文案。不得在成功响应上对整棵响应树执行 marshal、decode 为 `any`、递归改写、再 marshal。
+- `localizeResponseData` 只保留给低频且结构不固定的小响应；从列表路径迁移本地化时必须逐字段对照正文，行为差异视为回归。
 
 ## 11. 配置 schema
 
@@ -2172,6 +2225,13 @@ Docker 部署必须将 `/CLIProxyAPI/plugins/data/grok-quality-guard` 挂载为�
 - `UpdateIfChanged` 由回调显式返回 changed，避免无变化重写文件
 - Resin 清理快照和 token 只存储在本机 state；依赖目录 `0700`、文件 `0600` 限制访问
 
+- 状态写路径采用“锁内生成一致性快照、锁外编码、同步和临时文件替换”。编码、`Sync`、rename 不得在全局状态写锁内执行，读请求不得等待整份 state 落盘。
+- 使用单调递增的 `dirtySeq` 判断快照是否仍为最新：写盘期间有新写入时不得清除 `dirty`，必须在锁外写盘完成后重新调度后台落盘。
+- 同步写失败和后台 `Flush` 失败都必须保留内存中的新状态和 `dirty` 标记，并重新调度重试；不得把失败当成成功，也不得回滚用户刚完成的修改。
+- 高频观测路径不得深拷贝整条账号状态。只有需要持久化和回滚的写路径可以复制必要快照；观测回调必须明确返回是否实际改变状态。
+- 只有代理身份字段发生变化时才更新代理索引；普通质量观测不得触发覆盖全部账号的代理索引重建。
+- 管理读请求不得顺带执行观测覆盖层修剪、索引重建、哈希校验等维护工作；修剪由目录刷新或后台调度完成。
+
 ### 12.4 启动 reconcile
 
 启动后后台执行，不得阻塞 `plugin.register`：
@@ -2197,6 +2257,12 @@ Docker 部署必须将 `/CLIProxyAPI/plugins/data/grok-quality-guard` 挂载为�
 - 透明流 bridge 使用请求生命周期 `requestCtx` 并纳入 `taskWG`；Quiesce/Shutdown 取消并等待，避免卸载后继续调用 host 回调
 - 每个 model stream 使用一个常驻读协程，不为每个 chunk 创建 goroutine
 - 会话绑定过期和超限淘汰使用最小堆；状态观测更新不复制完整选择索引
+
+- 状态读路径使用读锁；代理运行态观察集合使用读写锁，列表解析只持读锁，写入只做短临界区。
+- 管理列表分块读取时，每块获取一次状态和绑定投影，不在整个请求期间持有全局写锁，也不复制完整状态表。
+- 管理请求不得触发观测修剪；目录刷新和后台维护负责修剪、回收和重建派生物。
+- 后台落盘使用单写者语义，编码和 fsync 在锁外执行；写盘结束后只有 `dirtySeq` 未变化才清除 `dirty`。
+- 热重载、目录刷新、索引发布和缓存回填都必须以原子快照或版本号交接，避免列表读到半更新的目录、状态或绑定计数。
 
 ## 14. 安全与日志
 
@@ -2345,6 +2411,18 @@ Resin / 代理来源：
 - 事件中不包含正文和上游响应 body
 - 管理 API 不接受客户端传入的 token
 
+#### 管理页性能与可靠性测试
+
+- 账号列表在空查询、各状态筛选、跨字段搜索、无命中、越界页和空库场景下，`total`、`state_counts`、页内 ID 序列与旧语义一致；空结果必须是空数组。
+- ID 序索引稳定性测试：相同目录多次发布得到相同顺序；目录刷新后按账号 ID 升序重建；索引不进入持久化状态。
+- ASCII 与非 ASCII 搜索均大小写不敏感；显示名优先级为邮箱、标签、ID；查询首尾空白裁剪；跨字段命中只出现一次。
+- `ids_only + all_ids` 返回完整命中集合，且只执行一次扫描；不得依赖循环分页或 `page_size` 放大。
+- 代理绑定与来源列表的分块结果与旧全量视图一致；绑定状态枚举和漂移判断复用同一分类函数；来源排序与 ID 序索引一致。
+- 常驻队列摘要的计数与队列明细数量一致；`tasks.center.queues` 不扫描任务历史，`tasks.center.list` 不重复返回 `resident_queues`。
+- 任务中心只加载一次历史索引；计数、筛选、`CreatedAt` 排序和分页在内存任务与历史条目合并后仍保持一致。
+- `overview` 和代理绑定计数缓存在目录、状态或 binding revision 改变后立即失效；失败结果不缓存；扫描期间版本改变不回填。
+- 状态写失败以及后台 `Flush` 失败后保留 `dirty` 并重新调度；旧快照不得清除新写入。
+
 ### 16.2 集成测试
 
 - mock CPA host callbacks
@@ -2367,6 +2445,13 @@ Resin / 代理来源：
 - 大量账号加载不阻塞注册
 - Home 模式元数据不会旁路透明路由
 - 管理 API action 正常和错误响应
+
+- 模拟冷目录延迟 30 秒，首次列表请求最多等待约 2 秒即返回 JSON `503`、`catalog_loading` 和 `Retry-After: 1`；目录就绪后下一请求可成功，且错误结果未被缓存。
+- 3000 个以上账号的账号列表、绑定列表和来源列表不触发逐账号 Host 读取；分块扫描不复制完整状态 map，不执行全表排序。
+- 重动作并发超过闸门时返回 JSON `503 busy` 和 `Retry-After: 1`；相同 action、locale、参数的并发请求通过 single-flight 只执行一次。
+- 并发读列表与持续状态写入时无 race、无死锁；读请求不长时间等待状态落盘，管理请求不触发观测修剪。
+- `tasks.center.queues` 在队列长度为 100、1000、10000 时分配量保持常数级，并与 `tasks.center.queue` 的明细数量一致。
+- 前端快速切换筛选和搜索时，后发请求胜出；中止的旧请求不弹错、不覆盖新数据；失败时旧表格、计数和滚动位置保留。
 
 ### 16.3 手工验收
 
@@ -2478,6 +2563,13 @@ git diff --check
 19. 当前最高 Priority 层未耗尽时不使用低 Priority 层，当前层全部失败后才 fallback。
 20. unknown -> healthy 后下一个请求能从后台索引看到新的 healthy 层。
 21. 普通事件写入不得触发透明选择索引全量重建。
+
+22. 账号、代理绑定、代理来源和任务中心列表的单次临时分配与页面大小同阶；账号和来源的 ID 序索引只增加约每项 4 字节常驻内存。
+23. 列表不缓存按查询参数组合的整表响应；聚合缓存单条目、版本键控、短 TTL 兜底，失败结果和版本变化中的结果不缓存。
+24. 冷目录和重动作超时返回 JSON `503`，分别使用 `catalog_loading` 和 `busy`，并携带 `Retry-After: 1`；不得以非 JSON 502 表示可预期业务错误。
+25. 搜索与筛选统一 200ms 防抖，列表请求后者胜出；加载失败保留旧表格、计数和滚动位置，`catalog_loading` 与 `busy` 最多自动重试 2 次。
+26. 常驻队列通过 `tasks.center.queues` 只读取计数；任务中心历史每次列表只加载一次，不重复打包常驻队列。
+27. 状态写入在锁外编码和落盘，`dirtySeq` 防止旧快照清除新写入；写失败保留 `dirty` 并重新调度。
 
 ## 19. 明确默认决策
 

@@ -92,6 +92,12 @@ func (p *Plugin) CatalogSnapshot() []model.Account {
 	}
 	return p.catalogSvc.Snapshot()
 }
+func (p *Plugin) CatalogIDOrderSnapshot() ([]model.Account, []int32, uint64) {
+	if p == nil || p.catalogSvc == nil {
+		return nil, nil, 0
+	}
+	return p.catalogSvc.SnapshotWithIDOrderRevision()
+}
 
 func (p *Plugin) FindAccount(authID string) (model.Account, bool) {
 	return p.catalogSvc.FindAccount(authID)
@@ -183,6 +189,13 @@ func (p *Plugin) ListTasks(limit int) []tasks.Task { return p.listTasks(limit) }
 
 func (p *Plugin) TaskCenter(filter tasks.TaskCenterFilter) (tasks.TaskCenterResult, error) {
 	return p.taskCenter(filter)
+}
+
+func (p *Plugin) TaskCenterContext(ctx context.Context, filter tasks.TaskCenterFilter) (tasks.TaskCenterResult, error) {
+	if p == nil || p.taskMgr == nil {
+		return tasks.TaskCenterResult{}, nil
+	}
+	return p.taskMgr.ListCenterContext(ctx, filter)
 }
 
 func (p *Plugin) TaskDetail(taskID string, page, pageSize int, status string) (tasks.TaskDetail, error) {
@@ -408,6 +421,9 @@ func (p *Plugin) ProbeConcurrency() int {
 
 func (p *Plugin) ProxyQueueDetail(queueID string) (proxyapp.ResidentQueueDetail, bool) {
 	return p.proxySvc.QueueDetail(queueID)
+}
+func (p *Plugin) ProxyQueueDepth(queueID string) (active, waiting int, ok bool) {
+	return p.proxySvc.QueueDepth(queueID)
 }
 func (p *Plugin) Proxy() *proxyapp.Service { return p.proxySvc }
 

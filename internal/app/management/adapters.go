@@ -120,8 +120,8 @@ func (s *Service) proxySourceInfo(sourceID string) (string, proxy.SourceKind) {
 func (s *Service) actionProxySummary(ctx context.Context) (any, int, error) {
 	return s.env.Proxy().ActionSummary(ctx)
 }
-func (s *Service) actionProxySourcesList(params map[string]any) (any, int, error) {
-	return s.env.Proxy().ActionSourcesList(params)
+func (s *Service) actionProxySourcesList(ctx context.Context, params map[string]any) (any, int, error) {
+	return s.env.Proxy().ActionSourcesList(ctx, params)
 }
 func (s *Service) actionProxySourceGet(params map[string]any) (any, int, error) {
 	return s.env.Proxy().ActionSourceGet(params)

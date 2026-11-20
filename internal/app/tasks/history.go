@@ -3,6 +3,7 @@ package tasks
 import (
 	"bufio"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -837,6 +838,19 @@ func readTaskArchive(path string) (Task, []json.RawMessage, error) {
 }
 
 func (m *Manager) ListCenter(filter TaskCenterFilter) (TaskCenterResult, error) {
+	return m.ListCenterContext(context.Background(), filter)
+}
+
+// ListCenterContext is the cancellable form used by the management handler's
+// bounded heavy-action budget. The on-disk history load itself is not
+// cancellable, but merging, counting, and filtering check between entries.
+func (m *Manager) ListCenterContext(ctx context.Context, filter TaskCenterFilter) (TaskCenterResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return TaskCenterResult{}, err
+	}
 	if filter.Page <= 0 {
 		filter.Page = 1
 	}
@@ -846,12 +860,7 @@ func (m *Manager) ListCenter(filter TaskCenterFilter) (TaskCenterResult, error) 
 	if filter.PageSize > 200 {
 		filter.PageSize = 200
 	}
-	_, errHistory := m.loadHistory()
-	if errHistory != nil {
-		return TaskCenterResult{}, errHistory
-	}
-	m.cleanupHistoryIfDue(time.Now().UTC())
-	entries, errHistory := m.loadHistory()
+	entries, stats, errHistory := m.historyEntriesForCenter(time.Now().UTC())
 	if errHistory != nil {
 		return TaskCenterResult{}, errHistory
 	}
@@ -863,79 +872,58 @@ func (m *Manager) ListCenter(filter TaskCenterFilter) (TaskCenterResult, error) 
 		}
 	}
 	m.mu.Unlock()
-	byID := make(map[string]Task, len(memory)+len(entries))
-	for _, task := range memory {
-		byID[task.ID] = task
+	sort.Slice(memory, func(i, j int) bool { return memory[i].CreatedAt.After(memory[j].CreatedAt) })
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Task.CreatedAt.After(entries[j].Task.CreatedAt)
+	})
+	if err := ctx.Err(); err != nil {
+		return TaskCenterResult{}, err
 	}
-	for _, entry := range entries {
-		if _, exists := byID[entry.Task.ID]; !exists {
-			byID[entry.Task.ID] = entry.Task
-		}
-	}
-	all := make([]Task, 0, len(byID))
-	counts := map[string]int{
-		"active": 0, "queued": 0, "running": 0, "succeeded": 0, "failed": 0,
-		"cancelled": 0, "interrupted": 0, "total": 0, "running_items": 0,
-		"waiting_items": 0, "succeeded_items": 0, "failed_items": 0, "skipped_items": 0,
-	}
-	for _, task := range byID {
-		all = append(all, task)
-		counts["total"]++
-		counts["running_items"] += task.Running
-		counts["waiting_items"] += task.Waiting
-		counts["succeeded_items"] += task.Succeeded
-		counts["failed_items"] += task.Failed
-		counts["skipped_items"] += task.Skipped
-		if task.Status == taskStatusQueued || task.Status == taskStatusRunning {
-			counts["active"]++
-		}
-		if _, ok := counts[task.Status]; ok {
-			counts[task.Status]++
-		}
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
 	category := strings.TrimSpace(filter.Category)
 	status := strings.TrimSpace(filter.Status)
 	query := strings.ToLower(strings.TrimSpace(filter.Query))
-	filtered := make([]Task, 0, len(all))
-	for _, task := range all {
-		if category != "" && category != "all" && task.Category != category {
-			continue
+	counts := emptyTaskCenterCounts()
+	total := 0
+	if err := forEachMergedTaskContext(ctx, memory, entries, func(task Task) {
+		addTaskCenterCounts(counts, task)
+		if taskCenterMatchesFilter(task, category, status, query) {
+			total++
 		}
-		if status != "" && status != "all" {
-			if status == "active" {
-				if task.Status != taskStatusQueued && task.Status != taskStatusRunning {
-					continue
-				}
-			} else if status == "finished" {
-				if task.Status == taskStatusQueued || task.Status == taskStatusRunning {
-					continue
-				}
-			} else if task.Status != status {
-				continue
-			}
-		}
-		if query != "" {
-			text := strings.ToLower(strings.Join([]string{task.ID, task.Kind, task.Label, task.Category, strings.Join(task.AuthIDs, " "), task.Error}, " "))
-			if !strings.Contains(text, query) {
-				continue
-			}
-		}
-		filtered = append(filtered, task)
+	}); err != nil {
+		return TaskCenterResult{}, err
 	}
-	total := len(filtered)
 	pages := maxInt(1, (total+filter.PageSize-1)/filter.PageSize)
 	if filter.Page > pages {
 		filter.Page = pages
 	}
 	start := (filter.Page - 1) * filter.PageSize
-	end := minInt(len(filtered), start+filter.PageSize)
-	if start > len(filtered) {
-		start = len(filtered)
+	items := make([]Task, 0, minInt(filter.PageSize, maxInt(0, total-start)))
+	matched := 0
+	if err := forEachMergedTaskContext(ctx, memory, entries, func(task Task) {
+		if !taskCenterMatchesFilter(task, category, status, query) {
+			return
+		}
+		if matched >= start && len(items) < filter.PageSize {
+			items = append(items, task)
+		}
+		matched++
+	}); err != nil {
+		return TaskCenterResult{}, err
 	}
-	items := append([]Task(nil), filtered[start:end]...)
+	return TaskCenterResult{Items: items, Total: total, Page: filter.Page, PageSize: filter.PageSize, Counts: counts, History: stats}, nil
+}
 
+func (m *Manager) historyEntriesForCenter(now time.Time) ([]historyEntry, HistoryStats, error) {
 	m.historyMu.Lock()
+	defer m.historyMu.Unlock()
+	if !m.historyLoaded {
+		if _, err := m.loadHistoryLocked(); err != nil {
+			return nil, HistoryStats{}, err
+		}
+	} else if !m.historyCleanupAt.IsZero() && now.Sub(m.historyCleanupAt) >= time.Minute {
+		m.cleanupHistoryLocked(now)
+		m.historyCleanupAt = now
+	}
 	config := normalizeHistoryConfig(m.historyConfig)
 	var bytes int64
 	for _, entry := range m.historyIndex {
@@ -950,10 +938,95 @@ func (m *Manager) ListCenter(filter TaskCenterFilter) (TaskCenterResult, error) 
 		RecordCount:     len(m.historyIndex),
 		ArchiveBytes:    bytes,
 	}
-	m.historyMu.Unlock()
-	return TaskCenterResult{Items: items, Total: total, Page: filter.Page, PageSize: filter.PageSize, Counts: counts, History: stats}, nil
+	return append([]historyEntry(nil), m.historyIndex...), stats, nil
 }
 
+func emptyTaskCenterCounts() map[string]int {
+	return map[string]int{
+		"active": 0, "queued": 0, "running": 0, "succeeded": 0, "failed": 0,
+		"cancelled": 0, "interrupted": 0, "total": 0, "running_items": 0,
+		"waiting_items": 0, "succeeded_items": 0, "failed_items": 0, "skipped_items": 0,
+	}
+}
+
+func addTaskCenterCounts(counts map[string]int, task Task) {
+	counts["total"]++
+	counts["running_items"] += task.Running
+	counts["waiting_items"] += task.Waiting
+	counts["succeeded_items"] += task.Succeeded
+	counts["failed_items"] += task.Failed
+	counts["skipped_items"] += task.Skipped
+	if task.Status == taskStatusQueued || task.Status == taskStatusRunning {
+		counts["active"]++
+	}
+	if _, ok := counts[task.Status]; ok {
+		counts[task.Status]++
+	}
+}
+
+func taskCenterMatchesFilter(task Task, category, status, query string) bool {
+	if category != "" && category != "all" && task.Category != category {
+		return false
+	}
+	if status != "" && status != "all" {
+		if status == "active" {
+			if task.Status != taskStatusQueued && task.Status != taskStatusRunning {
+				return false
+			}
+		} else if status == "finished" {
+			if task.Status == taskStatusQueued || task.Status == taskStatusRunning {
+				return false
+			}
+		} else if task.Status != status {
+			return false
+		}
+	}
+	if query == "" {
+		return true
+	}
+	text := strings.ToLower(strings.Join([]string{task.ID, task.Kind, task.Label, task.Category, strings.Join(task.AuthIDs, " "), task.Error}, " "))
+	return strings.Contains(text, query)
+}
+
+func forEachMergedTask(memory []Task, entries []historyEntry, visit func(Task)) {
+	_ = forEachMergedTaskContext(context.Background(), memory, entries, visit)
+}
+
+func forEachMergedTaskContext(ctx context.Context, memory []Task, entries []historyEntry, visit func(Task)) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	memoryIDs := make(map[string]struct{}, len(memory))
+	for _, task := range memory {
+		memoryIDs[task.ID] = struct{}{}
+	}
+	memoryIndex, historyIndex := 0, 0
+	visited := 0
+	for memoryIndex < len(memory) || historyIndex < len(entries) {
+		if visited%256 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		var task Task
+		if historyIndex >= len(entries) || (memoryIndex < len(memory) && !memory[memoryIndex].CreatedAt.Before(entries[historyIndex].Task.CreatedAt)) {
+			task = memory[memoryIndex]
+			memoryIndex++
+		} else {
+			task = entries[historyIndex].Task
+			historyIndex++
+			if _, exists := memoryIDs[task.ID]; exists {
+				continue
+			}
+		}
+		visit(task)
+		visited++
+	}
+	return nil
+}
 func (m *Manager) TaskDetail(taskID string, page, pageSize int, statusFilter string) (TaskDetail, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {

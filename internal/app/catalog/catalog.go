@@ -62,22 +62,79 @@ func (s *Service) ensureCatalog(ctx context.Context) error {
 		}
 		return nil
 	}
-	// Cold reads need a real catalog to be useful. Wait for the in-flight
-	// refresh instead of turning a slow host.auth.list call into a successful
-	// but empty account list. Individual host calls still have their own
-	// timeout in the host bridge.
-	if errAcquire := acquireGate(ctx, s.catalogRefreshGate); errAcquire != nil {
-		return errAcquire
+	// Cold reads cannot be served meaningfully without a catalog, but they
+	// must not wait for the host callback indefinitely. Start one refresh and
+	// wait only for the bounded cold-start window; the caller receives a
+	// retryable JSON 503 if the catalog is still unavailable.
+	s.startColdCatalogRefresh()
+	waitCtx, cancel := context.WithTimeout(ctx, catalogColdWait)
+	defer cancel()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if s.catalogAvailable() {
+			return nil
+		}
+		select {
+		case <-s.catalogPublished:
+		case <-ticker.C:
+		case <-waitCtx.Done():
+			// When the request budget expires while the catalog is still cold,
+			// report the actionable catalog state instead of a generic timeout.
+			if errCtx := ctx.Err(); errCtx != nil && !errors.Is(errCtx, context.DeadlineExceeded) {
+				return errCtx
+			}
+			return CatalogLoadingError{}
+		}
 	}
-	defer releaseGate(s.catalogRefreshGate)
-	// Another request or the refresh loop may have completed while we waited.
+}
+
+const catalogColdWait = 2 * time.Second
+
+// CatalogLoadingError is a retryable cold-catalog response. The management
+// envelope recognizes ErrorCode and HTTPStatus so the browser receives JSON
+// rather than a proxy-generated HTML 502.
+type CatalogLoadingError struct{}
+
+func (CatalogLoadingError) Error() string     { return "catalog loading" }
+func (CatalogLoadingError) ErrorCode() string { return "catalog_loading" }
+func (CatalogLoadingError) HTTPStatus() int   { return 503 }
+
+func (s *Service) catalogAvailable() bool {
+	if s == nil {
+		return false
+	}
 	s.catalogMu.RLock()
-	hasCatalog = !s.catalogAt.IsZero()
+	available := !s.catalogAt.IsZero()
 	s.catalogMu.RUnlock()
-	if hasCatalog {
-		return nil
+	return available
+}
+
+func (s *Service) notifyCatalogPublished() {
+	if s == nil || s.catalogPublished == nil {
+		return
 	}
-	return s.refreshCatalogLocked(ctx)
+	select {
+	case s.catalogPublished <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Service) startColdCatalogRefresh() {
+	if s == nil || s.env == nil || s.stopped() || !tryAcquireGate(s.catalogRefreshGate) {
+		return
+	}
+	s.catalogMu.Lock()
+	if !s.catalogAt.IsZero() {
+		s.catalogMu.Unlock()
+		releaseGate(s.catalogRefreshGate)
+		return
+	}
+	s.catalogMu.Unlock()
+	go func() {
+		defer s.finishCatalogRefresh()
+		_ = s.refreshCatalogLocked(s.backgroundContext())
+	}()
 }
 
 func (s *Service) startCatalogRefresh() {
@@ -85,6 +142,9 @@ func (s *Service) startCatalogRefresh() {
 		return
 	}
 	if !tryAcquireGate(s.catalogRefreshGate) {
+		s.catalogMu.Lock()
+		s.catalogRefreshPending = true
+		s.catalogMu.Unlock()
 		return
 	}
 	s.catalogMu.Lock()
@@ -94,11 +154,23 @@ func (s *Service) startCatalogRefresh() {
 		return
 	}
 	s.catalogRefreshAttemptAt = time.Now().UTC()
+	s.catalogRefreshPending = false
 	s.catalogMu.Unlock()
 	go func() {
-		defer releaseGate(s.catalogRefreshGate)
+		defer s.finishCatalogRefresh()
 		_ = s.refreshCatalogLocked(s.backgroundContext())
 	}()
+}
+
+func (s *Service) finishCatalogRefresh() {
+	releaseGate(s.catalogRefreshGate)
+	s.catalogMu.Lock()
+	pending := s.catalogRefreshPending
+	s.catalogRefreshPending = false
+	s.catalogMu.Unlock()
+	if pending {
+		s.startCatalogRefresh()
+	}
 }
 
 func (s *Service) RefreshCatalog(ctx context.Context) error {
@@ -194,12 +266,22 @@ func (s *Service) refreshCatalogLocked(ctx context.Context) error {
 			byAuthIndex[authIndex] = index
 		}
 	}
+	idOrder := make([]int32, len(accounts))
+	for index := range accounts {
+		idOrder[index] = int32(index)
+	}
+	sort.Slice(idOrder, func(i, j int) bool { return accounts[idOrder[i]].ID < accounts[idOrder[j]].ID })
+	s.catalogIDOrder = idOrder
 	s.catalogByID = byID
 	s.catalogByAuthIndex = byAuthIndex
 	s.catalogRoutingFingerprint = fingerprints.routing
 	s.catalogModelsFingerprint = fingerprints.models
 	s.catalogAt = time.Now().UTC()
+	if routingChanged || s.catalogRevision == 0 {
+		s.catalogRevision++
+	}
 	s.catalogMu.Unlock()
+	s.notifyCatalogPublished()
 
 	// Drop proxy observations for auths that disappeared from the host catalog.
 	// Observations are runtime-only overlays and must not accumulate across
@@ -821,6 +903,22 @@ func (s *Service) syncCatalogState(accounts []Account) error {
 		s.env.WakeResinLeaseDeleteLoop()
 	}
 	return errSync
+}
+
+func (s *Service) catalogWithIDOrder() ([]Account, []int32) {
+	s.catalogMu.RLock()
+	defer s.catalogMu.RUnlock()
+	// Both published slices are immutable until the next catalog swap. The
+	// management list can scan the four-byte index without sorting or copying.
+	return s.catalog, s.catalogIDOrder
+}
+
+func (s *Service) catalogWithIDOrderRevision() ([]Account, []int32, uint64) {
+	s.catalogMu.RLock()
+	defer s.catalogMu.RUnlock()
+	// Return the immutable published slices and the revision under one read
+	// lock so aggregate caches cannot pair an old catalog with a new revision.
+	return s.catalog, s.catalogIDOrder, s.catalogRevision
 }
 
 func (s *Service) catalogSnapshot() []Account {

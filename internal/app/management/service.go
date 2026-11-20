@@ -3,6 +3,8 @@ package management
 import (
 	"context"
 	"encoding/json"
+	"sync"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
@@ -34,6 +36,7 @@ type Environment interface {
 	EnsureCatalog(context.Context) error
 	RefreshCatalog(context.Context) error
 	CatalogSnapshot() []model.Account
+	CatalogIDOrderSnapshot() ([]model.Account, []int32, uint64)
 	FindAccount(string) (model.Account, bool)
 	ResolveAuth(context.Context, string) (model.Account, pluginapi.HostAuthGetResponse, map[string]json.RawMessage, error)
 	StateAccount(string) (appstate.AccountState, bool)
@@ -46,6 +49,7 @@ type Environment interface {
 	ProbeQueueSnapshot() ProbeQueueSnapshot
 	ProbeQueueDetail() ProbeQueueDetail
 	ProxyQueueDetail(string) (proxyapp.ResidentQueueDetail, bool)
+	ProxyQueueDepth(string) (active, waiting int, ok bool)
 	ProbeQueueSize() int
 	ProbeConcurrency() int
 	StartTask(string, []string, string, func(context.Context) (any, error)) tasks.Task
@@ -61,10 +65,38 @@ type Environment interface {
 	Quality() *qualityapp.Service
 }
 
-type Service struct {
-	env Environment
+type overviewCountsKey struct {
+	CatalogRevision uint64
+	StateRevision   uint64
+	AuthCount       int
 }
 
-func NewService(env Environment) *Service { return &Service{env: env} }
+type heavyFlight struct {
+	done   chan struct{}
+	data   any
+	status int
+	err    error
+}
+
+type Service struct {
+	env       Environment
+	heavyGate chan struct{}
+
+	heavyMu      sync.Mutex
+	heavyFlights map[string]*heavyFlight
+
+	overviewMu     sync.Mutex
+	overviewKey    overviewCountsKey
+	overviewCounts map[string]int
+	overviewAt     time.Time
+}
+
+func NewService(env Environment) *Service {
+	return &Service{
+		env:          env,
+		heavyGate:    make(chan struct{}, 4),
+		heavyFlights: make(map[string]*heavyFlight),
+	}
+}
 
 type proxyManagementError = proxyapp.ManagementError

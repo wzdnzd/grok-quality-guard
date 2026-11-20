@@ -43,8 +43,12 @@ type Service struct {
 	catalog                   []model.Account
 	catalogByID               map[string]int
 	catalogByAuthIndex        map[string]int
+	catalogIDOrder            []int32
 	catalogAt                 time.Time
+	catalogRevision           uint64
 	catalogRefreshAttemptAt   time.Time
+	catalogRefreshPending     bool
+	catalogPublished          chan struct{}
 	catalogRoutingFingerprint uint64
 	catalogModelsFingerprint  uint64
 	catalogRefreshGate        chan struct{}
@@ -71,6 +75,7 @@ func NewService(env Environment) *Service {
 		lifecycleCtx:          lifecycleCtx,
 		lifecycleCancel:       lifecycleCancel,
 		catalogRefreshGate:    make(chan struct{}, 1),
+		catalogPublished:      make(chan struct{}, 1),
 		authMetaRefreshGate:   make(chan struct{}, 1),
 		authMetaRead:          readAuthMeta,
 		authMetaFailures:      make(map[string]authMetaFailure),

@@ -1,6 +1,7 @@
 package management
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -36,7 +37,7 @@ type taskCenterQueueDetail struct {
 	Waiting taskCenterQueuePage   `json:"waiting"`
 }
 
-func (s *Service) actionTaskCenterList(params map[string]any, locales ...string) (any, int, error) {
+func (s *Service) actionTaskCenterList(ctx context.Context, params map[string]any, locales ...string) (any, int, error) {
 	locale := localeOrDefault(locales)
 	filter := tasks.TaskCenterFilter{
 		Page:     action.Int(params, "page", 1),
@@ -45,7 +46,15 @@ func (s *Service) actionTaskCenterList(params map[string]any, locales ...string)
 		Status:   strings.TrimSpace(asString(params["status"])),
 		Query:    strings.TrimSpace(asString(params["query"])),
 	}
-	result, errCenter := s.taskCenter(filter)
+	var result tasks.TaskCenterResult
+	var errCenter error
+	if provider, ok := s.env.(interface {
+		TaskCenterContext(context.Context, tasks.TaskCenterFilter) (tasks.TaskCenterResult, error)
+	}); ok {
+		result, errCenter = provider.TaskCenterContext(ctx, filter)
+	} else {
+		result, errCenter = s.taskCenter(filter)
+	}
 	if errCenter != nil {
 		return nil, http.StatusInternalServerError, errCenter
 	}
@@ -53,13 +62,12 @@ func (s *Service) actionTaskCenterList(params map[string]any, locales ...string)
 		result.Items[index] = localizeTask(locale, result.Items[index])
 	}
 	return map[string]any{
-		"items":           result.Items,
-		"total":           result.Total,
-		"page":            result.Page,
-		"page_size":       result.PageSize,
-		"counts":          result.Counts,
-		"history":         result.History,
-		"resident_queues": s.taskCenterResidentQueues(locale),
+		"items":     result.Items,
+		"total":     result.Total,
+		"page":      result.Page,
+		"page_size": result.PageSize,
+		"counts":    result.Counts,
+		"history":   result.History,
 	}, http.StatusOK, nil
 }
 
@@ -143,6 +151,10 @@ func (s *Service) actionTaskCenterQueue(params map[string]any) (any, int, error)
 	default:
 		return nil, http.StatusBadRequest, newAPIActionError("queue_not_found", "api.error.queue_not_found", http.StatusBadRequest, nil)
 	}
+}
+
+func (s *Service) proxyQueueCounts(queueID string) (active, waiting int, ok bool) {
+	return s.env.ProxyQueueDepth(queueID)
 }
 
 func paginateTaskCenterQueue(items []taskCenterQueueItem, page, pageSize int) taskCenterQueuePage {
@@ -257,9 +269,8 @@ func (s *Service) taskCenterResidentQueues(locales ...string) []map[string]any {
 	runtime := proxyService.AutoBindRuntime()
 	autoConfig := store.ProxyAutoBindConfig()
 	autoRunning, autoWaiting := runtime.InFlight, runtime.QueueDepth
-	if detail, ok := s.env.ProxyQueueDetail("auto_bind"); ok {
-		autoRunning = len(detail.Active)
-		autoWaiting = len(detail.Waiting)
+	if running, waiting, ok := s.proxyQueueCounts("auto_bind"); ok {
+		autoRunning, autoWaiting = running, waiting
 	}
 
 	if shouldShowAutoBindQueue(autoConfig.Enabled, autoWaiting, autoRunning, runtime.Running) {
@@ -294,8 +305,7 @@ func (s *Service) taskCenterResidentQueues(locales ...string) []map[string]any {
 	}
 
 	if shouldShowProxyHealthQueue(autoConfig.Enabled, autoConfig.RequireHealthy) {
-		healthDetail, _ := s.env.ProxyQueueDetail("proxy_health")
-		healthRunning, healthWaiting := len(healthDetail.Active), len(healthDetail.Waiting)
+		healthRunning, healthWaiting, _ := s.proxyQueueCounts("proxy_health")
 		healthStatus := "idle"
 		if healthRunning > 0 || healthWaiting > 0 {
 			healthStatus = "running"
@@ -317,24 +327,14 @@ func (s *Service) taskCenterResidentQueues(locales ...string) []map[string]any {
 		})
 	}
 
-	changes := store.ProxyChangeSummaries()
-	if shouldShowProxyChangeQueue(changes) {
-		succeeded, failed, pending := 0, 0, 0
-		updatedAt := time.Time{}
-		lastError := ""
-		lastErrorCode := ""
-		for _, change := range changes {
-			succeeded += change.Counts.Succeeded
-			failed += change.Counts.Failed
-			pending += change.Counts.Pending
-			if change.CreatedAt.After(updatedAt) {
-				updatedAt = change.CreatedAt
-			}
-			if lastError == "" && change.Error != "" {
-				lastError = change.Error
-				lastErrorCode = change.ErrorCode
-			}
-		}
+	changeTotals := store.ProxyChangeTotals()
+	if changeTotals.Active {
+		succeeded := changeTotals.Succeeded
+		failed := changeTotals.Failed
+		pending := changeTotals.Pending
+		updatedAt := changeTotals.UpdatedAt
+		lastError := changeTotals.LastError
+		lastErrorCode := changeTotals.LastErrorCode
 		status := "succeeded"
 		if pending > 0 {
 			status = "running"
@@ -361,37 +361,15 @@ func (s *Service) taskCenterResidentQueues(locales ...string) []map[string]any {
 		})
 	}
 
-	cleanup := store.ResinLeaseDeletesSnapshot()
-	resinBound := 0
-	counts := store.ProxyCounts()
-	if catalog := proxyService.Catalog(); catalog != nil {
-		for _, source := range catalog.Sources {
-			if source.Kind == proxy.SourceResin {
-				resinBound += counts[source.ID]
-			}
-		}
-	}
-	if shouldShowResinCleanupQueue(len(cleanup), resinBound) {
-		pending, failed, paused := 0, 0, 0
-		updatedAt := time.Time{}
-		lastError := ""
-		lastErrorCode := ""
-		for _, job := range cleanup {
-			if job.Paused {
-				paused++
-			} else if job.LastError != "" || job.Status == "permanent_failure" || job.Status == "credential_blocked" {
-				failed++
-			} else {
-				pending++
-			}
-			if job.LastError != "" && lastError == "" {
-				lastError = job.LastError
-				lastErrorCode = job.LastErrorCode
-			}
-			if job.CreatedAt.After(updatedAt) {
-				updatedAt = job.CreatedAt
-			}
-		}
+	cleanup := store.ResinCleanupTotals()
+	resinBound := store.ResinBindingCount()
+	if shouldShowResinCleanupQueue(cleanup.Total, resinBound) {
+		pending := cleanup.Pending
+		failed := cleanup.Failed
+		paused := cleanup.Paused
+		updatedAt := cleanup.UpdatedAt
+		lastError := cleanup.LastError
+		lastErrorCode := cleanup.LastErrorCode
 		status := "idle"
 		if pending > 0 {
 			status = "running"
@@ -408,7 +386,7 @@ func (s *Service) taskCenterResidentQueues(locales ...string) []map[string]any {
 			"category":        "proxy",
 			"status":          status,
 			"description":     i18n.T(locale, "queue.resin_cleanup.description", nil),
-			"total":           len(cleanup),
+			"total":           cleanup.Total,
 			"completed":       0,
 			"running":         0,
 			"waiting":         pending,

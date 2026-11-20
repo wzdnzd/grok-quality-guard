@@ -41,54 +41,101 @@ type BindingState struct {
 }
 
 func (s *Service) actionProxySummary(ctx context.Context) (any, int, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := s.env.ProxyEnsureCatalog(ctx); err != nil {
-		return nil, 500, err
+		return nil, 0, err
 	}
 	catalog := s.proxyCatalog()
 	bound := s.env.ProxyStore().ProxyCounts()
-	sources := s.proxySourcesViewFromCatalog(catalog, bound)
+	sourceCount, sourceCounts, available, enabled := s.proxySourceSummary(catalog, bound)
 	counts, accountTotal, bindingVersion, ok := s.recentBindingCounts()
 	if !ok {
 		counts = emptyBindingCounts()
-		accountTotal, bindingVersion = s.walkProxyCatalogWithVersion(func(row proxyCatalogRow) { counts[row.Status]++ })
-		s.rememberBindingCounts(counts, accountTotal, bindingVersion)
-	}
-	sourceCounts := map[string]int{"node": 0, "template": 0, "resin": 0}
-	available := 0
-	for _, view := range sources {
-		sourceCounts[string(view.Kind)]++
-		entry := catalog.ByID[view.ID]
-		if entry != nil && proxyCandidateEnabled(*entry) && entry.Error == nil && view.Lifecycle == "active" && (entry.Max == 0 || bound[view.ID] < entry.Max) {
-			available++
+		versionBefore := s.BindingVersion()
+		var err error
+		accountTotal, bindingVersion, err = s.walkProxyCatalogWithVersionContext(ctx, func(row proxyCatalogRow) { counts[row.Status]++ })
+		if err != nil {
+			return nil, 0, err
+		}
+		if bindingVersion == versionBefore {
+			s.rememberBindingCounts(counts, accountTotal, bindingVersion)
 		}
 	}
 	_, rotate := s.env.ProxyConfigSnapshot()
-	return map[string]any{"source_count": len(sources), "source_counts": sourceCounts, "available_source_count": available, "enabled_source_count": countEnabledProxySources(sources), "binding_counts": counts, "binding_total": accountTotal, "binding_version": bindingVersion, "auto_bind": s.env.ProxyStore().ProxyAutoBindConfig(), "auto_bind_runtime": s.proxyAutoBindRuntime(), "auto_rotate_after_quality_failure": rotate}, 200, nil
+	return map[string]any{"source_count": sourceCount, "source_counts": sourceCounts, "available_source_count": available, "enabled_source_count": enabled, "binding_counts": counts, "binding_total": accountTotal, "binding_version": bindingVersion, "auto_bind": s.env.ProxyStore().ProxyAutoBindConfig(), "auto_bind_runtime": s.proxyAutoBindRuntime(), "auto_rotate_after_quality_failure": rotate}, 200, nil
 }
 
 func emptyBindingCounts() map[string]int {
 	return map[string]int{"bound": 0, "unbound": 0, "external": 0, "drifted": 0, "unknown": 0, "checking": 0, "read_failed": 0, "reconcile_required": 0}
 }
-func countEnabledProxySources(sources []proxySourceView) int {
-	count := 0
-	for _, s := range sources {
-		if s.Enabled && s.Valid {
-			count++
+
+// proxySourceSummary preserves the previous source-view filtering semantics
+// without retaining a full slice of projected source views. Each view is
+// materialized and discarded immediately, so summary memory is O(1) in S.
+func (s *Service) proxySourceSummary(catalog *proxySourceCatalog, bound map[string]int) (total int, byKind map[string]int, available, enabled int) {
+	byKind = map[string]int{"node": 0, "template": 0, "resin": 0}
+	if catalog == nil {
+		return 0, byKind, 0, 0
+	}
+	for _, catalogIndex := range proxySourceCatalogOrder(catalog) {
+		entry := catalog.Sources[catalogIndex]
+		view, ok := s.proxySourceViewForEntry(entry, bound)
+		if !ok {
+			continue
+		}
+		total++
+		byKind[string(view.Kind)]++
+		if view.Enabled && view.Valid {
+			enabled++
+		}
+		if proxyCandidateEnabled(entry) && entry.Error == nil && view.Lifecycle == "active" && (entry.Max == 0 || bound[entry.ID] < entry.Max) {
+			available++
 		}
 	}
-	return count
+	return total, byKind, available, enabled
 }
-func (s *Service) actionProxySourcesList(params map[string]any) (any, int, error) {
-	sources := s.proxySourcesView()
-	filtered := make([]proxySourceView, 0, len(sources))
-	for _, source := range sources {
-		if proxySourceMatches(source, params) {
-			filtered = append(filtered, source)
-		}
+
+func (s *Service) actionProxySourcesList(ctx context.Context, params map[string]any) (any, int, error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	sort.Slice(filtered, func(i, j int) bool { return filtered[i].ID < filtered[j].ID })
-	page, size, start, end := proxyPage(params, len(filtered))
-	return map[string]any{"items": filtered[start:end], "total": len(filtered), "page": page, "page_size": size}, 200, nil
+	if err := s.env.ProxyEnsureCatalog(ctx); err != nil {
+		return nil, 0, err
+	}
+	page := max(1, actionpkg.Int(params, "page", 1))
+	size := actionpkg.Int(params, "page_size", 50)
+	if size < 1 || size > 500 {
+		size = 50
+	}
+	start := int(^uint(0) >> 1)
+	if page-1 <= start/size {
+		start = (page - 1) * size
+	}
+	catalog := s.proxyCatalog()
+	counts := s.env.ProxyStore().ProxyCounts()
+	order := proxySourceCatalogOrder(catalog)
+	items := make([]proxySourceView, 0, size)
+	total := 0
+	for index, catalogIndex := range order {
+		if index%256 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, 0, err
+			}
+		}
+		entry := catalog.Sources[catalogIndex]
+		if !s.proxySourceEntryMatches(entry, params) {
+			continue
+		}
+		if total >= start && len(items) < size {
+			if view, ok := s.proxySourceViewForEntry(entry, counts); ok {
+				items = append(items, view)
+			}
+		}
+		total++
+	}
+	return map[string]any{"items": items, "total": total, "page": page, "page_size": size}, 200, nil
 }
 func (s *Service) actionProxySourceGet(params map[string]any) (any, int, error) {
 	id := strings.TrimSpace(actionpkg.String(params["source_id"]))
@@ -824,8 +871,11 @@ func (s *Service) actionProxyAutoBindRun() (any, int, error) {
 	return map[string]any{"woken": true, "config": s.env.ProxyStore().ProxyAutoBindConfig(), "runtime": s.proxyAutoBindRuntime()}, 202, nil
 }
 func (s *Service) actionProxyBindingsList(ctx context.Context, params map[string]any) (any, int, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := s.env.ProxyEnsureCatalog(ctx); err != nil {
-		return nil, 500, err
+		return nil, 0, err
 	}
 	page := max(1, actionpkg.Int(params, "page", 1))
 	size := actionpkg.Int(params, "page_size", 50)
@@ -847,7 +897,8 @@ func (s *Service) actionProxyBindingsList(ctx context.Context, params map[string
 	rows := make([]proxyCatalogRow, 0, size)
 	total := 0
 	bindingCounts := emptyBindingCounts()
-	bindingTotal, bindingVersion := s.walkProxyCatalogWithVersion(func(row proxyCatalogRow) {
+	versionBefore := s.BindingVersion()
+	bindingTotal, bindingVersion, errWalk := s.walkProxyCatalogWithVersionContext(ctx, func(row proxyCatalogRow) {
 		bindingCounts[row.Status]++
 		if !proxyStatusMatches(status, row.Status) || source != "" && row.Binding.SourceID != source || query != "" && !catalogAccountMatches(row.Account, query) || excludedSet && row.AutoBind.Excluded != excluded {
 			return
@@ -859,7 +910,12 @@ func (s *Service) actionProxyBindingsList(ctx context.Context, params map[string
 		}
 		total++
 	})
-	s.rememberBindingCounts(bindingCounts, bindingTotal, bindingVersion)
+	if errWalk != nil {
+		return nil, 0, errWalk
+	}
+	if bindingVersion == versionBefore {
+		s.rememberBindingCounts(bindingCounts, bindingTotal, bindingVersion)
+	}
 	if idsOnly {
 		return map[string]any{"items": ids, "total": total, "binding_counts": bindingCounts, "binding_version": bindingVersion}, 200, nil
 	}
@@ -974,44 +1030,75 @@ func (s *Service) proxySourcesView() []proxySourceView {
 	return s.proxySourcesViewFromCatalog(catalog, s.env.ProxyStore().ProxyCounts())
 }
 
+func proxySourceCatalogOrder(catalog *proxySourceCatalog) []int32 {
+	if catalog == nil {
+		return nil
+	}
+	if len(catalog.IDOrder) == len(catalog.Sources) {
+		return catalog.IDOrder
+	}
+	order := make([]int32, len(catalog.Sources))
+	for index := range catalog.Sources {
+		order[index] = int32(index)
+	}
+	sort.Slice(order, func(i, j int) bool {
+		return catalog.Sources[order[i]].ID < catalog.Sources[order[j]].ID
+	})
+	return order
+}
+
+func (s *Service) proxySourceViewForEntry(entry proxySourceCandidate, counts map[string]int) (proxySourceView, bool) {
+	var view proxySourceView
+	switch entry.Kind {
+	case proxy.SourceNode:
+		if entry.Node == nil {
+			return proxySourceView{}, false
+		}
+		view = proxyNodeView(*entry.Node, counts[entry.ID])
+	case proxy.SourceTemplate:
+		if entry.Template == nil {
+			return proxySourceView{}, false
+		}
+		view = proxyTemplateView(*entry.Template, counts[entry.ID])
+	case proxy.SourceResin:
+		if entry.ResinConfig == nil || entry.Template == nil {
+			return proxySourceView{}, false
+		}
+		view = s.resinSourceView(*entry.Template, *entry.ResinConfig, counts[entry.ID])
+	default:
+		return proxySourceView{}, false
+	}
+	view.Valid = entry.Error == nil
+	if entry.Error != nil {
+		view.LastError = redact.SanitizeError(entry.Error)
+		view.LastErrorCode = proxyErrorCode(entry.Error)
+	} else if entry.Runtime.LastError != "" {
+		view.LastError = entry.Runtime.LastError
+		view.LastErrorCode = entry.Runtime.LastErrorCode
+	}
+	view.Lifecycle = firstNonEmptyString(entry.Runtime.Lifecycle, "active")
+	view.ChangeID = entry.Runtime.ChangeID
+	if entry.Runtime.Health != "" {
+		if entry.Runtime.HealthRevision == entry.Revision {
+			view.Health = entry.Runtime.Health
+			view.HealthChecked = entry.Runtime.HealthChecked
+		} else if entry.Node == nil {
+			view.Health = proxy.HealthUnknown
+			view.HealthChecked = time.Time{}
+		}
+	}
+	return view, true
+}
+
 func (s *Service) proxySourcesViewFromCatalog(catalog *proxySourceCatalog, counts map[string]int) []proxySourceView {
 	if catalog == nil {
 		return nil
 	}
 	views := make([]proxySourceView, 0, len(catalog.Sources))
-	for _, entry := range catalog.Sources {
-		var view proxySourceView
-		switch entry.Kind {
-		case proxy.SourceNode:
-			view = proxyNodeView(*entry.Node, counts[entry.ID])
-		case proxy.SourceTemplate:
-			view = proxyTemplateView(*entry.Template, counts[entry.ID])
-		case proxy.SourceResin:
-			if entry.ResinConfig == nil || entry.Template == nil {
-				continue
-			}
-			view = s.resinSourceView(*entry.Template, *entry.ResinConfig, counts[entry.ID])
+	for _, catalogIndex := range proxySourceCatalogOrder(catalog) {
+		if view, ok := s.proxySourceViewForEntry(catalog.Sources[catalogIndex], counts); ok {
+			views = append(views, view)
 		}
-		view.Valid = entry.Error == nil
-		if entry.Error != nil {
-			view.LastError = redact.SanitizeError(entry.Error)
-			view.LastErrorCode = proxyErrorCode(entry.Error)
-		} else if entry.Runtime.LastError != "" {
-			view.LastError = entry.Runtime.LastError
-			view.LastErrorCode = entry.Runtime.LastErrorCode
-		}
-		view.Lifecycle = firstNonEmptyString(entry.Runtime.Lifecycle, "active")
-		view.ChangeID = entry.Runtime.ChangeID
-		if entry.Runtime.Health != "" {
-			if entry.Runtime.HealthRevision == entry.Revision {
-				view.Health = entry.Runtime.Health
-				view.HealthChecked = entry.Runtime.HealthChecked
-			} else if entry.Node == nil {
-				view.Health = proxy.HealthUnknown
-				view.HealthChecked = time.Time{}
-			}
-		}
-		views = append(views, view)
 	}
 	return views
 }
@@ -1223,9 +1310,9 @@ func (s *Service) pruneProxyObservations(authIDs []string, force bool) {
 }
 
 func (s *Service) proxyObservationFor(account Account) proxyObservation {
-	s.mgr.mu.Lock()
+	s.mgr.mu.RLock()
 	observation, ok := s.mgr.observations[account.ID]
-	s.mgr.mu.Unlock()
+	s.mgr.mu.RUnlock()
 	if ok && time.Since(observation.CheckedAt) < catalogRefreshTTL && (account.ModTime.IsZero() || !account.ModTime.After(observation.CheckedAt)) {
 		return observation
 	}
@@ -1290,9 +1377,9 @@ func (s *Service) BindingVersion() uint64 {
 	if s == nil {
 		return 0
 	}
-	s.mgr.mu.Lock()
+	s.mgr.mu.RLock()
 	version := s.mgr.bindingRevision
-	s.mgr.mu.Unlock()
+	s.mgr.mu.RUnlock()
 	return version
 }
 
@@ -1322,8 +1409,8 @@ func (s *Service) recentBindingCounts() (map[string]int, int, uint64, bool) {
 	if s == nil {
 		return nil, 0, 0, false
 	}
-	s.mgr.mu.Lock()
-	defer s.mgr.mu.Unlock()
+	s.mgr.mu.RLock()
+	defer s.mgr.mu.RUnlock()
 	if s.mgr.bindingCounts == nil || s.mgr.bindingCountsVersion != s.mgr.bindingRevision || time.Since(s.mgr.bindingCountsAt) > proxyBindingCountsTTL {
 		return nil, 0, 0, false
 	}
@@ -1351,8 +1438,8 @@ func (s *Service) resolveBindingStates(accounts []Account, projections []statepk
 		return nil
 	}
 	states := make([]BindingState, len(accounts))
-	s.mgr.mu.Lock()
-	defer s.mgr.mu.Unlock()
+	s.mgr.mu.RLock()
+	defer s.mgr.mu.RUnlock()
 	now := time.Now()
 	version := s.mgr.bindingRevision
 	for i, account := range accounts {
@@ -1427,47 +1514,71 @@ func (s *Service) walkProxyCatalog(visit func(proxyCatalogRow)) int {
 	return total
 }
 
+const proxyBindingChunk = 1024
+
 func (s *Service) walkProxyCatalogWithVersion(visit func(proxyCatalogRow)) (int, uint64) {
+	total, version, _ := s.walkProxyCatalogWithVersionContext(context.Background(), visit)
+	return total, version
+}
+
+func (s *Service) walkProxyCatalogWithVersionContext(ctx context.Context, visit func(proxyCatalogRow)) (int, uint64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, 0, err
+	}
 	accounts := s.env.ProxyCatalogSnapshot()
-	ids := make([]string, len(accounts))
-	for i, account := range accounts {
-		ids[i] = account.ID
-	}
-	// This full-catalog walk is the only request path allowed to prune the
-	// observation overlay. Page-scoped resolvers must never pass just their
-	// visible IDs here or they would evict observations for other pages.
-	s.maybePruneProxyObservations(ids)
-	projections := s.env.ProxyStore().ProxyBindingProjectionsForIDs(ids)
-	resolved := s.resolveBindingStates(accounts, projections)
+	store := s.env.ProxyStore()
 	version := s.BindingVersion()
-	if len(resolved) > 0 {
-		version = resolved[0].Version
-	}
-	for i, account := range accounts {
-		projection := projections[i]
-		state := resolved[i]
-		row := proxyCatalogRow{
-			Account: account,
-			Status:  state.Status,
-			Binding: proxy.Binding{
-				AuthID:         account.ID,
-				SourceID:       projection.SourceID,
-				SourceKind:     projection.SourceKind,
-				SourceRevision: projection.SourceRevision,
-				Generation:     projection.Generation,
-				EndpointHash:   projection.EndpointHash,
-			},
-			State: state,
-			AutoBind: proxy.AutoBindAccountState{
-				Excluded:      projection.AutoBindExcluded,
-				NextAttemptAt: projection.NextAttemptAt,
-				LastError:     projection.LastError,
-				LastErrorCode: projection.LastErrorCode,
-			},
+	chunkIDs := make([]string, proxyBindingChunk)
+	for base := 0; base < len(accounts); base += proxyBindingChunk {
+		if err := ctx.Err(); err != nil {
+			return 0, 0, err
 		}
-		visit(row)
+		end := min(base+proxyBindingChunk, len(accounts))
+		chunk := accounts[base:end]
+		ids := chunkIDs[:len(chunk)]
+		for index, account := range chunk {
+			ids[index] = account.ID
+		}
+		projections := store.ProxyBindingProjectionsForIDs(ids)
+		resolved := s.resolveBindingStates(chunk, projections)
+		if len(resolved) > 0 {
+			version = resolved[0].Version
+		}
+		for index, account := range chunk {
+			projection := statepkg.ProxyBindingProjection{}
+			if index < len(projections) {
+				projection = projections[index]
+			}
+			state := BindingState{}
+			if index < len(resolved) {
+				state = resolved[index]
+			}
+			row := proxyCatalogRow{
+				Account: account,
+				Status:  state.Status,
+				Binding: proxy.Binding{
+					AuthID:         account.ID,
+					SourceID:       projection.SourceID,
+					SourceKind:     projection.SourceKind,
+					SourceRevision: projection.SourceRevision,
+					Generation:     projection.Generation,
+					EndpointHash:   projection.EndpointHash,
+				},
+				State: state,
+				AutoBind: proxy.AutoBindAccountState{
+					Excluded:      projection.AutoBindExcluded,
+					NextAttemptAt: projection.NextAttemptAt,
+					LastError:     projection.LastError,
+					LastErrorCode: projection.LastErrorCode,
+				},
+			}
+			visit(row)
+		}
 	}
-	return len(accounts), version
+	return len(accounts), version, nil
 }
 
 func proxyRowView(row proxyCatalogRow) map[string]any {
@@ -1493,6 +1604,144 @@ func proxyPage(params map[string]any, total int) (page, size, start, end int) {
 	}
 	end = min(total, start+size)
 	return
+}
+
+func (s *Service) proxySourceEntryMatches(entry proxySourceCandidate, params map[string]any) bool {
+	switch entry.Kind {
+	case proxy.SourceNode, proxy.SourceTemplate, proxy.SourceResin:
+	default:
+		return false
+	}
+	kind := strings.ToLower(strings.TrimSpace(actionpkg.String(params["kind"])))
+	if kind != "" && kind != "all" && kind != string(entry.Kind) {
+		return false
+	}
+	if entry.Kind == proxy.SourceResin && (entry.ResinConfig == nil || entry.Template == nil) {
+		return false
+	}
+	if entry.Kind == proxy.SourceNode && entry.Node == nil || entry.Kind == proxy.SourceTemplate && entry.Template == nil {
+		return false
+	}
+	query := strings.ToLower(strings.TrimSpace(actionpkg.String(params["query"])))
+	if query != "" {
+		parts := [3]string{entry.Name, proxySourceEndpointForEntry(entry), entry.ID}
+		if !proxyContainsFoldPartsASCII(parts[:], query) {
+			return false
+		}
+	}
+	switch enabled := strings.ToLower(strings.TrimSpace(actionpkg.String(params["enabled"]))); enabled {
+	case "enabled", "true":
+		if !proxyCandidateEnabled(entry) {
+			return false
+		}
+	case "disabled", "false":
+		if proxyCandidateEnabled(entry) {
+			return false
+		}
+	}
+	health := strings.ToLower(strings.TrimSpace(actionpkg.String(params["health"])))
+	if health == "" || health == "all" {
+		return true
+	}
+	current := string(proxySourceHealthForEntry(entry))
+	if current == "" {
+		current = string(proxy.HealthUnknown)
+	}
+	switch health {
+	case "healthy", "unhealthy", "unknown":
+		return current == health
+	case "reachable":
+		return current == string(proxy.HealthHealthy)
+	case "unreachable":
+		return current == string(proxy.HealthUnhealthy)
+	case "untested":
+		return current == string(proxy.HealthUnknown)
+	default:
+		return false
+	}
+}
+
+func proxySourceEndpointForEntry(entry proxySourceCandidate) string {
+	if entry.Node != nil {
+		return entry.Node.Endpoint.MaskedCredentialURL()
+	}
+	if entry.Template != nil {
+		return entry.Template.URLForDisplay()
+	}
+	return ""
+}
+
+func proxySourceHealthForEntry(entry proxySourceCandidate) proxy.HealthStatus {
+	if entry.Node != nil {
+		health := entry.Node.Health
+		if entry.Runtime.Health != "" && entry.Runtime.HealthRevision == entry.Revision {
+			return entry.Runtime.Health
+		}
+		return health
+	}
+	if entry.Runtime.Health != "" && entry.Runtime.HealthRevision == entry.Revision {
+		return entry.Runtime.Health
+	}
+	return proxy.HealthUnknown
+}
+
+func proxyContainsFoldPartsASCII(parts []string, needle string) bool {
+	if needle == "" {
+		return true
+	}
+	for _, part := range parts {
+		for index := 0; index < len(part); index++ {
+			if part[index] >= 0x80 {
+				return strings.Contains(strings.ToLower(strings.Join(parts, " ")), needle)
+			}
+		}
+	}
+	for index := 0; index < len(needle); index++ {
+		if needle[index] >= 0x80 {
+			return strings.Contains(strings.ToLower(strings.Join(parts, " ")), needle)
+		}
+	}
+	total := len(parts) - 1
+	for _, part := range parts {
+		total += len(part)
+	}
+	if len(needle) > total {
+		return false
+	}
+	byteAt := func(index int) byte {
+		for _, part := range parts {
+			if index < len(part) {
+				return part[index]
+			}
+			index -= len(part)
+			if index == 0 {
+				return ' '
+			}
+			index--
+		}
+		return 0
+	}
+	for start := 0; start+len(needle) <= total; start++ {
+		matched := true
+		for offset := 0; offset < len(needle); offset++ {
+			haystack := byteAt(start + offset)
+			needleByte := needle[offset]
+			if haystack >= 'A' && haystack <= 'Z' {
+				haystack += 'a' - 'A'
+			}
+			if needleByte >= 'A' && needleByte <= 'Z' {
+				needleByte += 'a' - 'A'
+			}
+			if haystack != needleByte {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 func proxySourceMatches(view proxySourceView, params map[string]any) bool {

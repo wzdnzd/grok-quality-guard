@@ -60,7 +60,7 @@ func (s *Store) CommitProxy(commit ProxyCommit) error {
 		return err
 	}
 	s.applyProxyCommitLocked(commit)
-	s.dirty = true
+	s.markDirtyLocked()
 	s.mu.Unlock()
 	s.scheduleFlush()
 	return nil
@@ -178,7 +178,7 @@ func (s *Store) replayProxyJournalLocked() error {
 			return errors.New("proxy journal sequence gap")
 		}
 		s.applyProxyCommitLocked(commit)
-		s.dirty = true
+		s.markDirtyLocked()
 	}
 }
 
@@ -285,6 +285,9 @@ func (s *Store) applyProxyCommitLocked(commit ProxyCommit) {
 	}
 	if commit.Event != nil {
 		appendEvent(state, *commit.Event)
+		if commit.Event.Class != "" {
+			s.markOverviewChangedLocked()
+		}
 	}
 	state.Proxy.JournalSequence = commit.Sequence
 	state.UpdatedAt = time.Now().UTC()
@@ -302,19 +305,26 @@ func proxyChangeBucket(status string) string {
 }
 
 func (s *Store) indexProxyAccountLocked(id string, previous, current *AccountState) {
+	oldSource, newSource := "", ""
+	oldLease, newLease := "", ""
+	if previous != nil {
+		oldSource, _ = proxyBindingSource(*previous)
+		oldLease = proxyLeaseIdentity(*previous)
+	}
+	if current != nil {
+		newSource, _ = proxyBindingSource(*current)
+		newLease = proxyLeaseIdentity(*current)
+	}
+	s.indexProxyAccountIdentitiesLocked(id, oldSource, newSource, oldLease, newLease)
+}
+
+func (s *Store) indexProxyAccountIdentitiesLocked(id, oldSource, newSource, oldLease, newLease string) {
 	if s.proxyCounts == nil {
 		s.proxyCounts = make(map[string]int)
 		s.proxyBySource = make(map[string]map[string]struct{})
 	}
 	if s.proxyLeaseAccounts == nil {
 		s.proxyLeaseAccounts = make(map[string]int)
-	}
-	oldLease, newLease := "", ""
-	if previous != nil {
-		oldLease = proxyLeaseIdentity(*previous)
-	}
-	if current != nil {
-		newLease = proxyLeaseIdentity(*current)
 	}
 	if oldLease != newLease {
 		if oldLease != "" {
@@ -327,13 +337,7 @@ func (s *Store) indexProxyAccountLocked(id string, previous, current *AccountSta
 			s.proxyLeaseAccounts[newLease]++
 		}
 	}
-	oldID, newID := "", ""
-	if previous != nil {
-		oldID, _ = proxyBindingSource(*previous)
-	}
-	if current != nil {
-		newID, _ = proxyBindingSource(*current)
-	}
+	oldID, newID := oldSource, newSource
 	if oldID == newID {
 		return
 	}
@@ -631,7 +635,7 @@ func (s *Store) PrepareProxy(operation proxy.Operation, automatic bool) error {
 		return err
 	}
 	s.applyProxyCommitLocked(commit)
-	s.dirty = true
+	s.markDirtyLocked()
 	s.scheduleFlush()
 	return nil
 }
@@ -688,6 +692,23 @@ func (s *Store) ProxyCounts() map[string]int {
 		counts[id] = count
 	}
 	return counts
+}
+
+// ResinBindingCount returns the aggregate needed by the resident queue card
+// without copying the source-count map or rebuilding the proxy catalog.
+func (s *Store) ResinBindingCount() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	total := 0
+	for _, template := range s.state.Proxy.Templates {
+		if template.Kind == proxy.TemplateResin {
+			total += s.proxyCounts[template.ID]
+		}
+	}
+	return total
 }
 
 func (s *Store) ProxyAuthIDs(sourceID string) []string {
@@ -805,9 +826,48 @@ func (s *Store) RecordProxyHealth(id string, revision uint64, health proxy.Healt
 		return err
 	}
 	s.applyProxyCommitLocked(commit)
-	s.dirty = true
+	s.markDirtyLocked()
 	s.scheduleFlush()
 	return nil
+}
+
+// ProxyChangeTotals returns the small aggregate needed by the resident queue
+// card. It deliberately avoids copying the change slice on every polling tick.
+type ProxyChangeTotals struct {
+	Succeeded     int
+	Failed        int
+	Pending       int
+	UpdatedAt     time.Time
+	LastError     string
+	LastErrorCode string
+	Active        bool
+}
+
+func (s *Store) ProxyChangeTotals() ProxyChangeTotals {
+	if s == nil {
+		return ProxyChangeTotals{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	totals := ProxyChangeTotals{}
+	for _, change := range s.state.Proxy.Changes {
+		totals.Succeeded += change.Counts.Succeeded
+		totals.Failed += change.Counts.Failed
+		totals.Pending += change.Counts.Pending
+		if change.CreatedAt.After(totals.UpdatedAt) {
+			totals.UpdatedAt = change.CreatedAt
+		}
+		if totals.LastError == "" && change.Error != "" {
+			totals.LastError = change.Error
+			totals.LastErrorCode = change.ErrorCode
+		}
+		if change.Counts.Pending > 0 || change.Counts.Failed > 0 {
+			totals.Active = true
+		} else if change.Status == "pending" || change.Status == "running" || change.Status == "partial" || change.Status == "failed" {
+			totals.Active = true
+		}
+	}
+	return totals
 }
 
 func (s *Store) ProxyChangeSummaries() []proxy.SourceChange {

@@ -367,11 +367,14 @@ func TestCatalogDependentManagementActionsSurfaceLoadFailure(t *testing.T) {
 		response := actionManagementForTest(t, plugin, action, map[string]any{
 			"page": 1, "page_size": 50, "summary": true,
 		})
-		if response.StatusCode != http.StatusBadGateway {
-			t.Fatalf("%s status = %d, want %d; body=%s", action, response.StatusCode, http.StatusBadGateway, response.Body)
+		if response.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("%s status = %d, want %d; body=%s", action, response.StatusCode, http.StatusServiceUnavailable, response.Body)
 		}
-		if !strings.Contains(string(response.Body), `"code":"upstream_error"`) {
-			t.Fatalf("%s did not expose upstream_error: %s", action, response.Body)
+		if !strings.Contains(string(response.Body), `"code":"catalog_loading"`) {
+			t.Fatalf("%s did not expose catalog_loading: %s", action, response.Body)
+		}
+		if response.Headers.Get("Retry-After") != "1" {
+			t.Fatalf("%s Retry-After = %q, want 1", action, response.Headers.Get("Retry-After"))
 		}
 	}
 }
@@ -456,9 +459,56 @@ func TestLargeCatalogManagementAvoidsPerAccountHostReads(t *testing.T) {
 		t.Fatalf("ids_only response is not materially smaller: ids=%d summary=%d", len(idsResponse.Body), len(response.Body))
 	}
 
+	allIDsResponse := actionManagementForTest(t, plugin, "accounts.list", map[string]any{
+		"page":      1,
+		"page_size": 5,
+		"ids_only":  true,
+		"all_ids":   true,
+	})
+	if allIDsResponse.StatusCode != 200 {
+		t.Fatalf("accounts.list all_ids status = %d body=%s", allIDsResponse.StatusCode, allIDsResponse.Body)
+	}
+	var allIDsDecoded struct {
+		Data struct {
+			Items []string `json:"items"`
+			Total int      `json:"total"`
+		} `json:"data"`
+	}
+	if errUnmarshal := json.Unmarshal(allIDsResponse.Body, &allIDsDecoded); errUnmarshal != nil {
+		t.Fatalf("decode all_ids response: %v", errUnmarshal)
+	}
+	lastID := ""
+	if len(allIDsDecoded.Data.Items) > 0 {
+		lastID = allIDsDecoded.Data.Items[len(allIDsDecoded.Data.Items)-1]
+	}
+	if allIDsDecoded.Data.Total != authCount || len(allIDsDecoded.Data.Items) != authCount || lastID != "auth-2999" {
+		t.Fatalf("unexpected all_ids response: total=%d items=%d last=%q", allIDsDecoded.Data.Total, len(allIDsDecoded.Data.Items), lastID)
+	}
+
 	overview := actionManagementForTest(t, plugin, "overview", nil)
 	if overview.StatusCode != 200 {
 		t.Fatalf("overview status = %d body=%s", overview.StatusCode, overview.Body)
+	}
+	if errUpdate := plugin.stateStore().UpdateAccount("auth-0000", func(account *appstate.AccountState) (*appstate.Event, error) {
+		account.State = appstate.StateHealthy
+		return nil, nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	overviewAfterUpdate := actionManagementForTest(t, plugin, "overview", nil)
+	if overviewAfterUpdate.StatusCode != 200 {
+		t.Fatalf("overview after state update status = %d body=%s", overviewAfterUpdate.StatusCode, overviewAfterUpdate.Body)
+	}
+	var overviewDecoded struct {
+		Data struct {
+			States map[string]int `json:"states"`
+		} `json:"data"`
+	}
+	if errUnmarshal := json.Unmarshal(overviewAfterUpdate.Body, &overviewDecoded); errUnmarshal != nil {
+		t.Fatalf("decode overview: %v", errUnmarshal)
+	}
+	if overviewDecoded.Data.States[appstate.StateHealthy] != 1 || overviewDecoded.Data.States[appstate.StateUnknown] != authCount-1 {
+		t.Fatalf("overview cache was not invalidated by state revision: %#v", overviewDecoded.Data.States)
 	}
 	listCalls, modelCalls, getCalls := host.catalogCallCounts()
 	if listCalls != 0 || modelCalls != 0 || getCalls != 0 {

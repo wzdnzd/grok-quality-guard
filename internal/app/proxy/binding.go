@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	mathrand "math/rand/v2"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -146,6 +147,7 @@ type proxySourceCatalog struct {
 	Epoch   uint64
 	Sources []proxySourceCandidate
 	ByID    map[string]*proxySourceCandidate
+	IDOrder []int32
 }
 
 type proxyObservation struct {
@@ -156,7 +158,7 @@ type proxyObservation struct {
 }
 
 type proxyManager struct {
-	mu                        sync.Mutex
+	mu                        sync.RWMutex
 	buildMu                   sync.Mutex
 	scanMu                    sync.Mutex
 	changeMu                  sync.Mutex
@@ -296,17 +298,17 @@ func proxyScopeContains(scope string, kind proxy.SourceKind) bool {
 func (s *Service) proxyCatalog() *proxySourceCatalog {
 	store := s.env.ProxyStore()
 	epoch := store.ProxySourcesEpoch()
-	s.mgr.mu.Lock()
+	s.mgr.mu.RLock()
 	cached := s.mgr.catalog
-	s.mgr.mu.Unlock()
+	s.mgr.mu.RUnlock()
 	if cached != nil && cached.Store == store && cached.Epoch == epoch {
 		return cached
 	}
 	s.mgr.buildMu.Lock()
 	defer s.mgr.buildMu.Unlock()
-	s.mgr.mu.Lock()
+	s.mgr.mu.RLock()
 	cached = s.mgr.catalog
-	s.mgr.mu.Unlock()
+	s.mgr.mu.RUnlock()
 	if cached != nil && cached.Store == store && cached.Epoch == epoch {
 		return cached
 	}
@@ -355,6 +357,13 @@ func (s *Service) proxyCatalog() *proxySourceCatalog {
 	for i := range catalog.Sources {
 		catalog.ByID[catalog.Sources[i].ID] = &catalog.Sources[i]
 	}
+	catalog.IDOrder = make([]int32, len(catalog.Sources))
+	for i := range catalog.Sources {
+		catalog.IDOrder[i] = int32(i)
+	}
+	sort.Slice(catalog.IDOrder, func(i, j int) bool {
+		return catalog.Sources[catalog.IDOrder[i]].ID < catalog.Sources[catalog.IDOrder[j]].ID
+	})
 	s.mgr.mu.Lock()
 	s.mgr.catalog = catalog
 	s.mgr.mu.Unlock()

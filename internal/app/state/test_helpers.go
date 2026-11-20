@@ -7,12 +7,14 @@ package state
 func (s *Store) SetStateForTest(value State) {
 	s.mu.Lock()
 	s.state = value
+	s.markOverviewChangedLocked()
 	s.mu.Unlock()
 }
 
 func (s *Store) UpdateStateForTest(fn func(*State)) {
 	s.mu.Lock()
 	fn(&s.state)
+	s.markOverviewChangedLocked()
 	s.mu.Unlock()
 }
 

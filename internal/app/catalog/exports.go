@@ -10,6 +10,10 @@ import (
 func (s *Service) RunRefreshLoop(ctx context.Context)        { s.refreshLoop(ctx) }
 func (s *Service) Ensure(ctx context.Context) error          { return s.ensureCatalog(ctx) }
 func (s *Service) Snapshot() []Account                       { return s.catalogSnapshot() }
+func (s *Service) SnapshotWithIDOrder() ([]Account, []int32) { return s.catalogWithIDOrder() }
+func (s *Service) SnapshotWithIDOrderRevision() ([]Account, []int32, uint64) {
+	return s.catalogWithIDOrderRevision()
+}
 func (s *Service) FindAccount(authID string) (Account, bool) { return s.findAccount(authID) }
 func (s *Service) ResolveAuth(ctx context.Context, authID string) (Account, pluginapi.HostAuthGetResponse, map[string]json.RawMessage, error) {
 	return s.resolveAuth(ctx, authID)

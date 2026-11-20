@@ -5342,6 +5342,7 @@
       listRequests: { accounts: 0, leases: 0, sources: 0 },
       listLoadedAt: { accounts: 0, leases: 0, sources: 0 },
       listPromises: { accounts: null, leases: null, sources: null },
+      listControllers: { accounts: null, leases: null, sources: null },
       listSignatures: { accounts: '', leases: '', sources: '' },
       activeTab: 'overview',
       accountQuery: '',
@@ -5765,16 +5766,23 @@
       if (!CJK_TEXT.test(text)) return i18n.t('error.generic');
       return i18n.translateSource(text);
     }
-    async function api(action, params) {
+    async function api(action, params, options) {
       let response;
       try {
         response = await fetch(API, {
           method: 'POST',
           credentials: 'same-origin',
+          signal: options && options.signal,
           headers: { 'Content-Type': 'application/json', 'Accept-Language': i18n.locale },
           body: JSON.stringify({ action: action, params: params || {} })
         });
       } catch (cause) {
+        if (cause && cause.name === 'AbortError') {
+          const error = new Error('request aborted');
+          error.code = 'aborted';
+          error.cause = cause;
+          throw error;
+        }
         const error = new Error(i18n.t('error.network'));
         error.code = 'network_error';
         error.cause = cause;
@@ -5792,11 +5800,50 @@
         const error = new Error(friendlyApiMessage(rawMessage, rawCode));
         error.code = rawCode;
         error.status = response.status;
+        const retryAfter = Number(response.headers.get('Retry-After') || 0);
+        error.retryAfter = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 0;
         error.details = payload && payload.error && payload.error.details;
         error.path = payload && payload.error && payload.error.path;
         throw error;
       }
       return payload.data;
+    }
+    function abortError() {
+      const error = new Error('request aborted');
+      error.code = 'aborted';
+      return error;
+    }
+    function retryableReadError(error) {
+      return error && (error.code === 'catalog_loading' || error.code === 'busy');
+    }
+    function waitForRetry(delay, signal) {
+      if (!delay) return Promise.resolve();
+      if (signal && signal.aborted) return Promise.reject(abortError());
+      return new Promise((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          if (signal) signal.removeEventListener('abort', onAbort);
+          resolve();
+        }, delay);
+        const onAbort = () => {
+          window.clearTimeout(timer);
+          if (signal) signal.removeEventListener('abort', onAbort);
+          reject(abortError());
+        };
+        if (signal) signal.addEventListener('abort', onAbort, { once: true });
+      });
+    }
+    async function apiWithRetry(action, params, options, maxRetries) {
+      const retries = Number.isFinite(maxRetries) ? Math.max(0, maxRetries) : 2;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await api(action, params, options);
+        } catch (error) {
+          if (!retryableReadError(error) || attempt >= retries) throw error;
+          const delay = Math.min(30000, Math.max(500, Number(error.retryAfter || 0) || 1000 * (attempt + 1)));
+          await waitForRetry(delay, options && options.signal);
+          if (options && options.signal && options.signal.aborted) throw abortError();
+        }
+      }
     }
     function rememberProxyTask(task, label) {
       if (!task || !task.task_id) return;
@@ -5974,13 +6021,13 @@
         name: source?.name || account.proxy_source_name || ''
       };
     }
-    async function loadList(kind) {
+    async function loadList(kind, signal) {
       let signature = listRequestSignature(kind);
       const request = ++state.listRequests[kind];
       const action = kind === 'accounts' ? 'accounts.list' : (kind === 'leases' ? 'proxy.bindings.list' : 'proxy.sources.list');
       for (;;) {
         const params = listParams(kind);
-        const value = await api(action, params);
+        const value = await apiWithRetry(action, params, { signal: signal }, 2);
         if (request !== state.listRequests[kind] || signature !== listRequestSignature(kind)) return null;
         const data = Object.assign({ items: [], total: 0, page: params.page, page_size: params.page_size }, value || {});
         const pages = Math.max(1, Math.ceil(Number(data.total || 0) / params.page_size));
@@ -6055,14 +6102,20 @@
       const signature = listRequestSignature(kind);
       if (state.listPromises[kind]) {
         if (state.listSignatures[kind] === signature) return state.listPromises[kind];
-        return state.listPromises[kind].catch(() => null).then(() => startListLoad(kind));
+        state.listControllers[kind]?.abort();
       }
+      if (state.listControllers[kind]) {
+        state.listControllers[kind].abort();
+      }
+      const controller = new AbortController();
+      state.listControllers[kind] = controller;
       state.listSignatures[kind] = signature;
-      const promise = loadList(kind).then((data) => {
-        if (data) renderListKind(kind);
+      const promise = loadList(kind, controller.signal).then((data) => {
+        if (data && controller.signal === state.listControllers[kind]?.signal) renderListKind(kind);
         return data;
       }).finally(() => {
         if (state.listPromises[kind] === promise) state.listPromises[kind] = null;
+        if (state.listControllers[kind] === controller) state.listControllers[kind] = null;
       });
       state.listPromises[kind] = promise;
       return promise;
@@ -6077,24 +6130,23 @@
     }
     async function reloadList(kind) {
       try { await startListLoad(kind); }
-      catch (error) { toast(error.message || i18n.t("ui.list_load_failed"), 'error'); }
+      catch (error) {
+        if (error?.code !== 'aborted') toast(error.message || i18n.t("ui.list_load_failed"), 'error');
+      }
     }
     const listReloadTimers = new Map();
     function scheduleListReload(kind) {
       state.listRequests[kind] += 1;
       window.clearTimeout(listReloadTimers.get(kind));
-      listReloadTimers.set(kind, window.setTimeout(() => reloadList(kind), 250));
+      listReloadTimers.set(kind, window.setTimeout(() => reloadList(kind), 200));
     }
     async function loadAllAccounts(kind, all) {
       const ids = new Set();
       const params = listParams(kind, all);
       const action = kind === 'leases' ? 'proxy.bindings.list' : 'accounts.list';
-      for (let page = 1; ; page += 1) {
-        const value = await api(action, Object.assign({}, params, { page: page, page_size: 10000, summary: true, ids_only: true }));
-        const items = (value && value.items) || [];
-        items.forEach((item) => { const id = typeof item === 'string' ? item : item.auth_id; if (id) ids.add(id); });
-        if (!items.length || ids.size >= Number(value.total || items.length) || page * 10000 >= Number(value.total || items.length)) break;
-      }
+      const value = await apiWithRetry(action, Object.assign({}, params, { page: 1, page_size: 10000, ids_only: true, all_ids: true }), null, 2);
+      const items = (value && value.items) || [];
+      items.forEach((item) => { const id = typeof item === 'string' ? item : item.auth_id; if (id) ids.add(id); });
       return ids;
     }
     async function selectListScope(kind, all, button) {
@@ -9280,7 +9332,7 @@
       if (state.taskCenterQueuesPromise) return state.taskCenterQueuesPromise;
       state.taskCenterQueuesPromise = (async () => {
         try {
-          const result = await api('tasks.center.queues');
+          const result = await apiWithRetry('tasks.center.queues', null, null, 2);
           const queues = Array.isArray(result?.resident_queues) ? result.resident_queues : [];
           state.taskCenter = Object.assign({}, state.taskCenter || {}, { resident_queues: queues });
           renderResidentQueues(queues);
@@ -9299,13 +9351,13 @@
       try {
         let result = null;
         for (let attempt = 0; attempt < 2; attempt++) {
-          result = await api('tasks.center.list', {
+          result = await apiWithRetry('tasks.center.list', {
             page: state.taskCenterPage,
             page_size: state.taskCenterPageSize,
             category: state.taskCenterCategory === 'all' ? '' : state.taskCenterCategory,
             status: state.taskCenterStatus === 'all' ? '' : state.taskCenterStatus,
             query: state.taskCenterQuery
-          });
+          }, null, 2);
           if (request !== state.taskCenterListRequest) return;
           const page = Number(result?.page || 1);
           const pages = Math.max(1, Math.ceil(Number(result?.total || 0) / Number(result?.page_size || state.taskCenterPageSize || 20)));
@@ -9313,7 +9365,10 @@
           state.taskCenterPage = pages;
         }
         if (!result) return;
-        state.taskCenter = result;
+        const previousQueues = Array.isArray(state.taskCenter?.resident_queues) ? state.taskCenter.resident_queues : [];
+        state.taskCenter = Object.assign({}, result, {
+          resident_queues: Array.isArray(result.resident_queues) ? result.resident_queues : previousQueues
+        });
         state.taskCenterPage = Number(result.page || 1);
         renderTaskCenter();
         if (request !== state.taskCenterListRequest) return;
@@ -10084,9 +10139,9 @@
       }
     });
     document.getElementById('accountSearch').addEventListener('input', (event) => { state.accountQuery = event.target.value; state.accountPage = 1; scheduleListReload('accounts'); });
-    document.getElementById('accountStateFilter').addEventListener('change', (event) => { state.accountState = event.target.value; state.accountPage = 1; reloadList('accounts'); });
+    document.getElementById('accountStateFilter').addEventListener('change', (event) => { state.accountState = event.target.value; state.accountPage = 1; scheduleListReload('accounts'); });
     document.getElementById('leaseSearch').addEventListener('input', (event) => { state.leaseQuery = event.target.value; state.leasePage = 1; scheduleListReload('leases'); });
-    document.getElementById('leaseFilter').addEventListener('change', (event) => { state.leaseFilter = event.target.value; state.leasePage = 1; reloadList('leases'); });
+    document.getElementById('leaseFilter').addEventListener('change', (event) => { state.leaseFilter = event.target.value; state.leasePage = 1; scheduleListReload('leases'); });
         document.getElementById('leaseSourceFilter').addEventListener('input', (event) => {
       const value = event.target.value.trim();
       const selected = applyLeaseSourceFilterInput(value);
@@ -10353,9 +10408,9 @@
     document.getElementById('proxyImportNodesBtn').addEventListener('click', () => openProxyImportEditor().catch((error) => toast(error.message, 'error')));
     document.getElementById('proxySourceRefreshBtn').addEventListener('click', (event) => refreshResin(event.currentTarget));
     document.getElementById('proxySourceSearch').addEventListener('input', (event) => { state.proxySourceQuery = event.target.value; state.proxySourcePage = 1; scheduleListReload('sources'); });
-    document.getElementById('proxySourceFilter').addEventListener('change', (event) => { state.proxySourceFilter = event.target.value; state.proxySourcePage = 1; reloadList('sources'); });
-    document.getElementById('proxySourceEnabledFilter').addEventListener('change', (event) => { state.proxySourceEnabledFilter = event.target.value; state.proxySourcePage = 1; reloadList('sources'); });
-    document.getElementById('proxySourceHealthFilter').addEventListener('change', (event) => { state.proxySourceHealthFilter = event.target.value; state.proxySourcePage = 1; reloadList('sources'); });
+    document.getElementById('proxySourceFilter').addEventListener('change', (event) => { state.proxySourceFilter = event.target.value; state.proxySourcePage = 1; scheduleListReload('sources'); });
+    document.getElementById('proxySourceEnabledFilter').addEventListener('change', (event) => { state.proxySourceEnabledFilter = event.target.value; state.proxySourcePage = 1; scheduleListReload('sources'); });
+    document.getElementById('proxySourceHealthFilter').addEventListener('change', (event) => { state.proxySourceHealthFilter = event.target.value; state.proxySourcePage = 1; scheduleListReload('sources'); });
     document.getElementById('policyForm').addEventListener('submit', (event) => {
       event.preventDefault();
       savePolicy(event.submitter || document.querySelector('#policyForm button[type="submit"]'));

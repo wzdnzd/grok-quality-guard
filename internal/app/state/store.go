@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -177,7 +176,10 @@ type Store struct {
 
 	flushMu               sync.Mutex
 	flushTimer            *time.Timer
+	persistMu             sync.Mutex
 	dirty                 bool
+	dirtySeq              uint64
+	overviewSeq           uint64
 	proxyCounts           map[string]int
 	proxyBySource         map[string]map[string]struct{}
 	proxyPending          map[string]string
@@ -191,6 +193,15 @@ type Store struct {
 	proxyCleanupIndex     map[string]int
 	proxyLastGC           time.Time
 	proxyRecoveredChanges []string
+}
+
+func (s *Store) markDirtyLocked() {
+	s.dirty = true
+	s.dirtySeq++
+}
+
+func (s *Store) markOverviewChangedLocked() {
+	s.overviewSeq++
 }
 
 const stateFlushInterval = time.Second
@@ -231,6 +242,18 @@ func (s *Store) UpdatedAt() time.Time {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.state.UpdatedAt
+}
+
+// OverviewRevision advances only when a change can affect dashboard aggregate
+// counts. Observation timestamps and proxy-only mutations do not invalidate
+// the small state-count cache used by the overview endpoint.
+func (s *Store) OverviewRevision() uint64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.overviewSeq
 }
 
 // SetPath moves the live state to a new file without losing concurrent updates.
@@ -279,6 +302,7 @@ func (s *Store) setPath(path string, overwrite bool) error {
 	}
 	s.path = path
 	s.state.UpdatedAt = time.Now().UTC()
+	s.markDirtyLocked()
 	if errSave := s.saveLocked(); errSave != nil {
 		s.path = oldPath
 		s.state.UpdatedAt = oldUpdatedAt
@@ -391,6 +415,7 @@ func (s *Store) Load(defaultPolicy config.Policy, revision string) error {
 			return errJournal
 		}
 		s.rebuildProxyIndexesLocked()
+		s.markDirtyLocked()
 		return s.saveLocked()
 	}
 	var state State
@@ -445,6 +470,7 @@ func (s *Store) Load(defaultPolicy config.Policy, revision string) error {
 	}
 	s.state = state
 	s.rebuildProxyIndexesLocked()
+	s.markOverviewChangedLocked()
 	if errJournal := s.replayProxyJournalLocked(); errJournal != nil {
 		return errJournal
 	}
@@ -593,6 +619,42 @@ func (s *Store) ResinLeaseDeletesSnapshot() []ResinLeaseDelete {
 	return append([]ResinLeaseDelete(nil), s.state.ResinLeaseDeletes...)
 }
 
+type ResinCleanupTotals struct {
+	Total         int
+	Pending       int
+	Failed        int
+	Paused        int
+	UpdatedAt     time.Time
+	LastError     string
+	LastErrorCode string
+}
+
+func (s *Store) ResinCleanupTotals() ResinCleanupTotals {
+	if s == nil {
+		return ResinCleanupTotals{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	totals := ResinCleanupTotals{Total: len(s.state.ResinLeaseDeletes)}
+	for _, job := range s.state.ResinLeaseDeletes {
+		if job.Paused {
+			totals.Paused++
+		} else if job.LastError != "" || job.Status == "permanent_failure" || job.Status == "credential_blocked" {
+			totals.Failed++
+		} else {
+			totals.Pending++
+		}
+		if job.LastError != "" && totals.LastError == "" {
+			totals.LastError = job.LastError
+			totals.LastErrorCode = job.LastErrorCode
+		}
+		if job.CreatedAt.After(totals.UpdatedAt) {
+			totals.UpdatedAt = job.CreatedAt
+		}
+	}
+	return totals
+}
+
 func (s *Store) Snapshot() State {
 	if s == nil {
 		return State{}
@@ -631,6 +693,29 @@ func (s *Store) AccountStateValues() map[string]string {
 		}
 	}
 	return values
+}
+
+// FillRoutingStates copies routing state strings for a bounded ID chunk into
+// caller-owned storage. It avoids materializing a map proportional to the
+// entire persisted account set on every list request.
+func (s *Store) FillRoutingStates(authIDs []string, dst []string) {
+	if len(dst) < len(authIDs) {
+		return
+	}
+	if s == nil {
+		clear(dst[:len(authIDs)])
+		return
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for index, authID := range authIDs {
+		account := s.state.Accounts[authID]
+		if account == nil {
+			dst[index] = ""
+		} else {
+			dst[index] = account.State
+		}
+	}
 }
 
 // AccountFirstSeenValues lets the catalog preserve probe aging for existing
@@ -822,9 +907,13 @@ func (s *Store) updateAccountEvents(authID string, fn func(*AccountState) ([]Eve
 	previousUpdatedAt := s.state.UpdatedAt
 	previousEvents := s.state.Events
 	previousAccount, existed := s.state.Accounts[authID]
-	var previousCopy *AccountState
-	if previousAccount != nil {
-		previousCopy = cloneAccountState(previousAccount)
+	previousState := ""
+	previousSource := ""
+	previousLease := ""
+	if existed && previousAccount != nil {
+		previousState = previousAccount.State
+		previousSource, _ = proxyBindingSource(*previousAccount)
+		previousLease = proxyLeaseIdentity(*previousAccount)
 	}
 	if s.state.Accounts == nil {
 		s.state.Accounts = make(map[string]*AccountState)
@@ -834,10 +923,25 @@ func (s *Store) updateAccountEvents(authID string, fn func(*AccountState) ([]Eve
 		account = &AccountState{AuthID: authID, State: StateUnknown, FirstSeenAt: time.Now().UTC()}
 		s.state.Accounts[authID] = account
 	}
-	events, errFn := fn(account)
+	var rollback *AccountState
+	var target *AccountState
+	if persist {
+		rollback = cloneAccountState(account)
+		target = account
+	} else {
+		working := *account
+		target = &working
+	}
+	events, errFn := fn(target)
 	if errFn != nil {
-		if existed && previousCopy != nil {
-			s.state.Accounts[authID] = previousCopy
+		if persist {
+			if existed && rollback != nil {
+				s.state.Accounts[authID] = rollback
+			} else {
+				delete(s.state.Accounts, authID)
+			}
+		} else if existed && previousAccount != nil {
+			s.state.Accounts[authID] = previousAccount
 		} else {
 			delete(s.state.Accounts, authID)
 		}
@@ -845,6 +949,9 @@ func (s *Store) updateAccountEvents(authID string, fn func(*AccountState) ([]Eve
 		s.state.UpdatedAt = previousUpdatedAt
 		s.mu.Unlock()
 		return errFn
+	}
+	if !persist {
+		*account = *target
 	}
 	if len(events) > 0 {
 		for _, event := range events {
@@ -856,32 +963,43 @@ func (s *Store) updateAccountEvents(authID string, fn func(*AccountState) ([]Eve
 			}
 			appendEvent(&s.state, event)
 		}
-	} else if existed && previousCopy != nil && reflect.DeepEqual(previousCopy, account) {
-		s.mu.Unlock()
-		return nil
 	}
 	s.state.UpdatedAt = time.Now().UTC()
+	currentSource, _ := proxyBindingSource(*account)
+	currentLease := proxyLeaseIdentity(*account)
+	if !existed || previousSource != currentSource || previousLease != currentLease {
+		s.indexProxyAccountIdentitiesLocked(authID, previousSource, currentSource, previousLease, currentLease)
+	}
+	if !existed || previousState != account.State || eventsContainClass(events) {
+		s.markOverviewChangedLocked()
+	}
 	if persist {
+		s.markDirtyLocked()
 		if errSave := s.saveLocked(); errSave != nil {
-			if existed && previousCopy != nil {
-				s.state.Accounts[authID] = previousCopy
-			} else {
-				delete(s.state.Accounts, authID)
-			}
-			s.state.Events = previousEvents
-			s.state.UpdatedAt = previousUpdatedAt
+			s.scheduleFlush()
+			// A concurrent observation may have changed this account while the
+			// checkpoint was being written. Keep the in-memory mutation and let
+			// the next flush retry rather than rolling back newer state.
 			s.mu.Unlock()
 			return errSave
 		}
 	} else {
-		s.dirty = true
+		s.markDirtyLocked()
 	}
-	s.indexProxyAccountLocked(authID, previousCopy, account)
 	s.mu.Unlock()
 	if !persist {
 		s.scheduleFlush()
 	}
 	return nil
+}
+
+func eventsContainClass(events []Event) bool {
+	for _, event := range events {
+		if event.Class != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) scheduleFlush() {
@@ -908,16 +1026,18 @@ func (s *Store) AppendEvent(event Event) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	previousUpdatedAt := s.state.UpdatedAt
-	previousEvents := s.state.Events
 	if event.Time.IsZero() {
 		event.Time = time.Now().UTC()
 	}
 	appendEvent(&s.state, event)
 	s.state.UpdatedAt = time.Now().UTC()
+	if event.Class != "" {
+		s.markOverviewChangedLocked()
+	}
+	s.markDirtyLocked()
 	if errSave := s.saveLocked(); errSave != nil {
-		s.state.Events = previousEvents
-		s.state.UpdatedAt = previousUpdatedAt
+		s.scheduleFlush()
+		// Leave the event in memory; dirty remains set and a later flush retries.
 		return errSave
 	}
 	return nil
@@ -935,35 +1055,37 @@ func (s *Store) Update(fn func(*State) error) error {
 		return errFn
 	}
 	s.state.UpdatedAt = time.Now().UTC()
+	s.markOverviewChangedLocked()
+	s.markDirtyLocked()
+	s.rebuildProxyIndexesLocked()
 	if errSave := s.saveLocked(); errSave != nil {
-		s.state = previous
+		s.scheduleFlush()
 		return errSave
 	}
-	s.rebuildProxyIndexesLocked()
 	return nil
 }
 
-// UpdateIfChanged applies a periodic catalog or proxy-source mutation. The
-// callback must report whether it changed the state. Callers validate before
-// mutating; a save failure leaves the in-memory state authoritative so the next
-// flush can retry instead of paying for a full clone on every invocation.
 func (s *Store) UpdateIfChanged(fn func(*State) (bool, error)) error {
 	if s == nil {
 		return errors.New("state store is nil")
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	changed, errFn := fn(&s.state)
 	if errFn != nil {
+		s.mu.Unlock()
 		return errFn
 	}
 	if !changed {
+		s.mu.Unlock()
 		return nil
 	}
 	s.state.UpdatedAt = time.Now().UTC()
-	s.dirty = true
+	s.markOverviewChangedLocked()
+	s.markDirtyLocked()
 	s.rebuildProxyIndexesLocked()
-	return s.saveLocked()
+	s.mu.Unlock()
+	s.scheduleFlush()
+	return nil
 }
 
 func (s *Store) Flush() error {
@@ -977,14 +1099,66 @@ func (s *Store) Flush() error {
 	}
 	s.flushMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if !s.dirty {
+		s.mu.Unlock()
 		return nil
 	}
-	return s.saveLocked()
+	if err := s.prepareStateLocked(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	snapshot := cloneState(s.state)
+	seq := s.dirtySeq
+	path := s.path
+	// Lock order is state.mu -> persistMu. The writer releases persistMu
+	// before reacquiring state.mu, so a concurrent snapshotter cannot deadlock
+	// while serializing a newer checkpoint behind this one.
+	s.persistMu.Lock()
+	s.mu.Unlock()
+	errWrite := writeStateSnapshot(path, &snapshot)
+	s.persistMu.Unlock()
+	if errWrite != nil {
+		s.scheduleFlush()
+		return errWrite
+	}
+	s.mu.Lock()
+	retry := s.dirty
+	if s.dirtySeq == seq {
+		s.dirty = false
+		s.checkpointProxyJournalLocked()
+		retry = false
+	}
+	s.mu.Unlock()
+	if retry {
+		s.scheduleFlush()
+	}
+	return nil
 }
 
+// saveLocked is called by callers that already hold s.mu. It deliberately
+// releases s.mu while encoding, syncing, and replacing the file; callers must
+// therefore treat the returned error as a persistence failure and leave the
+// in-memory mutation authoritative for the next flush.
 func (s *Store) saveLocked() error {
+	if err := s.prepareStateLocked(); err != nil {
+		return err
+	}
+	snapshot := cloneState(s.state)
+	seq := s.dirtySeq
+	path := s.path
+	s.persistMu.Lock()
+	s.mu.Unlock()
+	errWrite := writeStateSnapshot(path, &snapshot)
+	s.persistMu.Unlock()
+	s.mu.Lock()
+	if errWrite == nil && s.dirtySeq == seq {
+		s.dirty = false
+		s.checkpointProxyJournalLocked()
+	}
+	return errWrite
+}
+
+func (s *Store) prepareStateLocked() error {
 	if s.path == "" {
 		return errors.New("state path is empty")
 	}
@@ -999,9 +1173,13 @@ func (s *Store) saveLocked() error {
 	}
 	trimEvents(&s.state, s.state.Policy.EventsLimit)
 	s.maybeGCProxyHistoryLocked()
-	dir := filepath.Dir(s.path)
-	if errMkdir := os.MkdirAll(dir, 0o700); errMkdir != nil {
-		return fmt.Errorf("create state directory: %w", errMkdir)
+	return nil
+}
+
+func writeStateSnapshot(path string, snapshot *State) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create state directory: %w", err)
 	}
 	_ = os.Chmod(dir, 0o700)
 	temp, errTemp := os.CreateTemp(dir, ".state-*.tmp")
@@ -1014,7 +1192,7 @@ func (s *Store) saveLocked() error {
 		_ = temp.Close()
 		return fmt.Errorf("set state file permissions: %w", errChmod)
 	}
-	if errEncode := json.NewEncoder(temp).Encode(s.state); errEncode != nil {
+	if errEncode := json.NewEncoder(temp).Encode(snapshot); errEncode != nil {
 		_ = temp.Close()
 		return fmt.Errorf("encode state: %w", errEncode)
 	}
@@ -1025,11 +1203,9 @@ func (s *Store) saveLocked() error {
 	if errClose := temp.Close(); errClose != nil {
 		return fmt.Errorf("close state temp file: %w", errClose)
 	}
-	if errReplace := replaceStateFile(tempName, s.path); errReplace != nil {
+	if errReplace := replaceStateFile(tempName, path); errReplace != nil {
 		return fmt.Errorf("replace state file: %w", errReplace)
 	}
-	s.dirty = false
-	s.checkpointProxyJournalLocked()
 	return nil
 }
 

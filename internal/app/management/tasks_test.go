@@ -130,6 +130,15 @@ func (e taskCenterQueueTestEnvironment) ProxyQueueDetail(queueID string) (proxya
 	}
 	return e.proxy.QueueDetail(queueID)
 }
+func (e taskCenterQueueTestEnvironment) ProxyQueueDepth(queueID string) (active, waiting int, ok bool) {
+	if detail, found := e.proxyDetails[queueID]; found {
+		return len(detail.Active), len(detail.Waiting), true
+	}
+	if e.proxy == nil {
+		return 0, 0, false
+	}
+	return e.proxy.QueueDepth(queueID)
+}
 func (e taskCenterQueueTestEnvironment) Proxy() *proxyapp.Service { return e.proxy }
 
 type taskCenterQueuesOnlyEnvironment struct {

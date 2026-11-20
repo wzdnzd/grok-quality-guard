@@ -403,6 +403,36 @@ func TestHistoryCleanupRunsWhenCenterIsOpenedLater(t *testing.T) {
 		t.Fatalf("expired history was not cleaned lazily: %#v", center)
 	}
 }
+func TestListCenterOrdersMergedTasksByCreatedAt(t *testing.T) {
+	base := t.TempDir()
+	now := time.Now().UTC()
+	writeHistoryFixture(t, base, Task{
+		ID:        "newer-created",
+		Kind:      "test",
+		Status:    taskStatusSucceeded,
+		CreatedAt: now,
+		EndedAt:   now.Add(-2 * time.Hour),
+	})
+	writeHistoryFixture(t, base, Task{
+		ID:        "older-created",
+		Kind:      "test",
+		Status:    taskStatusSucceeded,
+		CreatedAt: now.Add(-time.Hour),
+		EndedAt:   now,
+	})
+	manager := NewManager()
+	if err := manager.ConfigureHistory(base, DefaultHistoryConfig()); err != nil {
+		t.Fatal(err)
+	}
+	center, err := manager.ListCenter(TaskCenterFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(center.Items) != 2 || center.Items[0].ID != "newer-created" || center.Items[1].ID != "older-created" {
+		t.Fatalf("task center order = %#v", center.Items)
+	}
+}
+
 func writeHistoryFixture(t *testing.T, base string, task Task) {
 	t.Helper()
 	if task.CreatedAt.IsZero() {

@@ -1,6 +1,7 @@
 package management
 
 import (
+	"strings"
 	"testing"
 
 	appstate "grok-quality-guard/internal/app/state"
@@ -25,6 +26,29 @@ func TestCatalogStateCountsOnlyLiveCatalogAccounts(t *testing.T) {
 	}
 	if counts[""] != 0 {
 		t.Fatalf("catalog state counts contain an empty state: %#v", counts)
+	}
+}
+
+func TestCatalogAccountMatchesPreservesSearchSemantics(t *testing.T) {
+	account := Account{
+		ID:    "auth-0042",
+		Email: "Alice@Example.com",
+		Label: "团队 Alpha",
+	}
+	for _, query := range []string{
+		"alice",
+		"ALICE@EXAMPLE.COM",
+		"auth-0042",
+		"团队",
+		"alpha",
+		"alice@example.com auth-0042",
+	} {
+		if !catalogAccountMatches(account, strings.ToLower(query)) {
+			t.Fatalf("query %q did not match account", query)
+		}
+	}
+	if catalogAccountMatches(account, "missing") {
+		t.Fatal("unexpected match for absent query")
 	}
 }
 

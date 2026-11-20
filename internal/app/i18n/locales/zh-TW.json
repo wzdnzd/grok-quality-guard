@@ -200,6 +200,8 @@
   "api.error.unknown_cleanup_action": "未知的租約清理操作",
   "api.error.unknown_method": "未知方法：{method}",
   "api.error.update_policy_invalid": "範本更新策略無效",
+  "api.error.catalog_loading": "帳號目錄載入中，請稍後重試",
+  "api.error.busy": "管理服務目前繁忙，請稍後重試",
   "api.error.upstream_error": "上游服務暫時無法使用，請稍後重試",
   "api.error.upstream_stream_error": "上游流在開始輸出後失敗",
   "api.error.username_invalid": "代理使用者名稱包含無效字元",

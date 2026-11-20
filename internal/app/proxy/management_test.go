@@ -46,6 +46,51 @@ func TestProxySourceViewsUseStandardMaskedEndpointFormat(t *testing.T) {
 	}
 }
 
+func TestProxySourceEntryMatchesPreservesViewFilters(t *testing.T) {
+	template, err := coreproxy.ParseTemplateURL("socks5h://user-{account}:secret@proxy.example:1080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.ID = "template-1"
+	template.Name = "Team Alpha"
+	template.Enabled = true
+	template.Revision = 7
+	entry := proxySourceCandidate{
+		ID:       template.ID,
+		Kind:     coreproxy.SourceTemplate,
+		Name:     template.Name,
+		Revision: template.Revision,
+		Template: &template,
+		Runtime: coreproxy.SourceRuntime{
+			Health:         coreproxy.HealthHealthy,
+			HealthRevision: template.Revision,
+		},
+	}
+	service := NewService(proxyViewTestEnvironment{store: newProxyTestStore(t)})
+	view, ok := service.proxySourceViewForEntry(entry, map[string]int{entry.ID: 2})
+	if !ok {
+		t.Fatal("source view was not constructed")
+	}
+	for _, params := range []map[string]any{
+		{},
+		{"kind": "template"},
+		{"kind": "resin"},
+		{"query": "team alpha"},
+		{"query": "team socks5h"},
+		{"query": "template-1"},
+		{"enabled": "true"},
+		{"enabled": "disabled"},
+		{"health": "healthy"},
+		{"health": "unknown"},
+	} {
+		got := service.proxySourceEntryMatches(entry, params)
+		want := proxySourceMatches(view, params)
+		if got != want {
+			t.Fatalf("params %#v: entry match = %t, view match = %t", params, got, want)
+		}
+	}
+}
+
 type proxyViewTestEnvironment struct {
 	Environment
 	store    *appstate.Store
@@ -227,6 +272,10 @@ func TestResidentQueueDetailsReportAutoBindAndHealthWork(t *testing.T) {
 	if len(auto.Waiting) != 2 || auto.Waiting[0].ID != "auth-pending" || auto.Waiting[1].ID != "auth-wait" {
 		t.Fatalf("auto_bind waiting = %#v", auto.Waiting)
 	}
+	autoActive, autoWaiting, ok := service.QueueDepth("auto_bind")
+	if !ok || autoActive != len(auto.Active) || autoWaiting != len(auto.Waiting) {
+		t.Fatalf("auto_bind queue depth = %d/%d ok=%t, want %d/%d", autoActive, autoWaiting, ok, len(auto.Active), len(auto.Waiting))
+	}
 
 	service.mgr.healthQueuedAt = map[string]time.Time{"source-wait": now.Add(time.Second)}
 	service.mgr.healthActive = map[string]time.Time{"source-run": now}
@@ -239,6 +288,10 @@ func TestResidentQueueDetailsReportAutoBindAndHealthWork(t *testing.T) {
 	}
 	if len(health.Waiting) != 1 || health.Waiting[0].ID != "source-wait" {
 		t.Fatalf("proxy_health waiting = %#v", health.Waiting)
+	}
+	healthActive, healthWaiting, ok := service.QueueDepth("proxy_health")
+	if !ok || healthActive != len(health.Active) || healthWaiting != len(health.Waiting) {
+		t.Fatalf("proxy_health queue depth = %d/%d ok=%t, want %d/%d", healthActive, healthWaiting, ok, len(health.Active), len(health.Waiting))
 	}
 }
 

@@ -308,6 +308,109 @@ func TestStateStoreUpdateAccountRollbackAndEventAppend(t *testing.T) {
 	}
 }
 
+func TestStateStoreUpdateAccountRefreshesProxySourceIndex(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store := NewStore(path)
+	if errLoad := store.Load(config.PolicyFromConfig(config.DefaultConfig()), "revision"); errLoad != nil {
+		t.Fatal(errLoad)
+	}
+	setSource := func(source string) {
+		t.Helper()
+		if errUpdate := store.UpdateAccount("auth-1", func(account *AccountState) (*Event, error) {
+			account.State = StateHealthy
+			account.Proxy.SourceID = source
+			return nil, nil
+		}); errUpdate != nil {
+			t.Fatal(errUpdate)
+		}
+	}
+	setSource("source-a")
+	setSource("source-b")
+
+	counts := store.ProxyCounts()
+	if counts["source-a"] != 0 || counts["source-b"] != 1 {
+		t.Fatalf("proxy counts after source migration = %#v", counts)
+	}
+	if ids := store.ProxyAuthIDs("source-a"); len(ids) != 0 {
+		t.Fatalf("source-a retained migrated accounts: %#v", ids)
+	}
+	if ids := store.ProxyAuthIDs("source-b"); len(ids) != 1 || ids[0] != "auth-1" {
+		t.Fatalf("source-b accounts = %#v", ids)
+	}
+}
+
+func TestStateStoreResinBindingCountUsesResinTemplates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store := NewStore(path)
+	if errLoad := store.Load(config.PolicyFromConfig(config.DefaultConfig()), "revision"); errLoad != nil {
+		t.Fatal(errLoad)
+	}
+	if errUpdate := store.Update(func(state *State) error {
+		state.Proxy.Templates = []proxy.Template{
+			{ID: "resin-source", Kind: proxy.TemplateResin},
+			{ID: "generic-source", Kind: proxy.TemplateGeneric},
+		}
+		state.Accounts["auth-resin"] = &AccountState{
+			AuthID: "auth-resin",
+			Proxy:  proxy.Binding{SourceID: "resin-source", SourceKind: proxy.SourceResin},
+		}
+		state.Accounts["auth-generic"] = &AccountState{
+			AuthID: "auth-generic",
+			Proxy:  proxy.Binding{SourceID: "generic-source", SourceKind: proxy.SourceTemplate},
+		}
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if got := store.ResinBindingCount(); got != 1 {
+		t.Fatalf("resin binding count = %d, want 1", got)
+	}
+}
+func TestStateStoreProxyChangeTotalsMatchSummaries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store := NewStore(path)
+	if errLoad := store.Load(config.PolicyFromConfig(config.DefaultConfig()), "revision"); errLoad != nil {
+		t.Fatal(errLoad)
+	}
+	now := time.Now().UTC()
+	if errUpdate := store.Update(func(state *State) error {
+		state.Proxy.Changes = []proxy.SourceChange{
+			{Status: "succeeded", CreatedAt: now.Add(-time.Hour), Counts: proxy.ChangeCounts{Succeeded: 2}, Error: "old error", ErrorCode: "old_code"},
+			{Status: "partial", CreatedAt: now, Counts: proxy.ChangeCounts{Succeeded: 1, Failed: 1, Pending: 1}, Error: "current error", ErrorCode: "current_code"},
+		}
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	totals := store.ProxyChangeTotals()
+	if !totals.Active || totals.Succeeded != 3 || totals.Failed != 1 || totals.Pending != 1 || totals.LastError != "old error" || totals.LastErrorCode != "old_code" || !totals.UpdatedAt.Equal(now) {
+		t.Fatalf("proxy change totals = %#v", totals)
+	}
+}
+
+func TestStateStoreResinCleanupTotals(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store := NewStore(path)
+	if errLoad := store.Load(config.PolicyFromConfig(config.DefaultConfig()), "revision"); errLoad != nil {
+		t.Fatal(errLoad)
+	}
+	now := time.Now().UTC()
+	if errUpdate := store.Update(func(state *State) error {
+		state.ResinLeaseDeletes = []ResinLeaseDelete{
+			{AuthID: "auth-pending", CreatedAt: now.Add(-time.Hour)},
+			{AuthID: "auth-failed", Status: "permanent_failure", LastError: "boom", LastErrorCode: "resin_failed", CreatedAt: now},
+			{AuthID: "auth-paused", Paused: true, CreatedAt: now.Add(-2 * time.Hour)},
+		}
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	totals := store.ResinCleanupTotals()
+	if totals.Total != 3 || totals.Pending != 1 || totals.Failed != 1 || totals.Paused != 1 || totals.LastError != "boom" || totals.LastErrorCode != "resin_failed" || !totals.UpdatedAt.Equal(now) {
+		t.Fatalf("resin cleanup totals = %#v", totals)
+	}
+}
+
 func TestRawPolicyTaskHistoryProbeSkipsLargeUnrelatedValues(t *testing.T) {
 	large := strings.Repeat("x", 128*1024)
 	withoutHistory := []byte(`{"accounts":{"auth-1":{"label":"` + large + `"}},"events":[{"detail":{"nested":[1,2,3]}}],"policy":{"events_limit":3}}`)

@@ -611,12 +611,31 @@ func (s *Service) refreshProxySourceHealth(ctx context.Context) {
 	s.mgr.mu.Unlock()
 }
 
+// QueueDepth returns only the resident counts. Dashboard summaries poll every
+// five seconds and do not need the full entry list, so this path avoids
+// allocating and sorting maps and slices proportional to the queue length.
+func (s *Service) QueueDepth(queueID string) (active, waiting int, ok bool) {
+	if s == nil {
+		return 0, 0, false
+	}
+	s.mgr.mu.RLock()
+	defer s.mgr.mu.RUnlock()
+	switch queueID {
+	case "auto_bind":
+		return len(s.mgr.inFlight), len(s.mgr.queue) - s.mgr.queueHead + len(s.mgr.pending), true
+	case "proxy_health":
+		return len(s.mgr.healthActive), len(s.mgr.healthQueuedAt), true
+	default:
+		return 0, 0, false
+	}
+}
+
 func (s *Service) QueueDetail(queueID string) (ResidentQueueDetail, bool) {
 	if s == nil {
 		return ResidentQueueDetail{}, false
 	}
-	s.mgr.mu.Lock()
-	defer s.mgr.mu.Unlock()
+	s.mgr.mu.RLock()
+	defer s.mgr.mu.RUnlock()
 	var waiting map[string]time.Time
 	active := make(map[string]time.Time)
 	switch queueID {
