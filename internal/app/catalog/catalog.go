@@ -581,7 +581,10 @@ func readAuthMeta(path string) (string, string, bool) {
 	}
 	defer file.Close()
 	var metadata *struct {
-		ProxyURL string          `json:"proxy_url"`
+		// A pointer keeps a missing or JSON null proxy readable. Both mean the
+		// account has no proxy URL, so the binding stays unbound. A non-string
+		// value still fails the decode and remains a genuine read failure.
+		ProxyURL *string         `json:"proxy_url"`
 		Sub      string          `json:"sub"`
 		Subject  string          `json:"subject"`
 		Metadata json.RawMessage `json:"metadata"`
@@ -609,7 +612,11 @@ func readAuthMeta(path string) (string, string, bool) {
 			}
 		}
 	}
-	return strings.TrimSpace(metadata.ProxyURL), oauthID, true
+	proxyURL := ""
+	if metadata.ProxyURL != nil {
+		proxyURL = strings.TrimSpace(*metadata.ProxyURL)
+	}
+	return proxyURL, oauthID, true
 }
 func catalogStateNeedsRetention(account *AccountState) bool {
 	if account == nil {
