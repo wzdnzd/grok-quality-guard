@@ -336,3 +336,55 @@ func TestAuthMetadataFailureMarksFileSignatureInspected(t *testing.T) {
 	}
 	service.WaitAuthModelsRefresh()
 }
+func TestEnsureAuthMetaForIDsReadsOnlyTheRequestedPage(t *testing.T) {
+	now := time.Now().UTC()
+	env := &authModelsRefreshEnvironment{
+		blockingAuthEnvironment: &blockingAuthEnvironment{
+			getStarted: make(chan struct{}, 1),
+			getRelease: make(chan struct{}),
+		},
+	}
+	env.setAuths([]pluginapi.HostAuthFileEntry{
+		{ID: "auth-1", AuthIndex: "auth-1", Type: "xai", Provider: "xai", Path: "auth-1.json", Size: 10, ModTime: now},
+		{ID: "auth-2", AuthIndex: "auth-2", Type: "xai", Provider: "xai", Path: "auth-2.json", Size: 20, ModTime: now},
+	})
+	service := NewService(env)
+	t.Cleanup(service.Close)
+	var reads atomic.Int32
+	var firstPath atomic.Value
+	service.authMetaRead = func(path string) (string, string, bool) {
+		reads.Add(1)
+		firstPath.Store(path)
+		return "socks5h://user:secret@proxy.example:1080", "oauth-" + path, true
+	}
+	if errRefresh := service.RefreshCatalog(context.Background()); errRefresh != nil {
+		t.Fatal(errRefresh)
+	}
+	service.WaitAuthMetaRefresh()
+	service.catalogMu.Lock()
+	for index := range service.catalog {
+		service.catalog[index].ProxyURLKnown = false
+		service.catalog[index].ProxyMetaInspected = false
+		service.catalog[index].ProxyMasked = ""
+		service.catalog[index].ProxyHash = ""
+		service.catalog[index].OAuthID = ""
+	}
+	service.catalogMu.Unlock()
+	reads.Store(0)
+	firstPath.Store("")
+
+	if errEnsure := service.EnsureAuthMetaForIDs(context.Background(), []string{"auth-2"}, 450*time.Millisecond); errEnsure != nil {
+		t.Fatal(errEnsure)
+	}
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("page-scoped metadata reads = %d, want 1", got)
+	}
+	if got, _ := firstPath.Load().(string); got != "auth-2.json" {
+		t.Fatalf("page-scoped metadata read path = %q, want auth-2.json", got)
+	}
+	first, _ := service.FindAccount("auth-1")
+	second, _ := service.FindAccount("auth-2")
+	if first.ProxyURLKnown || !second.ProxyURLKnown {
+		t.Fatalf("page-scoped enrichment touched the wrong rows: first=%#v second=%#v", first, second)
+	}
+}

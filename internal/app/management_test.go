@@ -6,6 +6,7 @@ import (
 	"errors"
 	appauth "grok-quality-guard/internal/app/auth"
 	managementapp "grok-quality-guard/internal/app/management"
+	proxyapp "grok-quality-guard/internal/app/proxy"
 	appredact "grok-quality-guard/internal/app/redact"
 	appstate "grok-quality-guard/internal/app/state"
 	apptasks "grok-quality-guard/internal/app/tasks"
@@ -200,6 +201,102 @@ func TestAccountsListMasksSecrets(t *testing.T) {
 	}
 }
 
+func TestAccountAndProxyPagesShareBindingStatus(t *testing.T) {
+	entries1, auths1 := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	entries2, auths2 := singleGrokAuth(t, "auth-2", "[EMAIL]", nil)
+	entries := append(entries1, entries2...)
+	auths := make(map[string]json.RawMessage, len(auths1)+len(auths2))
+	for key, value := range auths1 {
+		auths[key] = value
+	}
+	for key, value := range auths2 {
+		auths[key] = value
+	}
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	node, errCreate := plugin.createProxyNode(proxyapp.NodeInput{URL: "socks5h://user:secret@proxy.example:1080", Name: "primary"})
+	if errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	if _, errBind := plugin.bindProxy(context.Background(), "auth-1", proxyapp.BindOptions{SourceIDs: []string{node.ID}}); errBind != nil {
+		t.Fatal(errBind)
+	}
+
+	type accountRow struct {
+		AuthID         string `json:"auth_id"`
+		ProxyStatus    string `json:"proxy_status"`
+		BindingVersion uint64 `json:"binding_version"`
+	}
+	var accounts struct {
+		Data struct {
+			Items          []accountRow `json:"items"`
+			BindingVersion uint64       `json:"binding_version"`
+		} `json:"data"`
+	}
+	response := actionManagementForTest(t, plugin, "accounts.list", map[string]any{"summary": true, "page_size": 10})
+	if errUnmarshal := json.Unmarshal(response.Body, &accounts); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	var bindings struct {
+		Data struct {
+			Items          []accountRow `json:"items"`
+			BindingVersion uint64       `json:"binding_version"`
+		} `json:"data"`
+	}
+	response = actionManagementForTest(t, plugin, "proxy.bindings.list", map[string]any{"page_size": 10})
+	if errUnmarshal := json.Unmarshal(response.Body, &bindings); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	if len(accounts.Data.Items) != 2 || len(bindings.Data.Items) != 2 {
+		t.Fatalf("account rows = %#v, proxy rows = %#v", accounts.Data.Items, bindings.Data.Items)
+	}
+	accountStatuses := make(map[string]string, len(accounts.Data.Items))
+	for _, row := range accounts.Data.Items {
+		accountStatuses[row.AuthID] = row.ProxyStatus
+	}
+	for _, row := range bindings.Data.Items {
+		if got := accountStatuses[row.AuthID]; got != row.ProxyStatus {
+			t.Fatalf("binding status differs for %s: account=%q proxy=%q", row.AuthID, got, row.ProxyStatus)
+		}
+	}
+	if accountStatuses["auth-1"] != "bound" || accountStatuses["auth-2"] != "unbound" {
+		t.Fatalf("unexpected shared statuses: %#v", accountStatuses)
+	}
+	if accounts.Data.BindingVersion == 0 || accounts.Data.BindingVersion != bindings.Data.BindingVersion {
+		t.Fatalf("binding versions differ: accounts=%d proxy=%d", accounts.Data.BindingVersion, bindings.Data.BindingVersion)
+	}
+
+	var summary struct {
+		Data struct {
+			BindingCounts  map[string]int `json:"binding_counts"`
+			BindingTotal   int            `json:"binding_total"`
+			BindingVersion uint64         `json:"binding_version"`
+		} `json:"data"`
+	}
+	response = actionManagementForTest(t, plugin, "proxy.summary", map[string]any{})
+	if errUnmarshal := json.Unmarshal(response.Body, &summary); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	if summary.Data.BindingVersion != bindings.Data.BindingVersion || summary.Data.BindingTotal != 2 || summary.Data.BindingCounts["bound"] != 1 || summary.Data.BindingCounts["unbound"] != 1 {
+		t.Fatalf("proxy summary reuse mismatch: %#v", summary.Data)
+	}
+
+	var metadata struct {
+		Data struct {
+			Items          []accountRow `json:"items"`
+			BindingVersion uint64       `json:"binding_version"`
+		} `json:"data"`
+	}
+	response = actionManagementForTest(t, plugin, "accounts.proxy_metadata", map[string]any{"auth_ids": []string{"auth-2"}})
+	if errUnmarshal := json.Unmarshal(response.Body, &metadata); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	if len(metadata.Data.Items) != 1 || metadata.Data.Items[0].AuthID != "auth-2" || metadata.Data.Items[0].ProxyStatus != "unbound" {
+		t.Fatalf("page-scoped metadata = %#v", metadata.Data.Items)
+	}
+	if metadata.Data.BindingVersion != bindings.Data.BindingVersion {
+		t.Fatalf("metadata binding version = %d, want %d", metadata.Data.BindingVersion, bindings.Data.BindingVersion)
+	}
+}
 func TestProxyClearBatchManagement(t *testing.T) {
 	entries1, auths1 := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{
 		"proxy_url": "socks5h://user:secret-one@example.com:1080",

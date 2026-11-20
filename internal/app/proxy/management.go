@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"hash/fnv"
 	"net/http"
 	"sort"
 	"strings"
@@ -15,10 +16,29 @@ import (
 	actionpkg "grok-quality-guard/internal/app/action"
 	resinpkg "grok-quality-guard/internal/app/proxy/resin"
 	"grok-quality-guard/internal/app/redact"
+	statepkg "grok-quality-guard/internal/app/state"
 	"grok-quality-guard/internal/app/tasks"
 	"grok-quality-guard/internal/config"
 	proxy "grok-quality-guard/internal/proxy"
 )
+
+// BindingState is the single binding projection shared by the account and
+// proxy-management responses. Both pages must use this type so a row cannot
+// be classified as unbound in one view and read_failed in another.
+type BindingState struct {
+	AuthID         string           `json:"auth_id"`
+	Status         string           `json:"proxy_status"`
+	Proxy          string           `json:"proxy,omitempty"`
+	SourceID       string           `json:"proxy_source_id,omitempty"`
+	SourceKind     proxy.SourceKind `json:"proxy_source_kind,omitempty"`
+	SourceRevision uint64           `json:"proxy_source_revision,omitempty"`
+	Generation     uint64           `json:"proxy_generation,omitempty"`
+	LeaseAccount   string           `json:"proxy_lease_account,omitempty"`
+	Pending        bool             `json:"proxy_pending,omitempty"`
+	Inspected      bool             `json:"proxy_inspected,omitempty"`
+	Known          bool             `json:"-"`
+	Version        uint64           `json:"binding_version"`
+}
 
 func (s *Service) actionProxySummary(ctx context.Context) (any, int, error) {
 	if err := s.env.ProxyEnsureCatalog(ctx); err != nil {
@@ -27,8 +47,12 @@ func (s *Service) actionProxySummary(ctx context.Context) (any, int, error) {
 	catalog := s.proxyCatalog()
 	bound := s.env.ProxyStore().ProxyCounts()
 	sources := s.proxySourcesViewFromCatalog(catalog, bound)
-	counts := map[string]int{"bound": 0, "unbound": 0, "external": 0, "drifted": 0, "unknown": 0, "reconcile_required": 0}
-	accountTotal := s.walkProxyCatalog(func(row proxyCatalogRow) { counts[row.Status]++ })
+	counts, accountTotal, bindingVersion, ok := s.recentBindingCounts()
+	if !ok {
+		counts = emptyBindingCounts()
+		accountTotal, bindingVersion = s.walkProxyCatalogWithVersion(func(row proxyCatalogRow) { counts[row.Status]++ })
+		s.rememberBindingCounts(counts, accountTotal, bindingVersion)
+	}
 	sourceCounts := map[string]int{"node": 0, "template": 0, "resin": 0}
 	available := 0
 	for _, view := range sources {
@@ -39,7 +63,11 @@ func (s *Service) actionProxySummary(ctx context.Context) (any, int, error) {
 		}
 	}
 	_, rotate := s.env.ProxyConfigSnapshot()
-	return map[string]any{"source_count": len(sources), "source_counts": sourceCounts, "available_source_count": available, "enabled_source_count": countEnabledProxySources(sources), "binding_counts": counts, "binding_total": accountTotal, "auto_bind": s.env.ProxyStore().ProxyAutoBindConfig(), "auto_bind_runtime": s.proxyAutoBindRuntime(), "auto_rotate_after_quality_failure": rotate}, 200, nil
+	return map[string]any{"source_count": len(sources), "source_counts": sourceCounts, "available_source_count": available, "enabled_source_count": countEnabledProxySources(sources), "binding_counts": counts, "binding_total": accountTotal, "binding_version": bindingVersion, "auto_bind": s.env.ProxyStore().ProxyAutoBindConfig(), "auto_bind_runtime": s.proxyAutoBindRuntime(), "auto_rotate_after_quality_failure": rotate}, 200, nil
+}
+
+func emptyBindingCounts() map[string]int {
+	return map[string]int{"bound": 0, "unbound": 0, "external": 0, "drifted": 0, "unknown": 0, "checking": 0, "read_failed": 0, "reconcile_required": 0}
 }
 func countEnabledProxySources(sources []proxySourceView) int {
 	count := 0
@@ -818,27 +846,28 @@ func (s *Service) actionProxyBindingsList(ctx context.Context, params map[string
 	ids := []string{}
 	rows := make([]proxyCatalogRow, 0, size)
 	total := 0
-	s.walkProxyCatalog(func(row proxyCatalogRow) {
+	bindingCounts := emptyBindingCounts()
+	bindingTotal, bindingVersion := s.walkProxyCatalogWithVersion(func(row proxyCatalogRow) {
+		bindingCounts[row.Status]++
 		if !proxyStatusMatches(status, row.Status) || source != "" && row.Binding.SourceID != source || query != "" && !catalogAccountMatches(row.Account, query) || excludedSet && row.AutoBind.Excluded != excluded {
 			return
 		}
 		if idsOnly {
 			ids = append(ids, row.Account.ID)
 		} else if total >= start && total-start < size {
-			row.Binding.ResolvedValues = nil
-			row.Binding.Lease = nil
 			rows = append(rows, row)
 		}
 		total++
 	})
+	s.rememberBindingCounts(bindingCounts, bindingTotal, bindingVersion)
 	if idsOnly {
-		return map[string]any{"items": ids, "total": total}, 200, nil
+		return map[string]any{"items": ids, "total": total, "binding_counts": bindingCounts, "binding_version": bindingVersion}, 200, nil
 	}
 	items := make([]map[string]any, len(rows))
 	for i, row := range rows {
 		items[i] = proxyRowView(row)
 	}
-	return map[string]any{"items": items, "total": total, "page": page, "page_size": size}, 200, nil
+	return map[string]any{"items": items, "total": total, "page": page, "page_size": size, "binding_counts": bindingCounts, "binding_total": bindingTotal, "binding_version": bindingVersion}, 200, nil
 }
 
 func (s *Service) actionProxyBindingEndpoint(ctx context.Context, params map[string]any) (any, int, error) {
@@ -1128,13 +1157,34 @@ func (s *Service) maybePruneProxyObservations(authIDs []string) {
 	s.pruneProxyObservations(authIDs, false)
 }
 
+// proxyCatalogFingerprint keeps the cached aggregate valid only for the same
+// accounting population. Observation expiry/deletion also advances the
+// binding revision below, so a stale total cannot survive either event.
+func proxyCatalogFingerprint(authIDs []string) uint64 {
+	hash := fnv.New64a()
+	for _, authID := range authIDs {
+		_, _ = hash.Write([]byte(authID))
+		_, _ = hash.Write([]byte{0})
+	}
+	return hash.Sum64()
+}
+
 func (s *Service) pruneProxyObservations(authIDs []string, force bool) {
 	if s == nil {
 		return
 	}
 	now := time.Now().UTC()
+	fingerprint := proxyCatalogFingerprint(authIDs)
 	s.mgr.mu.Lock()
+	changed := false
+	if fingerprint != s.mgr.bindingCatalogFingerprint {
+		s.mgr.bindingCatalogFingerprint = fingerprint
+		changed = true
+	}
 	if !force && now.Sub(s.mgr.observationsPruned) < proxyObservationPruneInterval && len(s.mgr.observations) <= maxProxyObservations {
+		if changed {
+			s.mgr.bindingRevision++
+		}
 		s.mgr.mu.Unlock()
 		return
 	}
@@ -1147,6 +1197,7 @@ func (s *Service) pruneProxyObservations(authIDs []string, force bool) {
 	for authID, observation := range s.mgr.observations {
 		if _, ok := live[authID]; !ok || observation.CheckedAt.IsZero() || now.Sub(observation.CheckedAt) > proxyObservationRetention {
 			delete(s.mgr.observations, authID)
+			changed = true
 		}
 	}
 	if len(s.mgr.observations) > maxProxyObservations {
@@ -1161,7 +1212,11 @@ func (s *Service) pruneProxyObservations(authIDs []string, force bool) {
 		sort.Slice(stale, func(i, j int) bool { return stale[i].at.Before(stale[j].at) })
 		for index := 0; index < len(stale)-maxProxyObservations; index++ {
 			delete(s.mgr.observations, stale[index].authID)
+			changed = true
 		}
+	}
+	if changed {
+		s.mgr.bindingRevision++
 	}
 	s.mgr.observationsPruned = now
 	s.mgr.mu.Unlock()
@@ -1199,83 +1254,226 @@ func (s *Service) confirmProxyObservation(ctx context.Context, account Account) 
 	observation.CheckedAt = time.Now().UTC()
 	s.mgr.mu.Lock()
 	s.mgr.observations[account.ID] = observation
+	s.mgr.bindingRevision++
 	s.mgr.mu.Unlock()
 	return observation
 }
 
 type proxyCatalogRow struct {
-	Account     Account
-	Status      string
-	Binding     proxy.Binding
-	AutoBind    proxy.AutoBindAccountState
-	Observation proxyObservation
+	Account  Account
+	Status   string
+	Binding  proxy.Binding
+	State    BindingState
+	AutoBind proxy.AutoBindAccountState
+}
+
+// BindingStatesForAccounts resolves the same binding projection used by both
+// management pages. Callers should pass the visible page only; the resolver
+// copies one compact store projection per requested account instead of every
+// lease and generated value in the catalog.
+func (s *Service) BindingStatesForAccounts(accounts []Account) []BindingState {
+	if len(accounts) == 0 {
+		return nil
+	}
+	if s == nil || s.env == nil || s.env.ProxyStore() == nil {
+		return make([]BindingState, len(accounts))
+	}
+	ids := make([]string, len(accounts))
+	for i, account := range accounts {
+		ids[i] = account.ID
+	}
+	projections := s.env.ProxyStore().ProxyBindingProjectionsForIDs(ids)
+	return s.resolveBindingStates(accounts, projections)
+}
+
+func (s *Service) BindingVersion() uint64 {
+	if s == nil {
+		return 0
+	}
+	s.mgr.mu.Lock()
+	version := s.mgr.bindingRevision
+	s.mgr.mu.Unlock()
+	return version
+}
+
+const proxyBindingCountsTTL = 5 * time.Second
+
+// rememberBindingCounts keeps the last full-catalog aggregation only long
+// enough for the immediately following runtime summary request. The summary
+// can then reuse the bindings list walk instead of scanning every account a
+// second time. A newer binding revision invalidates the cache automatically.
+func (s *Service) rememberBindingCounts(counts map[string]int, total int, version uint64) {
+	if s == nil {
+		return
+	}
+	cloned := make(map[string]int, len(counts))
+	for key, value := range counts {
+		cloned[key] = value
+	}
+	s.mgr.mu.Lock()
+	s.mgr.bindingCounts = cloned
+	s.mgr.bindingCountsTotal = total
+	s.mgr.bindingCountsVersion = version
+	s.mgr.bindingCountsAt = time.Now()
+	s.mgr.mu.Unlock()
+}
+
+func (s *Service) recentBindingCounts() (map[string]int, int, uint64, bool) {
+	if s == nil {
+		return nil, 0, 0, false
+	}
+	s.mgr.mu.Lock()
+	defer s.mgr.mu.Unlock()
+	if s.mgr.bindingCounts == nil || s.mgr.bindingCountsVersion != s.mgr.bindingRevision || time.Since(s.mgr.bindingCountsAt) > proxyBindingCountsTTL {
+		return nil, 0, 0, false
+	}
+	cloned := make(map[string]int, len(s.mgr.bindingCounts))
+	for key, value := range s.mgr.bindingCounts {
+		cloned[key] = value
+	}
+	return cloned, s.mgr.bindingCountsTotal, s.mgr.bindingCountsVersion, true
+}
+
+// TouchBindingStates advances the cross-view binding version when catalog
+// metadata changes without creating a new managed binding. This lets the
+// dashboard discard a late response from an older catalog generation.
+func (s *Service) TouchBindingStates(_ []string) {
+	if s == nil {
+		return
+	}
+	s.mgr.mu.Lock()
+	s.mgr.bindingRevision++
+	s.mgr.mu.Unlock()
+}
+
+func (s *Service) resolveBindingStates(accounts []Account, projections []statepkg.ProxyBindingProjection) []BindingState {
+	if len(accounts) == 0 {
+		return nil
+	}
+	states := make([]BindingState, len(accounts))
+	s.mgr.mu.Lock()
+	defer s.mgr.mu.Unlock()
+	now := time.Now()
+	version := s.mgr.bindingRevision
+	for i, account := range accounts {
+		// ProxyBindingProjectionsForIDs preserves request order. Keeping this
+		// path index-based avoids a second full-catalog map allocation for the
+		// bindings list and summary walks.
+		var projection statepkg.ProxyBindingProjection
+		if i < len(projections) {
+			projection = projections[i]
+		}
+		observation := proxyObservation{
+			Masked:    account.ProxyMasked,
+			Hash:      account.ProxyHash,
+			Known:     account.ProxyURLKnown || account.ProxyMasked != "",
+			CheckedAt: account.ModTime,
+		}
+		if current, ok := s.mgr.observations[account.ID]; ok && now.Sub(current.CheckedAt) < catalogRefreshTTL && (account.ModTime.IsZero() || !account.ModTime.After(current.CheckedAt)) {
+			observation = current
+		}
+		state := bindingStateFromProjection(account, projection, observation)
+		state.Version = version
+		states[i] = state
+	}
+	return states
+}
+
+func bindingStateFromProjection(account Account, projection statepkg.ProxyBindingProjection, observation proxyObservation) BindingState {
+	state := BindingState{
+		AuthID:         account.ID,
+		Proxy:          observation.Masked,
+		SourceID:       projection.SourceID,
+		SourceKind:     projection.SourceKind,
+		SourceRevision: projection.SourceRevision,
+		Generation:     projection.Generation,
+		LeaseAccount:   projection.LeaseAccount,
+		Pending:        projection.Pending,
+		Inspected:      observation.Known || account.ProxyMetaInspected,
+		Known:          observation.Known,
+	}
+	switch {
+	case projection.Pending:
+		state.Status = "reconcile_required"
+	case !observation.Known:
+		if strings.TrimSpace(account.Path) == "" && projection.SourceID == "" && strings.TrimSpace(observation.Masked) == "" {
+			state.Status = "unbound"
+		} else if account.ProxyMetaInspected {
+			state.Status = "read_failed"
+		} else {
+			state.Status = "checking"
+		}
+	case projection.SourceID != "":
+		switch {
+		case projection.EndpointHash == "":
+			state.Status = "unknown"
+		case strings.TrimSpace(observation.Masked) == "" || observation.Hash != projection.EndpointHash:
+			state.Status = "drifted"
+		default:
+			state.Status = "bound"
+		}
+	case strings.TrimSpace(observation.Masked) != "":
+		state.Status = "external"
+	default:
+		state.Status = "unbound"
+	}
+	return state
 }
 
 // Count/filter from immutable state projections; proxy observations remain
 // protected by the runtime lock while rows are assembled.
 func (s *Service) walkProxyCatalog(visit func(proxyCatalogRow)) int {
+	total, _ := s.walkProxyCatalogWithVersion(visit)
+	return total
+}
+
+func (s *Service) walkProxyCatalogWithVersion(visit func(proxyCatalogRow)) (int, uint64) {
 	accounts := s.env.ProxyCatalogSnapshot()
 	ids := make([]string, len(accounts))
 	for i, account := range accounts {
 		ids[i] = account.ID
 	}
+	// This full-catalog walk is the only request path allowed to prune the
+	// observation overlay. Page-scoped resolvers must never pass just their
+	// visible IDs here or they would evict observations for other pages.
 	s.maybePruneProxyObservations(ids)
-	summaries := s.env.ProxyStore().ProxyAccountsForIDs(ids)
-	byID := make(map[string]proxyAccountSummary, len(summaries))
-	for _, summary := range summaries {
-		byID[summary.AuthID] = summary
+	projections := s.env.ProxyStore().ProxyBindingProjectionsForIDs(ids)
+	resolved := s.resolveBindingStates(accounts, projections)
+	version := s.BindingVersion()
+	if len(resolved) > 0 {
+		version = resolved[0].Version
 	}
-	s.mgr.mu.Lock()
-	defer s.mgr.mu.Unlock()
-	now := time.Now()
-	for _, a := range accounts {
-		row := proxyCatalogRow{Account: a, Status: "unbound", Observation: proxyObservation{Masked: a.ProxyMasked, Hash: a.ProxyHash, Known: a.ProxyURLKnown || a.ProxyMasked != "", CheckedAt: a.ModTime}}
-		if observation, ok := s.mgr.observations[a.ID]; ok && now.Sub(observation.CheckedAt) < catalogRefreshTTL && (a.ModTime.IsZero() || !a.ModTime.After(observation.CheckedAt)) {
-			row.Observation = observation
-		}
-		if summary, ok := byID[a.ID]; ok {
-			row.Binding = summary.Proxy
-			row.AutoBind = summary.AutoBind
-
-			if summary.Pending {
-				row.Status = "reconcile_required"
-			}
-		}
-		if row.Status != "reconcile_required" {
-			if !row.Observation.Known {
-				row.Status = "unknown"
-			} else if row.Binding.SourceID != "" {
-				if row.Binding.EndpointHash == "" {
-					row.Status = "unknown"
-				} else if row.Observation.Masked == "" {
-					row.Status = "drifted"
-				} else {
-					hash := row.Observation.Hash
-					if hash == row.Binding.EndpointHash {
-						row.Status = "bound"
-					} else {
-						row.Status = "drifted"
-					}
-				}
-			} else if row.Observation.Masked != "" {
-				row.Status = "external"
-			}
+	for i, account := range accounts {
+		projection := projections[i]
+		state := resolved[i]
+		row := proxyCatalogRow{
+			Account: account,
+			Status:  state.Status,
+			Binding: proxy.Binding{
+				AuthID:         account.ID,
+				SourceID:       projection.SourceID,
+				SourceKind:     projection.SourceKind,
+				SourceRevision: projection.SourceRevision,
+				Generation:     projection.Generation,
+				EndpointHash:   projection.EndpointHash,
+			},
+			State: state,
+			AutoBind: proxy.AutoBindAccountState{
+				Excluded:      projection.AutoBindExcluded,
+				NextAttemptAt: projection.NextAttemptAt,
+				LastError:     projection.LastError,
+				LastErrorCode: projection.LastErrorCode,
+			},
 		}
 		visit(row)
 	}
-	return len(accounts)
-}
-func proxyLeaseAccount(binding proxy.Binding) string {
-	if binding.Lease == nil {
-		return ""
-	}
-	return binding.Lease.Account
+	return len(accounts), version
 }
 
 func proxyRowView(row proxyCatalogRow) map[string]any {
-	a, b := row.Account, row.Binding
+	a, state := row.Account, row.State
 	displayFull := strings.TrimSpace(firstNonEmptyString(a.Email, a.Label, a.ID))
-	return map[string]any{"auth_id": a.ID, "auth_id_display": maskAuthID(a.ID), "display": maskAccountIdentity(displayFull), "display_full": displayFull, "proxy": maskProxyURL(row.Observation.Masked), "proxy_status": row.Status, "proxy_source_id": b.SourceID, "proxy_source_kind": b.SourceKind, "proxy_generation": b.Generation, "proxy_source_revision": b.SourceRevision, "proxy_lease_account": proxyLeaseAccount(b), "auto_bind_excluded": row.AutoBind.Excluded, "next_attempt_at": row.AutoBind.NextAttemptAt, "last_error": row.AutoBind.LastError, "last_error_code": row.AutoBind.LastErrorCode}
+	return map[string]any{"auth_id": a.ID, "auth_id_display": maskAuthID(a.ID), "display": maskAccountIdentity(displayFull), "display_full": displayFull, "proxy": state.Proxy, "proxy_status": state.Status, "proxy_source_id": state.SourceID, "proxy_source_kind": state.SourceKind, "proxy_managed": state.SourceID != "", "proxy_generation": state.Generation, "proxy_source_revision": state.SourceRevision, "proxy_lease_account": state.LeaseAccount, "proxy_pending": state.Pending, "proxy_inspected": state.Inspected, "binding_version": state.Version, "auto_bind_excluded": row.AutoBind.Excluded, "next_attempt_at": row.AutoBind.NextAttemptAt, "last_error": row.AutoBind.LastError, "last_error_code": row.AutoBind.LastErrorCode}
 }
 
 func proxyStatusMatches(filter, status string) bool {

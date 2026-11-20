@@ -155,7 +155,7 @@ function harness(options = {}) {
   const runtimeSource = options.i18nResources === undefined
     ? source
     : source.replace(/const I18N_RESOURCE_DATA = [^\n]*; \/\/ i18n-resource-data/, `const I18N_RESOURCE_DATA = ${JSON.stringify(options.i18nResources)}; // i18n-resource-data`);
-  vm.runInContext(runtimeSource + '\n globalThis.dashboard = { i18n, state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, selectedAccountIDs, pagedItems, renderOverview, renderAccounts, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, openProxyNodeEditor, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, refreshTaskCenterQueues, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, closeResidentQueueDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, taskKindLabel, taskStatusLabel, taskOutcomeCounts, taskResultSummary, collectPolicy, populatePolicyForm, applyLocationHash, setTab, refreshAll, refreshAccounts, ensureAccountData, ensureProxyData, loadProxyData, renderAll, scheduleDeferredRefresh, scheduleAccountMetadataRefresh };', context);
+  vm.runInContext(runtimeSource + '\n globalThis.dashboard = { i18n, state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, ensureList, ensureTabData, startListLoad, ensureProxySummary, renderTabSurface, mergeBindingItems, mergeBindingForAccount, renderProxySourceChoices, leaseStatus, selectedAccountIDs, pagedItems, renderOverview, renderAccounts, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, renderDrawer, openProxyNodeEditor, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, refreshTaskCenterQueues, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, closeResidentQueueDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, taskKindLabel, taskStatusLabel, taskOutcomeCounts, taskResultSummary, collectPolicy, populatePolicyForm, applyLocationHash, setTab, refreshAll, refreshAccounts, ensureAccountData, ensureProxyData, loadProxyData, renderAll, scheduleAccountMetadataRefresh, refreshResin, refreshEvents };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -434,81 +434,218 @@ test('Out-of-order list responses cannot replace a newer page', async () => {
   assert.equal(ui.state.proxySources[0].id, 'new');
 });
 
-test('Account tab refresh renders proxy unknown before proxy data resolves', async () => {
+test('Changing account filters during an in-flight list load queues the current request', async () => {
   const { dashboard: ui, get, mock } = harness();
-  const proxySummary = deferred();
-  const proxySources = deferred();
-  const requests = [];
+  const first = deferred();
+  const second = deferred();
+  const queries = [];
+  mock('api', (action, params) => {
+    assert.equal(action, 'accounts.list');
+    queries.push(params.query);
+    return queries.length === 1 ? first.promise : second.promise;
+  });
+  ui.state.activeTab = 'accounts';
+  const initial = ui.ensureList('accounts', false);
+  await Promise.resolve();
+  ui.state.accountQuery = 'new';
+  const updated = ui.ensureList('accounts', false);
+  first.resolve({ items: [{ auth_id: 'auth-1', display: 'old***@example.com', state: 'healthy', proxy_status: 'unbound', binding_version: 1 }], total: 1, page: 1, page_size: 50, state_counts: { healthy: 1 }, binding_version: 1 });
+  await initial;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(queries.length, 2, 'the newer filter must trigger a follow-up request');
+  assert.equal(queries[1], 'new');
+  second.resolve({ items: [{ auth_id: 'auth-1', display: 'new***@example.com', state: 'healthy', proxy_status: 'bound', binding_version: 2 }], total: 1, page: 1, page_size: 50, state_counts: { healthy: 1 }, binding_version: 2 });
+  await updated;
+  assert.match(get('accountRows').innerHTML, /new\*\*\*@example\.com/);
+});
+
+test('Stale proxy summaries preserve newer binding counts and retry within a bound', async () => {
+  const { dashboard: ui, mock } = harness({ captureTimers: true });
+  let calls = 0;
   mock('api', async (action) => {
+    assert.equal(action, 'proxy.summary');
+    calls += 1;
+    return { binding_counts: { checking: 4 }, binding_total: 4, binding_version: 9, source_count: 2, enabled_source_count: 1 };
+  });
+  ui.state.bindingsVersion = 11;
+  ui.state.proxy = { binding_counts: { unbound: 4 }, binding_total: 4, binding_version: 10, source_count: 1 };
+  ui.state.proxySummaryLoadedAt = Date.now() - 60000;
+  await ui.ensureProxySummary(true);
+  assert.deepEqual(ui.state.proxy.binding_counts, { unbound: 4 });
+  assert.equal(ui.state.proxy.binding_total, 4);
+  assert.equal(ui.state.proxy.binding_version, 10);
+  assert.equal(ui.state.proxy.source_count, 2);
+  assert.equal(ui.state.proxySummaryLoadedAt, 0);
+  assert.equal(ui.state.proxySummaryRetries, 1);
+  assert.equal(calls, 1);
+});
+test('Account tab first paint loads one page list and reuses shared bindings', async () => {
+  const { dashboard: ui, get, mock, runTimers } = harness({ captureTimers: true });
+  const requests = [];
+  let metadataIDs = null;
+  mock('api', async (action, params) => {
     requests.push(action);
     if (action === 'overview') return { auth_count: 1, states: { unknown: 1 } };
     if (action === 'accounts.list') return {
-      items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown' }],
-      total: 1, page: 1, page_size: 50, state_counts: { unknown: 1 }
+      items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown', proxy_status: 'checking', proxy_inspected: false, binding_version: 9 }],
+      total: 1, page: 1, page_size: 50, state_counts: { unknown: 1 }, binding_version: 9
     };
-    if (action === 'proxy.summary') return proxySummary.promise;
-    if (action === 'proxy.sources.list') return proxySources.promise;
+    if (action === 'accounts.proxy_metadata') {
+      metadataIDs = params.auth_ids;
+      return { items: [{ auth_id: 'auth-1', proxy_status: 'unbound', proxy_inspected: true, proxy_managed: false, binding_version: 10 }], binding_version: 10 };
+    }
+    if (action === 'proxy.summary') return { binding_counts: { checking: 1 }, binding_version: 9 };
+    if (action === 'proxy.sources.list') return { items: [], total: 0, page: 1, page_size: 50 };
     throw new Error('unexpected request ' + action);
   });
   ui.state.activeTab = 'accounts';
-  await ui.refreshAll(true);
-  assert.deepEqual([...new Set(requests)].sort(), ['accounts.list', 'overview', 'proxy.sources.list', 'proxy.summary']);
-  assert.match(get('accountRows').innerHTML, new RegExp(ui.i18n.t('proxy.binding.unknown')));
-  proxySummary.resolve({ binding_counts: { unknown: 1 } });
-  proxySources.resolve({ items: [], total: 0, page: 1, page_size: 50 });
-  await ui.ensureProxyData();
-  assert.equal(ui.state.proxyLoadPromise, null);
+  await ui.ensureTabData('accounts', false);
+  runTimers();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(requests.includes('accounts.list'));
+  assert.ok(!requests.includes('proxy.sources.list'), 'account tab must not block on the proxy source list');
+  assert.deepEqual(metadataIDs, ['auth-1']);
+  assert.equal(ui.state.bindingsByAuthID.get('auth-1').proxy_status, 'unbound');
+  assert.match(get('accountRows').innerHTML, new RegExp(ui.i18n.t('proxy.binding.unbound')));
 });
 
-test('Account rows render while the overview request is still pending', async () => {
-  const { dashboard: ui, get, mock } = harness();
-  const overview = deferred();
-  const proxySummary = deferred();
-  const proxySources = deferred();
-  mock('api', (action) => {
+test('Switching back to an already loaded tab does not request its list again', async () => {
+  const { dashboard: ui, mock } = harness({ captureTimers: true });
+  let accountRequests = 0;
+  mock('api', async (action) => {
     if (action === 'accounts.list') {
-      return Promise.resolve({
-        items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown', proxy_status: 'unknown' }],
-        total: 1, page: 1, page_size: 50, state_counts: { unknown: 1 }, proxy_metadata_pending: false
-      });
+      accountRequests += 1;
+      return { items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'healthy', proxy_status: 'unbound', binding_version: 1 }], total: 1, page: 1, page_size: 50, state_counts: { healthy: 1 }, binding_version: 1 };
     }
-    if (action === 'overview') return overview.promise;
-    if (action === 'proxy.summary') return proxySummary.promise;
-    if (action === 'proxy.sources.list') return proxySources.promise;
-    throw new Error('unexpected request ' + action);
+    if (action === 'overview') return { auth_count: 1, states: { healthy: 1 } };
+    if (action === 'proxy.summary') return { binding_counts: { unbound: 1 }, binding_version: 1 };
+    return { items: [], total: 0, page: 1, page_size: 50 };
   });
   ui.state.activeTab = 'accounts';
-  const refresh = ui.refreshAll(true);
+  await ui.ensureTabData('accounts', false);
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.match(get('accountRows').innerHTML, /a\*\*\*@example\.com/);
-  assert.equal(ui.state.refreshing, true);
-  overview.resolve({ auth_count: 1, states: { unknown: 1 } });
-  proxySummary.resolve({ binding_counts: { unknown: 1 } });
-  proxySources.resolve({ items: [], total: 0, page: 1, page_size: 50 });
-  await refresh;
-  assert.equal(ui.state.refreshing, false);
+  ui.setTab('overview', false);
+  ui.setTab('accounts', false);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(accountRequests, 1, 'cached account list should be reused within the TTL');
 });
-test('Proxy source rows render before proxy summary finishes', async () => {
+
+test('Stale list revalidation keeps the old rows visible until fresh data arrives', async () => {
+  const { dashboard: ui, get, mock } = harness({ captureTimers: true });
+  const fresh = deferred();
+  let accountRequests = 0;
+  mock('api', (action) => {
+    if (action === 'accounts.list') {
+      accountRequests += 1;
+      if (accountRequests === 1) return Promise.resolve({ items: [{ auth_id: 'auth-1', display: 'old***@example.com', state: 'healthy', proxy_status: 'unbound', binding_version: 1 }], total: 1, page: 1, page_size: 50, state_counts: { healthy: 1 }, binding_version: 1 });
+      return fresh.promise;
+    }
+    if (action === 'overview') return Promise.resolve({ auth_count: 1, states: { healthy: 1 } });
+    if (action === 'proxy.summary') return Promise.resolve({ binding_counts: { unbound: 1 }, binding_version: 1 });
+    return Promise.resolve({ items: [], total: 0, page: 1, page_size: 50 });
+  });
+  ui.state.activeTab = 'accounts';
+  await ui.ensureTabData('accounts', false);
+  ui.state.listLoadedAt.accounts = Date.now() - 60000;
+  await ui.ensureTabData('accounts', false);
+  assert.equal(accountRequests, 2);
+  assert.match(get('accountRows').innerHTML, /old\*\*\*@example\.com/);
+  fresh.resolve({ items: [{ auth_id: 'auth-1', display: 'new***@example.com', state: 'healthy', proxy_status: 'bound', binding_version: 2 }], total: 1, page: 1, page_size: 50, state_counts: { healthy: 1 }, binding_version: 2 });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(get('accountRows').innerHTML, /new\*\*\*@example\.com/);
+});
+
+test('Binding cache rejects late versions and preserves omitted source names', () => {
+  const { dashboard: ui } = harness();
+  ui.state.accounts = [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'healthy' }];
+  ui.state.leases = [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'healthy' }];
+  ui.mergeBindingItems([{ auth_id: 'auth-1', proxy_status: 'bound', proxy: 'socks5h://u***@proxy:1080', proxy_source_id: 'node-1', proxy_source_kind: 'node', proxy_source_name: 'Node one', proxy_managed: true, proxy_generation: 1, proxy_source_revision: 2, proxy_inspected: true, binding_version: 5 }], 5);
+  ui.mergeBindingItems([{ auth_id: 'auth-1', proxy_status: 'bound', proxy: 'socks5h://u***@proxy:1080', proxy_source_id: 'node-1', proxy_source_kind: 'node', proxy_managed: true, proxy_generation: 1, proxy_source_revision: 2, proxy_inspected: true, binding_version: 6 }], 6);
+  assert.equal(ui.state.bindingsByAuthID.get('auth-1').proxy_source_name, 'Node one');
+  ui.mergeBindingItems([{ auth_id: 'auth-1', proxy_status: 'unbound', proxy_managed: false, proxy_inspected: true, binding_version: 4 }], 4);
+  assert.equal(ui.state.bindingsByAuthID.get('auth-1').proxy_status, 'bound', 'a lower binding version must not overwrite newer state');
+  ui.mergeBindingItems([{ auth_id: 'auth-1', proxy_status: 'bound', proxy_source_id: 'node-2', proxy_source_kind: 'node', proxy_managed: true, proxy_inspected: true, binding_version: 7 }], 7);
+  assert.equal(ui.state.bindingsByAuthID.get('auth-1').proxy_source_name, '');
+  assert.equal(ui.state.accounts[0].proxy_status, 'bound');
+  assert.equal(ui.state.leases[0].proxy_status, 'bound');
+});
+
+test('Account drawer keeps the newer binding projection from list or detail', () => {
+  const { dashboard: ui, get } = harness({ languages: ['en'], language: 'en' });
+  ui.state.accountDetails.set('auth-1', {
+    auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown',
+    proxy_status: 'checking', proxy_inspected: false, binding_version: 8
+  });
+  ui.renderDrawer({
+    auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown',
+    proxy_status: 'bound', proxy_source_id: 'node-1', proxy_managed: true, proxy_inspected: true, binding_version: 9
+  });
+  assert.match(get('drawerBody').innerHTML, /Proxy bound/);
+  assert.doesNotMatch(get('drawerBody').innerHTML, /Checking/);
+
+  ui.state.accountDetails.set('auth-1', {
+    auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown',
+    proxy_status: 'unbound', proxy_inspected: true, binding_version: 10
+  });
+  ui.renderDrawer({
+    auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown',
+    proxy_status: 'checking', proxy_inspected: false, binding_version: 9
+  });
+  assert.doesNotMatch(get('drawerBody').innerHTML, /Proxy bound/);
+  assert.match(get('drawerBody').innerHTML, /No proxy bound/);
+});
+test('Checking and read failures are distinct in account and proxy rows', () => {
+  const { dashboard: ui } = harness();
+  const checking = ui.accountRow({ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown', proxy_status: 'checking' });
+  const failed = ui.accountRow({ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown', proxy_status: 'read_failed', proxy_inspected: true });
+  assert.match(checking, new RegExp(ui.i18n.t('proxy.binding.checking')));
+  assert.doesNotMatch(checking, new RegExp(ui.i18n.t('proxy.binding.read_failed')));
+  assert.match(failed, new RegExp(ui.i18n.t('proxy.binding.read_failed')));
+  assert.equal(ui.leaseStatus({ proxy_status: 'checking' }), 'checking');
+  assert.equal(ui.leaseStatus({ proxy_status: 'read_failed' }), 'read_failed');
+  assert.equal(ui.leaseStatus({ proxy_status: 'unbound' }), 'unbound');
+});
+
+test('Resin tab loads bindings first so summary can reuse binding counts', async () => {
+  const { dashboard: ui, mock } = harness({ captureTimers: true });
+  const requests = [];
+  let resolveLeases;
+  const leases = new Promise((resolve) => { resolveLeases = resolve; });
+  mock('api', (action) => {
+    requests.push(action);
+    if (action === 'proxy.bindings.list') return leases;
+    if (action === 'proxy.summary') return Promise.resolve({ binding_counts: { bound: 1 }, binding_total: 1, binding_version: 2 });
+    if (action === 'proxy.sources.list') return Promise.resolve({ items: [], total: 0, page: 1, page_size: 50 });
+    if (action === 'overview') return Promise.resolve({ auth_count: 1, states: { healthy: 1 } });
+    throw new Error('unexpected request ' + action);
+  });
+  ui.state.activeTab = 'resin';
+  const loading = ui.ensureTabData('resin', false);
+  await Promise.resolve();
+  assert.ok(!requests.includes('proxy.summary'), 'summary must wait for the binding aggregation');
+  resolveLeases({ items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'healthy', proxy_status: 'bound', proxy_managed: true, binding_version: 2 }], total: 1, page: 1, page_size: 50, binding_counts: { bound: 1 }, binding_total: 1, binding_version: 2 });
+  await loading;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(requests.indexOf('proxy.bindings.list') < requests.indexOf('proxy.summary'));
+});
+
+test('Proxy source rows render before the runtime summary finishes', async () => {
   const { dashboard: ui, get, mock } = harness();
   const summary = deferred();
   mock('api', (action) => {
     if (action === 'proxy.summary') return summary.promise;
-    if (action === 'proxy.sources.list') {
-      return Promise.resolve({
-        items: [{ id: 'node-1', kind: 'node', name: 'Node one', enabled: true, valid: true, endpoint: 'socks5h://u***@host:1080', binding_count: 0 }],
-        total: 1, page: 1, page_size: 50
-      });
-    }
+    if (action === 'proxy.sources.list') return Promise.resolve({ items: [{ id: 'node-1', kind: 'node', name: 'Node one', enabled: true, valid: true, endpoint: 'socks5h://u***@host:1080', binding_count: 0 }], total: 1, page: 1, page_size: 50 });
     throw new Error('unexpected request ' + action);
   });
-
   const request = ui.ensureProxyData(true);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.match(get('proxySourceRows').innerHTML, /Node one/);
   summary.resolve({ binding_counts: {} });
   await request;
 });
-test('Proxy data loading is single-flight', async () => {
+
+test('Proxy data requests remain single-flight when requested concurrently', async () => {
   const { dashboard: ui, mock } = harness();
   const summary = deferred();
   const sources = deferred();
@@ -521,94 +658,48 @@ test('Proxy data loading is single-flight', async () => {
   });
   const first = ui.ensureProxyData(true);
   const second = ui.ensureProxyData(true);
-  assert.equal(first, second);
   assert.deepEqual(requests.sort(), ['proxy.sources.list', 'proxy.summary']);
   summary.resolve({});
   sources.resolve({ items: [], total: 0, page: 1, page_size: 50 });
-  await first;
+  await Promise.all([first, second]);
   assert.equal(requests.length, 2);
-  assert.equal(ui.state.proxyLoading, false);
 });
 
-test('Pending metadata retries after an in-progress refresh completes', async () => {
+test('Visible metadata enrichment only requests current checking rows', async () => {
   const { dashboard: ui, mock, runTimers } = harness({ captureTimers: true });
+  const metadataRequests = [];
   ui.state.activeTab = 'accounts';
-  let calls = 0;
-  mock('api', async (action) => {
-    assert.equal(action, 'accounts.list');
-    calls += 1;
-    return {
-      items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown', proxy_status: 'unbound' }],
-      total: 1,
-      page: 1,
-      page_size: 50,
-      state_counts: { unknown: 1 },
-      proxy_metadata_pending: false
-    };
+  ui.state.accounts = [
+    { auth_id: 'auth-1', proxy_status: 'checking', proxy_inspected: false },
+    { auth_id: 'auth-2', proxy_status: 'unbound', proxy_inspected: true },
+    { auth_id: 'auth-3', proxy_status: 'read_failed', proxy_inspected: true }
+  ];
+  mock('api', async (action, params) => {
+    assert.equal(action, 'accounts.proxy_metadata');
+    metadataRequests.push(params.auth_ids);
+    return { items: params.auth_ids.map((authID) => ({ auth_id: authID, proxy_status: 'checking', proxy_inspected: false, binding_version: 8 })), binding_version: 8 };
   });
-  ui.state.refreshing = true;
-  ui.applyAccountListData({
-    items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown', proxy_status: 'unknown' }],
-    total: 1,
-    proxy_metadata_pending: true
-  });
-  runTimers();
-  assert.equal(calls, 0);
-  assert.equal(ui.state.accountProxyRetryCount, 1, 'waiting for an active refresh must not consume the retry budget');
-  ui.state.refreshing = false;
+  ui.scheduleAccountMetadataRefresh();
   runTimers();
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(calls, 1);
-  assert.equal(ui.state.accountProxyPending, false);
-});
-test('Pending proxy metadata triggers one bounded account follow-up', async () => {
-  const { dashboard: ui, mock } = harness();
-  ui.state.activeTab = 'accounts';
-  let calls = 0;
-  mock('api', async (action) => {
-    assert.equal(action, 'accounts.list');
-    calls += 1;
-    return {
-      items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown', proxy_status: 'unbound' }],
-      total: 1,
-      page: 1,
-      page_size: 50,
-      state_counts: { unknown: 1 },
-      proxy_metadata_pending: false
-    };
-  });
-  ui.applyAccountListData({
-    items: [{ auth_id: 'auth-1', display: 'a***@example.com', state: 'unknown', proxy_status: 'unknown' }],
-    total: 1,
-    proxy_metadata_pending: true
-  });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(calls, 1);
-  assert.equal(ui.state.accountProxyPending, false);
-  assert.equal(ui.state.accountProxyRetryCount, 0);
+  assert.deepEqual(metadataRequests, [['auth-1']]);
 });
 
-test('refreshAll releases the refresh lock when rendering fails', async () => {
+test('refreshAll refreshes only the active tab and does not hold a global lock', async () => {
   const { dashboard: ui, mock } = harness();
-  ui.state.activeTab = 'overview';
-  mock('api', async (action) => action === 'overview' ? {} : { items: [] });
-  mock('renderAll', () => { throw new Error('render failed'); });
-  await assert.rejects(() => ui.refreshAll(true), /render failed/);
+  const requests = [];
+  mock('api', async (action) => {
+    requests.push(action);
+    if (action === 'accounts.list') return { items: [], total: 0, page: 1, page_size: 50, state_counts: {} };
+    if (action === 'overview') return { auth_count: 0, states: {} };
+    if (action === 'proxy.summary') return { binding_counts: {} };
+    return { items: [], total: 0, page: 1, page_size: 50 };
+  });
+  ui.state.activeTab = 'accounts';
+  await ui.refreshAll(true);
+  assert.ok(requests.includes('accounts.list'));
+  assert.ok(!requests.includes('proxy.bindings.list'));
   assert.equal(ui.state.refreshing, false);
-});
-test('A tab change during a section refresh schedules the new tab refresh', async () => {
-  const { dashboard: ui, mock } = harness();
-  let refreshes = 0;
-  mock('refreshAll', async () => { refreshes += 1; });
-  ui.state.activeTab = 'accounts';
-  ui.state.refreshPending = true;
-  assert.equal(ui.scheduleDeferredRefresh('overview'), true);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(refreshes, 1);
-  assert.equal(ui.state.refreshPending, false);
-  ui.state.activeTab = 'accounts';
-  ui.state.refreshPending = false;
-  assert.equal(ui.scheduleDeferredRefresh('accounts'), false);
 });
 
 test('Account detail cache is bounded while the selected detail stays available', () => {
@@ -877,7 +968,7 @@ test('Binding source candidates use a bounded labeled picker', async () => {
   let candidateHTML = get('proxyOperationSourceChoices').innerHTML;
   assert.match(candidateHTML, /data-proxy-source-option="template-1"/);
   assert.doesNotMatch(candidateHTML, /data-proxy-source-option="node-1"|data-proxy-source-option="resin-1"/);
-  assert.match(candidateHTML, />Template one · 模板</);
+  assert.match(candidateHTML, />模板 · Template one</);
 
   const requests = [];
   mock('api', async (action, params) => {
@@ -901,7 +992,7 @@ test('Binding source candidates use a bounded labeled picker', async () => {
   assert.match(candidateHTML, /data-proxy-source-option="node-2"/);
 
   assert.equal(ui.chooseProxyOperationSource('template-2'), true);
-  assert.equal(get('proxyOperationSource').value, 'Template two');
+  assert.equal(get('proxyOperationSource').value, '模板 · Template two');
   assert.equal(get('proxyOperationSourceID').value, 'template-2');
   assert.equal(ui.proxyOperationSourceValue(), 'template-2');
 
@@ -909,6 +1000,25 @@ test('Binding source candidates use a bounded labeled picker', async () => {
   assert.match(html, /role="combobox"/);
   assert.match(html, /\.proxy-source-picker-menu\s*\{[\s\S]*?max-height:\s*240px/);
   assert.doesNotMatch(html, /<datalist id="proxyOperationSourceChoices"/);
+});
+
+test('Lease proxy filter shows source kind and name without source IDs', async () => {
+  const { dashboard: ui, get } = harness();
+  ui.state.proxySources = [
+    { id: 'resin-1', name: 'CPA', kind: 'resin' },
+    { id: 'node-1', name: 'Node one', kind: 'node' }
+  ];
+  ui.state.proxySourceChoices = [];
+  ui.renderProxySourceChoices();
+  const choices = get('proxySourceChoices').innerHTML;
+  assert.match(choices, /<option value="Resin · CPA"><\/option>/);
+  assert.match(choices, /<option value="节点 · Node one"><\/option>/);
+  assert.doesNotMatch(choices, /resin-1|node-1/);
+
+  const input = get('leaseSourceFilter');
+  input.value = 'Resin · CPA';
+  await input.emit('input');
+  assert.equal(ui.state.leaseSourceFilter, 'resin-1');
 });
 
 test('Bulk proxy import filters invalid and duplicate lines and stays bounded', () => {
@@ -1039,9 +1149,14 @@ test('Saving cannot silently discard pending bulk or CSV relation input', async 
 test('Binding status metrics use canonical names only', () => {
   const { dashboard: ui } = harness();
   assert.equal(ui.normalizeBindingStatus('bound'), 'bound');
+  assert.equal(ui.normalizeBindingStatus('checking'), 'checking');
+  assert.equal(ui.normalizeBindingStatus('read_failed'), 'read_failed');
   assert.equal(ui.normalizeBindingStatus('reconcile_required'), 'reconcile_required');
   assert.equal(ui.normalizeBindingStatus('unknown'), 'unknown');
-  const counts = ui.proxySummaryCounts({ binding_counts: { bound: 12, reconcile_required: 3, external: 2, unknown: 4 } });
+  assert.equal(ui.normalizeBindingStatus(''), 'checking');
+  const counts = ui.proxySummaryCounts({ binding_counts: { bound: 12, checking: 5, read_failed: 2, reconcile_required: 3, external: 2, unknown: 4 } });
+  assert.equal(counts.checking, 5);
+  assert.equal(counts.read_failed, 2);
   assert.equal(counts.bound, 12);
   assert.equal(counts.reconcile_required, 3);
   assert.equal(counts.external, 2);

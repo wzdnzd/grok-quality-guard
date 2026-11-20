@@ -330,9 +330,10 @@ type authMetaFailure struct {
 }
 
 type authMetaValue struct {
-	proxyURL string
-	OAuthID  string
-	loaded   bool
+	proxyURL  string
+	OAuthID   string
+	loaded    bool
+	completed bool
 }
 
 // copyCachedAuthMeta reuses file-derived fields only while the backing file
@@ -387,6 +388,10 @@ func (s *Service) markAuthMetaInspected(accounts []Account) {
 }
 
 func (s *Service) pendingAuthMetaJobs(accounts []Account) []authMetaJob {
+	return s.pendingAuthMetaJobsForAccounts(accounts, true)
+}
+
+func (s *Service) pendingAuthMetaJobsForAccounts(accounts []Account, pruneFailures bool) []authMetaJob {
 	now := time.Now().UTC()
 	live := make(map[string]authMetaFileSignature, len(accounts))
 	jobs := make([]authMetaJob, 0)
@@ -414,10 +419,12 @@ func (s *Service) pendingAuthMetaJobs(accounts []Account) []authMetaJob {
 			modTime:    account.ModTime,
 		})
 	}
-	for authID, failure := range s.authMetaFailures {
-		signature, exists := live[authID]
-		if !exists || signature != failure.signature {
-			delete(s.authMetaFailures, authID)
+	if pruneFailures {
+		for authID, failure := range s.authMetaFailures {
+			signature, exists := live[authID]
+			if !exists || signature != failure.signature {
+				delete(s.authMetaFailures, authID)
+			}
 		}
 	}
 	return jobs
@@ -431,6 +438,9 @@ func (s *Service) recordAuthMetaResults(jobs []authMetaJob, values []authMetaVal
 	}
 	now := time.Now().UTC()
 	for index, job := range jobs {
+		if index >= len(values) || !values[index].completed {
+			continue
+		}
 		if index < len(values) && values[index].loaded {
 			delete(s.authMetaFailures, job.authID)
 			continue
@@ -494,7 +504,8 @@ func (s *Service) runAuthMetaRefresh() {
 			// Apply the values that still match their per-file signature. A
 			// catalog generation change may be unrelated to these files; do not
 			// discard and reread the entire set for that reason.
-			s.applyAuthMeta(jobs, values)
+			changed := s.applyAuthMeta(jobs, values)
+			s.notifyProxyBindingsChanged(changed)
 		}
 
 		s.authMetaRefreshMu.Lock()
@@ -512,29 +523,93 @@ func (s *Service) runAuthMetaRefresh() {
 }
 
 func (s *Service) loadAuthMeta(jobs []authMetaJob) []authMetaValue {
+	ctx, cancel := context.WithTimeout(s.backgroundContext(), authMetaRefreshTimeout)
+	defer cancel()
+	return s.loadAuthMetaContext(ctx, jobs)
+}
+
+func (s *Service) loadAuthMetaContext(ctx context.Context, jobs []authMetaJob) []authMetaValue {
 	values := make([]authMetaValue, len(jobs))
 	read := s.authMetaRead
 	if read == nil {
 		read = readAuthMeta
 	}
-	ctx, cancel := context.WithTimeout(s.backgroundContext(), authMetaRefreshTimeout)
-	defer cancel()
 	_ = runBoundedQueue(ctx, jobs, 64, 8, func(_ context.Context, job authMetaJob) {
 		proxyURL, OAuthID, loaded := read(job.path)
-		values[job.valueIndex] = authMetaValue{proxyURL: proxyURL, OAuthID: OAuthID, loaded: loaded}
+		values[job.valueIndex] = authMetaValue{proxyURL: proxyURL, OAuthID: OAuthID, loaded: loaded, completed: true}
 	})
 	return values
+}
+
+// EnsureAuthMetaForIDs performs a bounded, page-scoped auth-file metadata read.
+// The dashboard only asks for rows that are currently visible (at most a few
+// dozen), so cold starts no longer need to wait for a full-catalog enrichment
+// pass before showing bound/unbound state. Incomplete work remains uninspected
+// and is rendered as checking, never as a failed read.
+func (s *Service) EnsureAuthMetaForIDs(ctx context.Context, authIDs []string, budget time.Duration) error {
+	if s == nil || s.env == nil || s.stopped() || len(authIDs) == 0 {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if budget <= 0 {
+		budget = 450 * time.Millisecond
+	}
+	if budget > 2*time.Second {
+		budget = 2 * time.Second
+	}
+	wanted := make(map[string]struct{}, len(authIDs))
+	for _, authID := range authIDs {
+		if authID = strings.TrimSpace(authID); authID != "" {
+			wanted[authID] = struct{}{}
+		}
+	}
+	s.catalogMu.RLock()
+	selected := make([]Account, 0, len(wanted))
+	for authID := range wanted {
+		if index, ok := s.catalogByID[authID]; ok && index >= 0 && index < len(s.catalog) {
+			selected = append(selected, s.catalog[index])
+		}
+	}
+	s.catalogMu.RUnlock()
+	jobs := s.pendingAuthMetaJobsForAccounts(selected, false)
+	if len(jobs) == 0 {
+		return nil
+	}
+	readCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	values := s.loadAuthMetaContext(readCtx, jobs)
+	completedJobs := make([]authMetaJob, 0, len(jobs))
+	completedValues := make([]authMetaValue, 0, len(values))
+	for index, value := range values {
+		if value.completed {
+			completedJobs = append(completedJobs, jobs[index])
+			completedValues = append(completedValues, value)
+		}
+	}
+	if len(completedJobs) == 0 {
+		return nil
+	}
+	s.recordAuthMetaResults(completedJobs, completedValues)
+	changed := s.applyAuthMeta(completedJobs, completedValues)
+	s.notifyProxyBindingsChanged(changed)
+	return nil
 }
 
 // applyAuthMeta applies values only to catalog rows whose backing file still has
 // the same path, size, and modification time. Per-row validation preserves useful
 // results across unrelated catalog refreshes without applying stale data.
-func (s *Service) applyAuthMeta(jobs []authMetaJob, values []authMetaValue) bool {
+func (s *Service) applyAuthMeta(jobs []authMetaJob, values []authMetaValue) []string {
 	s.catalogMu.Lock()
 	next := append([]Account(nil), s.catalog...)
 	changed := false
+	changedIDs := make([]string, 0, len(jobs))
 	for index, job := range jobs {
 		value := values[index]
+		if !value.completed {
+			continue
+		}
 		catalogIndex, exists := s.catalogByID[job.authID]
 		if !exists || catalogIndex < 0 || catalogIndex >= len(next) {
 			continue
@@ -547,6 +622,7 @@ func (s *Service) applyAuthMeta(jobs []authMetaJob, values []authMetaValue) bool
 			if !account.ProxyMetaInspected {
 				account.ProxyMetaInspected = true
 				changed = true
+				changedIDs = append(changedIDs, job.authID)
 			}
 			continue
 		}
@@ -564,15 +640,25 @@ func (s *Service) applyAuthMeta(jobs []authMetaJob, values []authMetaValue) bool
 		account.ProxyHash = hash
 		account.OAuthID = value.OAuthID
 		changed = true
+		changedIDs = append(changedIDs, job.authID)
 	}
 	if !changed {
 		s.catalogMu.Unlock()
-		return true
+		return nil
 	}
 	s.catalog = next
 	s.catalogMu.Unlock()
 	s.env.WakeProxyAutoBind()
-	return true
+	return changedIDs
+}
+
+func (s *Service) notifyProxyBindingsChanged(authIDs []string) {
+	if len(authIDs) == 0 {
+		return
+	}
+	if notifier, ok := s.env.(interface{ NotifyProxyBindingsChanged([]string) }); ok {
+		notifier.NotifyProxyBindingsChanged(authIDs)
+	}
 }
 func readAuthMeta(path string) (string, string, bool) {
 	file, errOpen := os.Open(path)

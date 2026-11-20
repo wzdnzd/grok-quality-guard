@@ -40,6 +40,22 @@ func (p *Plugin) PruneProxyObservations(authIDs []string) {
 	}
 }
 
+// EnsureAuthMetaForIDs lets management enrich only the auth files backing the
+// visible dashboard page. It is intentionally optional at the subpackage
+// boundary so lightweight test environments need not implement it.
+func (p *Plugin) EnsureAuthMetaForIDs(ctx context.Context, authIDs []string, budget time.Duration) error {
+	if p == nil || p.catalogSvc == nil {
+		return nil
+	}
+	return p.catalogSvc.EnsureAuthMetaForIDs(ctx, authIDs, budget)
+}
+
+func (p *Plugin) NotifyProxyBindingsChanged(authIDs []string) {
+	if p != nil && p.proxySvc != nil {
+		p.proxySvc.TouchBindingStates(authIDs)
+	}
+}
+
 func (p *Plugin) ListAuths(ctx context.Context) ([]pluginapi.HostAuthFileEntry, error) {
 	return p.listAuths(ctx)
 }

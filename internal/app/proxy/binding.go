@@ -156,29 +156,35 @@ type proxyObservation struct {
 }
 
 type proxyManager struct {
-	mu                 sync.Mutex
-	buildMu            sync.Mutex
-	scanMu             sync.Mutex
-	changeMu           sync.Mutex
-	runningChanges     map[string]struct{}
-	reservations       map[string]int
-	reservedByAuth     map[string]string
-	resinReserved      map[string]struct{}
-	queue              []string
-	queueHead          int
-	queued             map[string]struct{}
-	queuedAt           map[string]time.Time
-	pending            map[string]time.Time
-	inFlight           map[string]time.Time
-	healthQueuedAt     map[string]time.Time
-	healthActive       map[string]time.Time
-	observations       map[string]proxyObservation
-	observationsPruned time.Time
-	runtime            proxy.AutoBindRuntime
-	scanOffset         int
-	wake               chan struct{}
-	slots              chan struct{}
-	catalog            *proxySourceCatalog
+	mu                        sync.Mutex
+	buildMu                   sync.Mutex
+	scanMu                    sync.Mutex
+	changeMu                  sync.Mutex
+	runningChanges            map[string]struct{}
+	reservations              map[string]int
+	reservedByAuth            map[string]string
+	resinReserved             map[string]struct{}
+	queue                     []string
+	queueHead                 int
+	queued                    map[string]struct{}
+	queuedAt                  map[string]time.Time
+	pending                   map[string]time.Time
+	inFlight                  map[string]time.Time
+	healthQueuedAt            map[string]time.Time
+	healthActive              map[string]time.Time
+	observations              map[string]proxyObservation
+	observationsPruned        time.Time
+	bindingRevision           uint64
+	bindingCatalogFingerprint uint64
+	bindingCounts             map[string]int
+	bindingCountsVersion      uint64
+	bindingCountsTotal        int
+	bindingCountsAt           time.Time
+	runtime                   proxy.AutoBindRuntime
+	scanOffset                int
+	wake                      chan struct{}
+	slots                     chan struct{}
+	catalog                   *proxySourceCatalog
 }
 
 func newProxyManager() proxyManager {
@@ -186,8 +192,13 @@ func newProxyManager() proxyManager {
 		reservations: make(map[string]int), reservedByAuth: make(map[string]string), resinReserved: make(map[string]struct{}),
 		queued: make(map[string]struct{}), queuedAt: make(map[string]time.Time), pending: make(map[string]time.Time),
 		inFlight: make(map[string]time.Time), healthQueuedAt: make(map[string]time.Time), healthActive: make(map[string]time.Time),
-		observations: make(map[string]proxyObservation), wake: make(chan struct{}, 1),
-		slots: make(chan struct{}, 16),
+		observations: make(map[string]proxyObservation),
+		// Use a wall-clock base so a browser can safely reject late responses
+		// from an older plugin process. Revision increments during the process
+		// lifetime remain far below JavaScript's exact-integer limit.
+		bindingRevision: uint64(time.Now().UnixMilli()) * 1000,
+		wake:            make(chan struct{}, 1),
+		slots:           make(chan struct{}, 16),
 	}
 }
 
@@ -577,6 +588,7 @@ func (s *Service) updateCatalogProxy(authID, proxyURL string) {
 	}
 	s.mgr.mu.Lock()
 	s.mgr.observations[authID] = observation
+	s.mgr.bindingRevision++
 	s.mgr.mu.Unlock()
 }
 

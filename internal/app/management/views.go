@@ -3,6 +3,8 @@ package management
 import (
 	"context"
 	"strings"
+
+	proxyapp "grok-quality-guard/internal/app/proxy"
 )
 
 func (s *Service) accountSummary(account Account, stateAccount AccountState, proxyURL string) accountSummaryView {
@@ -70,6 +72,57 @@ func (s *Service) accountSummaryWithHash(account Account, stateAccount AccountSt
 	return view
 }
 
+// accountSummaryWithBinding is the canonical management projection. The
+// account table and proxy binding table both feed this same resolver output,
+// so their binding status cannot diverge while one page has fresher data.
+func (s *Service) accountSummaryWithBinding(account Account, stateAccount AccountState, binding proxyapp.BindingState) accountSummaryView {
+	displayFull := strings.TrimSpace(firstNonEmpty(account.Email, account.Label, account.ID))
+	displayLabel := strings.TrimSpace(account.Label)
+	if strings.Contains(displayLabel, "@") {
+		displayLabel = maskEmail(displayLabel)
+	}
+	view := accountSummaryView{
+		AuthID:            account.ID,
+		AuthIDDisplay:     maskAuthID(account.ID),
+		Display:           maskAccountIdentity(displayFull),
+		DisplayFull:       displayFull,
+		Email:             maskEmail(account.Email),
+		Label:             displayLabel,
+		State:             stateAccount.State,
+		LastReason:        stateAccount.LastReason,
+		DisableReason:     stateAccount.DisableReason,
+		LastAttempt:       stateAccount.LastAttempt,
+		LastObservedAt:    stateAccount.LastObservedAt,
+		CooldownUntil:     stateAccount.CooldownUntil,
+		ProbeBackoffUntil: stateAccount.ProbeBackoffUntil,
+		ProxyStatus:       binding.Status,
+		Proxy:             binding.Proxy,
+		ProxySourceID:     binding.SourceID,
+		ProxySourceKind:   string(binding.SourceKind),
+		ProxyManaged:      binding.SourceID != "",
+		ProxyGeneration:   binding.Generation,
+		ProxyLeaseAccount: binding.LeaseAccount,
+		ProxyPending:      binding.Pending,
+		ProxyInspected:    binding.Inspected,
+		BindingVersion:    binding.Version,
+		TPS:               stateAccount.Metrics.TPS,
+		OutputTokens:      stateAccount.Metrics.OutputTokens,
+		ReasoningTokens:   stateAccount.Metrics.ReasoningTokens,
+		EncryptedBytes:    stateAccount.Metrics.EncryptedBytes,
+	}
+	if view.State == "" {
+		view.State = StateUnknown
+		if account.Disabled {
+			view.State = StateExternallyDisabled
+		}
+	}
+	if binding.SourceID != "" {
+		view.ProxySourceName, _ = s.proxySourceInfo(binding.SourceID)
+	}
+	view.AutoBindExcluded = stateAccount.AutoBind.Excluded
+	return view
+}
+
 func authProxyMetadataUnknown(account Account, proxyURL string) bool {
 	return !account.ProxyURLKnown && strings.TrimSpace(account.Path) != "" && strings.TrimSpace(proxyURL) == ""
 }
@@ -111,6 +164,24 @@ func (s *Service) accountView(account Account, stateAccount AccountState, proxyU
 	}
 }
 
+func (s *Service) accountViewWithBinding(account Account, stateAccount AccountState, binding proxyapp.BindingState) accountView {
+	return accountView{
+		accountSummaryView:     s.accountSummaryWithBinding(account, stateAccount, binding),
+		Evidence:               stateAccount.LastEvidence,
+		LastProbeAt:            stateAccount.LastProbeAt,
+		DisableKind:            stateAccount.DisableKind,
+		StrikeMissingThinking:  stateAccount.QualityStrikeMissingThinking,
+		QualityFailureAt:       stateAccount.QualityFailureAt,
+		HealthyStreak:          stateAccount.HealthyStreak,
+		HealthyStreakStartedAt: stateAccount.HealthyStreakStartedAt,
+		SoftStrikes:            stateAccount.SoftStrikes,
+		ErrorStrikes:           stateAccount.ErrorStrikes,
+		ThinkingStrikes:        stateAccount.ThinkingStrikes,
+		TTFTMS:                 stateAccount.Metrics.FirstTokenMS,
+		VisibleTokens:          stateAccount.Metrics.VisibleTokens,
+	}
+}
+
 // Runtime-only auths need a per-auth read for proxy metadata, so cap that fallback
 // to small catalogs and keep bulk management requests free of N+1 host calls
 const catalogProxyFallbackLimit = 200
@@ -135,11 +206,10 @@ func (s *Service) accountProxyProjection(ctx context.Context, account Account, a
 }
 
 func (s *Service) accountViewForAccount(ctx context.Context, account Account) (accountView, error) {
-	_, _, raw, errResolve := s.resolveAuth(ctx, account.ID)
-	if errResolve != nil {
-		return accountView{}, errResolve
-	}
 	stateAccount, _ := s.stateAccount(account.ID)
-	rawProxyURL := strings.TrimSpace(authRawString(raw, "proxy_url"))
-	return s.accountView(account, stateAccount, rawProxyURL, ""), nil
+	bindings := s.env.Proxy().BindingStatesForAccounts([]Account{account})
+	if len(bindings) == 0 {
+		return accountView{}, nil
+	}
+	return s.accountViewWithBinding(account, stateAccount, bindings[0]), nil
 }

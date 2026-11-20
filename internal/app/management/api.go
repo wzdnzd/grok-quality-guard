@@ -173,6 +173,9 @@ type accountSummaryView struct {
 	ProxyManaged      bool             `json:"proxy_managed,omitempty"`
 	ProxyGeneration   uint64           `json:"proxy_generation,omitempty"`
 	ProxyLeaseAccount string           `json:"proxy_lease_account,omitempty"`
+	ProxyPending      bool             `json:"proxy_pending,omitempty"`
+	ProxyInspected    bool             `json:"proxy_inspected,omitempty"`
+	BindingVersion    uint64           `json:"binding_version"`
 	AutoBindExcluded  bool             `json:"auto_bind_excluded,omitempty"`
 	TPS               float64          `json:"tps,omitempty"`
 	OutputTokens      int64            `json:"output_tokens,omitempty"`
@@ -285,6 +288,8 @@ func (s *Service) handleAction(ctx context.Context, request action.Request) (any
 		return s.actionAccountsList(ctx, request.Params)
 	case "accounts.get":
 		return s.actionAccountGet(ctx, request.Params)
+	case "accounts.proxy_metadata":
+		return s.actionAccountProxyMetadata(ctx, request.Params)
 	case "accounts.probe":
 		return s.actionProbe(ctx, request.Params)
 	case "accounts.probe_selected":
@@ -480,37 +485,41 @@ func (s *Service) actionAccountsList(ctx context.Context, params map[string]any)
 	if idsOnly {
 		ids := catalogAccountIDs(pageAccounts)
 		return map[string]any{
-			"items":        ids,
-			"page":         page,
-			"page_size":    pageSize,
-			"total":        len(filteredIndexes),
-			"state_counts": stateCounts,
+			"items":           ids,
+			"page":            page,
+			"page_size":       pageSize,
+			"total":           len(filteredIndexes),
+			"state_counts":    stateCounts,
+			"binding_version": s.env.Proxy().BindingVersion(),
 		}, http.StatusOK, nil
 	}
 	proxyMetadataPending := false
+	proxyMetadataPendingIDs := make([]string, 0)
 	for _, account := range pageAccounts {
 		if authProxyMetadataPending(account, "") {
 			proxyMetadataPending = true
-			break
+			proxyMetadataPendingIDs = append(proxyMetadataPendingIDs, account.ID)
 		}
 	}
-	allowProxyFallback := len(catalog) <= catalogProxyFallbackLimit
 	pageIDs := catalogAccountIDs(pageAccounts)
+	bindings := s.env.Proxy().BindingStatesForAccounts(pageAccounts)
+	bindingVersion := s.env.Proxy().BindingVersion()
+	if len(bindings) > 0 {
+		bindingVersion = bindings[0].Version
+	}
 	var views any
 	if action.Bool(params, "summary") {
 		pageSummaries := store.AccountStateSummariesForIDs(pageIDs)
 		items := make([]accountSummaryView, 0, len(pageAccounts))
 		for index, account := range pageAccounts {
-			proxyValue, proxyHash := s.accountProxyProjection(ctx, account, allowProxyFallback)
-			items = append(items, s.accountSummaryWithHash(account, accountStateFromSummary(pageSummaries[index]), proxyValue, proxyHash))
+			items = append(items, s.accountSummaryWithBinding(account, accountStateFromSummary(pageSummaries[index]), bindings[index]))
 		}
 		views = items
 	} else {
 		pageStates := store.AccountStatesForIDs(pageIDs)
 		items := make([]accountView, 0, len(pageAccounts))
 		for index, account := range pageAccounts {
-			proxyValue, proxyHash := s.accountProxyProjection(ctx, account, allowProxyFallback)
-			items = append(items, s.accountView(account, pageStates[index], proxyValue, proxyHash))
+			items = append(items, s.accountViewWithBinding(account, pageStates[index], bindings[index]))
 		}
 		views = items
 	}
@@ -523,7 +532,9 @@ func (s *Service) actionAccountsList(ctx context.Context, params map[string]any)
 		// The dashboard retries this page after asynchronous auth-file
 		// enrichment finishes. This is a per-row display hint, not a trigger
 		// for a host auth read in the list request itself.
-		"proxy_metadata_pending": proxyMetadataPending,
+		"proxy_metadata_pending":     proxyMetadataPending,
+		"proxy_metadata_pending_ids": proxyMetadataPendingIDs,
+		"binding_version":            bindingVersion,
 	}, http.StatusOK, nil
 }
 
@@ -604,15 +615,88 @@ func (s *Service) actionAccountGet(ctx context.Context, params map[string]any) (
 	if authID == "" {
 		return nil, http.StatusBadRequest, newAPIActionError("auth_id_required", "api.error.auth_id_required", http.StatusBadRequest, nil)
 	}
+	if errCatalog := s.ensureCatalog(ctx); errCatalog != nil {
+		return nil, http.StatusBadGateway, errCatalog
+	}
 	account, okAccount := s.findAccount(authID)
 	if !okAccount {
 		return nil, http.StatusNotFound, newAPIActionError("auth_not_found", "api.error.auth_not_found", http.StatusNotFound, nil)
 	}
-	_, _, raw, errResolve := s.resolveAuth(ctx, account.ID)
-	if errResolve != nil {
-		return nil, http.StatusBadGateway, errResolve
+	view, errView := s.accountViewForAccount(ctx, account)
+	if errView != nil {
+		return nil, http.StatusBadGateway, errView
 	}
-	stateAccount, _ := s.stateAccount(account.ID)
-	rawProxyURL := strings.TrimSpace(authRawString(raw, "proxy_url"))
-	return s.accountView(account, stateAccount, rawProxyURL, ""), http.StatusOK, nil
+	return view, http.StatusOK, nil
+}
+
+// actionAccountProxyMetadata refreshes only the visible rows' auth-file proxy
+// metadata and returns the shared binding projection. It replaces the old
+// whole-table polling loop with one bounded, page-sized request.
+func (s *Service) actionAccountProxyMetadata(ctx context.Context, params map[string]any) (any, int, error) {
+	authIDs := action.AuthIDs(params)
+	if len(authIDs) == 0 {
+		return nil, http.StatusBadRequest, newAPIActionError("auth_ids_required", "api.error.auth_ids_required", http.StatusBadRequest, nil)
+	}
+	if len(authIDs) > 200 {
+		return nil, http.StatusBadRequest, newAPIActionError("auth_ids_limit", "api.error.auth_ids_limit", http.StatusBadRequest, nil)
+	}
+	if errCatalog := s.ensureCatalog(ctx); errCatalog != nil {
+		return nil, http.StatusBadGateway, errCatalog
+	}
+	uniqueIDs := make([]string, 0, len(authIDs))
+	seen := make(map[string]struct{}, len(authIDs))
+	accounts := make([]Account, 0, len(authIDs))
+	for _, authID := range authIDs {
+		authID = strings.TrimSpace(authID)
+		if authID == "" {
+			continue
+		}
+		if _, exists := seen[authID]; exists {
+			continue
+		}
+		account, ok := s.findAccount(authID)
+		if !ok {
+			continue
+		}
+		seen[authID] = struct{}{}
+		uniqueIDs = append(uniqueIDs, authID)
+		accounts = append(accounts, account)
+	}
+	if len(accounts) == 0 {
+		return map[string]any{"items": []any{}, "binding_version": s.env.Proxy().BindingVersion()}, http.StatusOK, nil
+	}
+	if inspector, ok := s.env.(interface {
+		EnsureAuthMetaForIDs(context.Context, []string, time.Duration) error
+	}); ok {
+		_ = inspector.EnsureAuthMetaForIDs(ctx, uniqueIDs, 450*time.Millisecond)
+		accounts = accounts[:0]
+		for _, authID := range uniqueIDs {
+			if account, found := s.findAccount(authID); found {
+				accounts = append(accounts, account)
+			}
+		}
+	}
+	bindings := s.env.Proxy().BindingStatesForAccounts(accounts)
+	bindingVersion := s.env.Proxy().BindingVersion()
+	if len(bindings) > 0 {
+		bindingVersion = bindings[0].Version
+	}
+	items := make([]map[string]any, len(bindings))
+	for index, binding := range bindings {
+		items[index] = map[string]any{
+			"auth_id":               binding.AuthID,
+			"proxy_status":          binding.Status,
+			"proxy":                 binding.Proxy,
+			"proxy_source_id":       binding.SourceID,
+			"proxy_source_kind":     binding.SourceKind,
+			"proxy_managed":         binding.SourceID != "",
+			"proxy_source_revision": binding.SourceRevision,
+			"proxy_generation":      binding.Generation,
+			"proxy_lease_account":   binding.LeaseAccount,
+			"proxy_pending":         binding.Pending,
+			"proxy_inspected":       binding.Inspected,
+			"binding_version":       binding.Version,
+		}
+	}
+	return map[string]any{"items": items, "binding_version": bindingVersion}, http.StatusOK, nil
 }

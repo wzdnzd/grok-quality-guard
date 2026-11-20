@@ -401,7 +401,9 @@ func (s *Service) resetProxyAutoBindForReselection(id, sourceID string) {
 		return
 	}
 	state.AutoBind = next
-	_ = s.env.ProxyStore().CommitProxy(proxyCommit{Account: &proxyAccountCommit{AuthID: id, Binding: state.Proxy, AutoBind: state.AutoBind}})
+	if err := s.env.ProxyStore().CommitProxy(proxyCommit{Account: &proxyAccountCommit{AuthID: id, Binding: state.Proxy, AutoBind: state.AutoBind}}); err == nil {
+		s.TouchBindingStates(nil)
+	}
 }
 
 func (s *Service) setProxyWaiting(reason string, err error) {
@@ -482,7 +484,9 @@ func (s *Service) recordProxyAutoResult(id string, result proxyBindingResult, er
 	state.AutoBind.LastError = redact.SanitizeError(err)
 	state.AutoBind.LastErrorCode = proxyErrorCode(err)
 	state.AutoBind.LastSourceID = result.SourceID
-	_ = s.env.ProxyStore().CommitProxy(proxyCommit{Account: &proxyAccountCommit{AuthID: id, Binding: state.Proxy, AutoBind: state.AutoBind}})
+	if err := s.env.ProxyStore().CommitProxy(proxyCommit{Account: &proxyAccountCommit{AuthID: id, Binding: state.Proxy, AutoBind: state.AutoBind}}); err == nil {
+		s.TouchBindingStates(nil)
+	}
 }
 
 func (s *Service) setProxyAutoBindForAuths(ids []string, excluded bool) (map[string]any, error) {
@@ -503,6 +507,7 @@ func (s *Service) setProxyAutoBindForAuths(ids []string, excluded bool) (map[str
 			return nil, err
 		}
 	}
+	s.TouchBindingStates(ids)
 	s.wakeProxyAutoBind()
 	return map[string]any{"count": len(ids), "excluded": excluded}, nil
 }
@@ -513,7 +518,7 @@ func (s *Service) proxyBindUnbound(ctx context.Context, opts proxyBindOptions) (
 	}
 	ids := []string{}
 	s.walkProxyCatalog(func(row proxyCatalogRow) {
-		if row.Binding.SourceID == "" && (row.Observation.Known && row.Observation.Masked == "" || row.Account.Path == "" && !row.Observation.Known) {
+		if row.Status == "unbound" {
 			ids = append(ids, row.Account.ID)
 		}
 	})

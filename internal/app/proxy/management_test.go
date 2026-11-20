@@ -48,12 +48,17 @@ func TestProxySourceViewsUseStandardMaskedEndpointFormat(t *testing.T) {
 
 type proxyViewTestEnvironment struct {
 	Environment
-	store *appstate.Store
+	store    *appstate.Store
+	accounts []Account
 }
 
 var proxyViewTestAccountLocks sync.Map
 
 func (e proxyViewTestEnvironment) ProxyStore() *appstate.Store { return e.store }
+
+func (e proxyViewTestEnvironment) ProxyCatalogSnapshot() []Account {
+	return append([]Account(nil), e.accounts...)
+}
 
 func (e proxyViewTestEnvironment) ProxyAccountLock(id string) *sync.Mutex {
 	lock, _ := proxyViewTestAccountLocks.LoadOrStore(id, &sync.Mutex{})
@@ -311,5 +316,105 @@ func TestProxyObservationPruneReleasesDeletedAndExpiredAccounts(t *testing.T) {
 	defer service.mgr.mu.Unlock()
 	if len(service.mgr.observations) != 0 {
 		t.Fatalf("expired observations were retained: %#v", service.mgr.observations)
+	}
+}
+func TestBindingStateSemanticsDistinguishUnboundCheckingAndReadFailure(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name        string
+		account     Account
+		projection  appstate.ProxyBindingProjection
+		observation proxyObservation
+		want        string
+		wantProxy   string
+	}{
+		{name: "runtime account without proxy is unbound", account: Account{ID: "auth-1"}, want: "unbound"},
+		{name: "file has not been inspected", account: Account{ID: "auth-1", Path: "auth.json"}, want: "checking"},
+		{name: "inspection failed", account: Account{ID: "auth-1", Path: "auth.json", ProxyMetaInspected: true}, want: "read_failed"},
+		{name: "known empty proxy is unbound", account: Account{ID: "auth-1", Path: "auth.json", ProxyURLKnown: true}, observation: proxyObservation{Known: true}, want: "unbound"},
+		{name: "external proxy", account: Account{ID: "auth-1", Path: "auth.json"}, observation: proxyObservation{Known: true, Masked: "socks5h://us***r:******@proxy.example:1080"}, want: "external", wantProxy: "socks5h://us***r:******@proxy.example:1080"},
+		{name: "matching managed endpoint", account: Account{ID: "auth-1", Path: "auth.json"}, projection: appstate.ProxyBindingProjection{SourceID: "node-1", SourceKind: coreproxy.SourceNode, EndpointHash: "hash-1"}, observation: proxyObservation{Known: true, Masked: "socks5h://us***r:******@proxy.example:1080", Hash: "hash-1"}, want: "bound"},
+		{name: "managed endpoint drift", account: Account{ID: "auth-1", Path: "auth.json"}, projection: appstate.ProxyBindingProjection{SourceID: "node-1", SourceKind: coreproxy.SourceNode, EndpointHash: "hash-1"}, observation: proxyObservation{Known: true, Masked: "socks5h://us***r:******@proxy.example:1080", Hash: "hash-2"}, want: "drifted"},
+		{name: "managed endpoint without a recorded hash is structurally unknown", account: Account{ID: "auth-1", Path: "auth.json"}, projection: appstate.ProxyBindingProjection{SourceID: "node-1", SourceKind: coreproxy.SourceNode}, observation: proxyObservation{Known: true, Masked: "socks5h://us***r:******@proxy.example:1080", Hash: "hash-1"}, want: "unknown"},
+		{name: "pending operation", account: Account{ID: "auth-1", Path: "auth.json", ProxyURLKnown: true}, projection: appstate.ProxyBindingProjection{Pending: true}, observation: proxyObservation{Known: true, CheckedAt: now}, want: "reconcile_required"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state := bindingStateFromProjection(tc.account, tc.projection, tc.observation)
+			if state.Status != tc.want {
+				t.Fatalf("status = %q, want %q", state.Status, tc.want)
+			}
+			if tc.wantProxy != "" && state.Proxy != tc.wantProxy {
+				t.Fatalf("proxy = %q, want %q", state.Proxy, tc.wantProxy)
+			}
+		})
+	}
+}
+
+func TestPageScopedBindingResolutionDoesNotPruneOtherObservations(t *testing.T) {
+	store := newProxyTestStore(t)
+	service := NewService(proxyViewTestEnvironment{store: store})
+	now := time.Now()
+	service.mgr.observations["auth-page"] = proxyObservation{Masked: "socks5h://u***@one:1080", Known: true, CheckedAt: now}
+	service.mgr.observations["auth-other"] = proxyObservation{Masked: "socks5h://u***@two:1080", Known: true, CheckedAt: now}
+	service.mgr.observationsPruned = now.Add(-2 * proxyObservationPruneInterval)
+
+	states := service.BindingStatesForAccounts([]Account{{ID: "auth-page", Path: "auth-page.json"}})
+	if len(states) != 1 || states[0].Status != "external" {
+		t.Fatalf("page states = %#v", states)
+	}
+	if _, ok := service.mgr.observations["auth-other"]; !ok {
+		t.Fatal("page-scoped resolution pruned an observation for another page")
+	}
+}
+
+func TestAccountAndProxyPagesUseTheSameBindingProjection(t *testing.T) {
+	store := newProxyTestStore(t)
+	store.SetStateForTest(appstate.State{Accounts: map[string]*appstate.AccountState{
+		"auth-1": {AuthID: "auth-1", Proxy: coreproxy.Binding{SourceID: "node-1", SourceKind: coreproxy.SourceNode, EndpointHash: "hash-1"}},
+	}})
+	service := NewService(proxyViewTestEnvironment{store: store, accounts: []Account{{ID: "auth-1", Path: "auth-1.json"}}})
+	service.PruneProxyObservations([]string{"auth-1"})
+	service.mgr.observations["auth-1"] = proxyObservation{Masked: "socks5h://u***@proxy:1080", Hash: "hash-1", Known: true, CheckedAt: time.Now()}
+
+	pageStates := service.BindingStatesForAccounts([]Account{{ID: "auth-1", Path: "auth-1.json"}})
+	var catalogState BindingState
+	service.walkProxyCatalog(func(row proxyCatalogRow) { catalogState = row.State })
+	if len(pageStates) != 1 || pageStates[0].Status != "bound" || catalogState.Status != "bound" {
+		t.Fatalf("account status = %#v, proxy catalog status = %#v", pageStates, catalogState)
+	}
+	if pageStates[0].Version != catalogState.Version {
+		t.Fatalf("binding versions = %d and %d, want one shared version", pageStates[0].Version, catalogState.Version)
+	}
+}
+
+func TestBindingCountsCacheInvalidatesWhenCatalogMembershipChanges(t *testing.T) {
+	service := NewService(proxyViewTestEnvironment{store: newProxyTestStore(t)})
+	service.PruneProxyObservations([]string{"auth-1", "auth-2"})
+	counts := emptyBindingCounts()
+	counts["bound"] = 2
+	version := service.BindingVersion()
+	service.rememberBindingCounts(counts, 2, version)
+	if _, _, _, ok := service.recentBindingCounts(); !ok {
+		t.Fatal("binding counts cache was not populated")
+	}
+	service.PruneProxyObservations([]string{"auth-1"})
+	if _, _, _, ok := service.recentBindingCounts(); ok {
+		t.Fatal("binding counts cache survived a catalog membership change")
+	}
+}
+func TestBindingCountsCacheInvalidatesOnBindingRevision(t *testing.T) {
+	service := NewService(proxyViewTestEnvironment{store: newProxyTestStore(t)})
+	counts := emptyBindingCounts()
+	counts["bound"] = 2
+	service.mgr.bindingRevision = 7
+	service.rememberBindingCounts(counts, 3, 7)
+	got, total, version, ok := service.recentBindingCounts()
+	if !ok || total != 3 || version != 7 || got["bound"] != 2 {
+		t.Fatalf("recent binding counts = %#v total=%d ok=%v", got, total, ok)
+	}
+	service.mgr.bindingRevision = 8
+	if _, _, _, ok := service.recentBindingCounts(); ok {
+		t.Fatal("binding counts cache survived a newer binding revision")
 	}
 }

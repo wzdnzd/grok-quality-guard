@@ -48,6 +48,7 @@ func (s *Service) commitProxyOperationLocked(ctx context.Context, response plugi
 	if err := store.PrepareProxy(operation, automatic); err != nil {
 		return failedProxyResult(operation.AuthID, "failed", err), err
 	}
+	s.TouchBindingStates(nil)
 	// Read immediately before patching; tokens and unknown fields are taken from
 	// the latest auth under the same gate used by probes and quality mutations.
 	_, latestResponse, latest, err := s.env.ProxyResolveAuth(ctx, operation.AuthID)
@@ -168,6 +169,9 @@ func (s *Service) failProxyOperation(operation proxy.Operation, err error, recon
 		commit.ChangeItem = &item
 	}
 	persistErr := s.env.ProxyStore().CommitProxy(commit)
+	if persistErr == nil {
+		s.TouchBindingStates(nil)
+	}
 	result := failedProxyResult(operation.AuthID, operation.Status, err)
 	result.OperationID = operation.ID
 	result.SourceID = operation.Binding.SourceID
@@ -278,6 +282,9 @@ func (s *Service) resumeProxyOperationLocked(ctx context.Context, authID string,
 			commit.ChangeItem = &item
 		}
 		err := s.env.ProxyStore().CommitProxy(commit)
+		if err == nil {
+			s.TouchBindingStates(nil)
+		}
 		return proxyBindingResult{AuthID: authID, SourceID: operation.Binding.SourceID, OperationID: operation.ID, Status: "superseded"}, err
 	}
 	_, response, raw, err := s.env.ProxyResolveAuth(ctx, authID)
@@ -388,6 +395,7 @@ func (s *Service) clearProxy(ctx context.Context, authID string, opts proxyBindO
 			if err := s.env.ProxyStore().CommitProxy(proxyCommit{Account: &proxyAccountCommit{AuthID: authID, Binding: state.Proxy, AutoBind: state.AutoBind}}); err != nil {
 				return failedProxyResult(authID, "failed", err), err
 			}
+			s.TouchBindingStates(nil)
 		}
 		return proxyBindingResult{AuthID: authID, Status: "skipped"}, nil
 	}
