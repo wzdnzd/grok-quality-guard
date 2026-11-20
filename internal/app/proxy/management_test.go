@@ -3,8 +3,10 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -469,5 +471,130 @@ func TestBindingCountsCacheInvalidatesOnBindingRevision(t *testing.T) {
 	service.mgr.bindingRevision = 8
 	if _, _, _, ok := service.recentBindingCounts(); ok {
 		t.Fatal("binding counts cache survived a newer binding revision")
+	}
+}
+
+type proxyObservationRecoveryEnvironment struct {
+	proxyViewTestEnvironment
+	raw   map[string]json.RawMessage
+	err   error
+	calls atomic.Int32
+}
+
+func (e *proxyObservationRecoveryEnvironment) ProxyEnsureCatalog(context.Context) error {
+	return nil
+}
+
+func (e *proxyObservationRecoveryEnvironment) ProxyResolveAuth(context.Context, string) (Account, pluginapi.HostAuthGetResponse, map[string]json.RawMessage, error) {
+	e.calls.Add(1)
+	if e.err != nil {
+		return Account{}, pluginapi.HostAuthGetResponse{}, nil, e.err
+	}
+	return Account{}, pluginapi.HostAuthGetResponse{}, e.raw, nil
+}
+
+func newRuntimeManagedRecoveryEnvironment(t *testing.T, endpointHash string) *proxyObservationRecoveryEnvironment {
+	t.Helper()
+	store := newProxyTestStore(t)
+	store.SetStateForTest(appstate.State{Accounts: map[string]*appstate.AccountState{
+		"auth-1": {AuthID: "auth-1", Proxy: coreproxy.Binding{SourceID: "node-1", SourceKind: coreproxy.SourceNode, EndpointHash: endpointHash}},
+	}})
+	return &proxyObservationRecoveryEnvironment{
+		proxyViewTestEnvironment: proxyViewTestEnvironment{store: store, accounts: []Account{{ID: "auth-1"}}},
+	}
+}
+
+func TestRuntimeOnlyManagedBindingSurvivesObservationTTL(t *testing.T) {
+	service := NewService(newRuntimeManagedRecoveryEnvironment(t, "hash-1"))
+	service.mgr.observations["auth-1"] = proxyObservation{
+		Masked:    "socks5h://us***r:******@proxy:1080",
+		Hash:      "hash-1",
+		Known:     true,
+		CheckedAt: time.Now().Add(-catalogRefreshTTL - time.Second),
+	}
+
+	states := service.BindingStatesForAccounts(service.env.ProxyCatalogSnapshot())
+	if len(states) != 1 {
+		t.Fatalf("states = %#v", states)
+	}
+	if states[0].Status != "bound" {
+		t.Fatalf("runtime-only managed status = %q, want bound", states[0].Status)
+	}
+}
+
+func TestVisibleRuntimeBindingConfirmationRecoversAfterRestart(t *testing.T) {
+	proxyURL := "socks5h://user:secret@proxy.example:1080"
+	raw, errMarshal := json.Marshal(proxyURL)
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	environment := newRuntimeManagedRecoveryEnvironment(t, proxyURLHash(proxyURL))
+	environment.raw = map[string]json.RawMessage{"proxy_url": raw}
+	service := NewService(environment)
+
+	states := service.BindingStatesForAccountsContext(context.Background(), environment.accounts)
+	if len(states) != 1 || states[0].Status != "bound" || !states[0].Inspected {
+		t.Fatalf("recovered states = %#v", states)
+	}
+	if calls := environment.calls.Load(); calls != 1 {
+		t.Fatalf("host auth calls = %d, want 1", calls)
+	}
+
+	states = service.BindingStatesForAccountsContext(context.Background(), environment.accounts)
+	if len(states) != 1 || states[0].Status != "bound" {
+		t.Fatalf("cached states = %#v", states)
+	}
+	if calls := environment.calls.Load(); calls != 1 {
+		t.Fatalf("host auth calls after cached resolution = %d, want 1", calls)
+	}
+}
+
+func TestVisibleRuntimeBindingReadFailureStopsChecking(t *testing.T) {
+	environment := newRuntimeManagedRecoveryEnvironment(t, "hash-1")
+	environment.err = errors.New("host auth read failed")
+	service := NewService(environment)
+
+	states := service.BindingStatesForAccountsContext(context.Background(), environment.accounts)
+	if len(states) != 1 || states[0].Status != "read_failed" || !states[0].Inspected {
+		t.Fatalf("failed states = %#v", states)
+	}
+	if calls := environment.calls.Load(); calls != 1 {
+		t.Fatalf("host auth calls = %d, want 1", calls)
+	}
+
+	states = service.BindingStatesForAccountsContext(context.Background(), environment.accounts)
+	if len(states) != 1 || states[0].Status != "read_failed" {
+		t.Fatalf("cached failed states = %#v", states)
+	}
+	if calls := environment.calls.Load(); calls != 1 {
+		t.Fatalf("host auth calls while failed observation is fresh = %d, want 1", calls)
+	}
+}
+
+func TestProxyBindingsListConfirmsVisibleRuntimeBinding(t *testing.T) {
+	proxyURL := "socks5h://user:secret@proxy.example:1080"
+	raw, errMarshal := json.Marshal(proxyURL)
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	environment := newRuntimeManagedRecoveryEnvironment(t, proxyURLHash(proxyURL))
+	environment.raw = map[string]json.RawMessage{"proxy_url": raw}
+	service := NewService(environment)
+
+	result, status, errList := service.actionProxyBindingsList(context.Background(), map[string]any{"page_size": 10})
+	if errList != nil || status != 200 {
+		t.Fatalf("bindings list status=%d err=%v", status, errList)
+	}
+	data, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("bindings list result = %#v", result)
+	}
+	items, ok := data["items"].([]map[string]any)
+	if !ok || len(items) != 1 || items[0]["proxy_status"] != "bound" {
+		t.Fatalf("bindings list items = %#v", data["items"])
+	}
+	counts, ok := data["binding_counts"].(map[string]int)
+	if !ok || counts["bound"] != 1 || counts["checking"] != 0 {
+		t.Fatalf("binding counts = %#v", data["binding_counts"])
 	}
 }

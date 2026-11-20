@@ -154,6 +154,7 @@ type proxyObservation struct {
 	Masked    string
 	Hash      string
 	Known     bool
+	Inspected bool
 	CheckedAt time.Time
 }
 
@@ -591,7 +592,7 @@ func (s *Service) bindProxy(ctx context.Context, authID string, opts proxyBindOp
 func (s *Service) updateCatalogProxy(authID, proxyURL string) {
 	// Catalog slices are shared immutable snapshots. Keep writes in a small
 	// observation overlay instead of modifying an array visible to other readers.
-	observation := proxyObservation{Masked: maskProxyURL(proxyURL), Known: true, CheckedAt: time.Now().UTC()}
+	observation := proxyObservation{Masked: maskProxyURL(proxyURL), Known: true, Inspected: true, CheckedAt: time.Now().UTC()}
 	if strings.TrimSpace(proxyURL) != "" {
 		observation.Hash = proxyURLHash(proxyURL)
 	}

@@ -13,6 +13,23 @@ const (
 	maxProxyObservations          = 20000
 )
 
+func proxyObservationTTL(account Account) time.Duration {
+	if strings.TrimSpace(account.Path) == "" {
+		// Runtime-only auths have no host file signature to invalidate their
+		// proxy observation. Retention is their only cheap consistency window;
+		// visible-page callers can confirm them again when it expires.
+		return proxyObservationRetention
+	}
+	return catalogRefreshTTL
+}
+
+func proxyObservationFreshAt(account Account, observation proxyObservation, now time.Time) bool {
+	if observation.CheckedAt.IsZero() || now.Sub(observation.CheckedAt) >= proxyObservationTTL(account) {
+		return false
+	}
+	return account.ModTime.IsZero() || !account.ModTime.After(observation.CheckedAt)
+}
+
 func catalogAccountMatches(account Account, query string) bool {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" {

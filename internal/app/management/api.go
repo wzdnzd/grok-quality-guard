@@ -693,7 +693,7 @@ func (s *Service) actionAccountsList(ctx context.Context, params map[string]any)
 		}
 	}
 	pageIDs = catalogAccountIDs(pageAccounts)
-	bindings := proxyService.BindingStatesForAccounts(pageAccounts)
+	bindings := proxyService.BindingStatesContext(ctx, pageAccounts)
 	bindingVersion := proxyService.BindingVersion()
 	if len(bindings) > 0 {
 		bindingVersion = bindings[0].Version
@@ -973,7 +973,7 @@ func (s *Service) actionAccountProxyMetadata(ctx context.Context, params map[str
 			}
 		}
 	}
-	bindings := s.env.Proxy().BindingStatesForAccounts(accounts)
+	bindings := s.env.Proxy().BindingStatesContext(ctx, accounts)
 	bindingVersion := s.env.Proxy().BindingVersion()
 	if len(bindings) > 0 {
 		bindingVersion = bindings[0].Version

@@ -207,7 +207,7 @@ func (s *Service) accountProxyProjection(ctx context.Context, account Account, a
 
 func (s *Service) accountViewForAccount(ctx context.Context, account Account) (accountView, error) {
 	stateAccount, _ := s.stateAccount(account.ID)
-	bindings := s.env.Proxy().BindingStatesForAccounts([]Account{account})
+	bindings := s.env.Proxy().BindingStatesContext(ctx, []Account{account})
 	if len(bindings) == 0 {
 		return accountView{}, nil
 	}

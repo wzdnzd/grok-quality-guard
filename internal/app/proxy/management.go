@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	actionpkg "grok-quality-guard/internal/app/action"
@@ -897,7 +898,6 @@ func (s *Service) actionProxyBindingsList(ctx context.Context, params map[string
 	rows := make([]proxyCatalogRow, 0, size)
 	total := 0
 	bindingCounts := emptyBindingCounts()
-	versionBefore := s.BindingVersion()
 	bindingTotal, bindingVersion, errWalk := s.walkProxyCatalogWithVersionContext(ctx, func(row proxyCatalogRow) {
 		bindingCounts[row.Status]++
 		if !proxyStatusMatches(status, row.Status) || source != "" && row.Binding.SourceID != source || query != "" && !catalogAccountMatches(row.Account, query) || excludedSet && row.AutoBind.Excluded != excluded {
@@ -913,7 +913,30 @@ func (s *Service) actionProxyBindingsList(ctx context.Context, params map[string
 	if errWalk != nil {
 		return nil, 0, errWalk
 	}
-	if bindingVersion == versionBefore {
+	if !idsOnly && len(rows) > 0 {
+		pageAccounts := make([]Account, len(rows))
+		for index := range rows {
+			pageAccounts[index] = rows[index].Account
+		}
+		resolved := s.BindingStatesForAccountsContext(ctx, pageAccounts)
+		if len(resolved) == len(rows) {
+			if len(resolved) > 0 {
+				bindingVersion = resolved[0].Version
+			}
+			for index := range rows {
+				previous := rows[index].Status
+				next := resolved[index]
+				next.Version = bindingVersion
+				if previous != next.Status {
+					bindingCounts[previous]--
+					bindingCounts[next.Status]++
+				}
+				rows[index].State = next
+				rows[index].Status = next.Status
+			}
+		}
+	}
+	if bindingVersion == s.BindingVersion() {
 		s.rememberBindingCounts(bindingCounts, bindingTotal, bindingVersion)
 	}
 	if idsOnly {
@@ -1313,15 +1336,18 @@ func (s *Service) proxyObservationFor(account Account) proxyObservation {
 	s.mgr.mu.RLock()
 	observation, ok := s.mgr.observations[account.ID]
 	s.mgr.mu.RUnlock()
-	if ok && time.Since(observation.CheckedAt) < catalogRefreshTTL && (account.ModTime.IsZero() || !account.ModTime.After(observation.CheckedAt)) {
+	if ok && proxyObservationFreshAt(account, observation, time.Now()) {
 		return observation
 	}
-	return proxyObservation{Masked: account.ProxyMasked, Hash: account.ProxyHash, Known: account.ProxyURLKnown || account.ProxyMasked != "", CheckedAt: account.ModTime}
+	return proxyObservation{Masked: account.ProxyMasked, Hash: account.ProxyHash, Known: account.ProxyURLKnown || account.ProxyMasked != "", Inspected: account.ProxyMetaInspected, CheckedAt: account.ModTime}
 }
 
 func (s *Service) confirmProxyObservation(ctx context.Context, account Account) proxyObservation {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	observation := s.proxyObservationFor(account)
-	if observation.Known {
+	if observation.Known || (observation.Inspected && proxyObservationFreshAt(account, observation, time.Now())) {
 		return observation
 	}
 	_, _, raw, err := s.env.ProxyResolveAuth(ctx, account.ID)
@@ -1338,6 +1364,7 @@ func (s *Service) confirmProxyObservation(ctx context.Context, account Account) 
 			observation.Hash = proxyURLHash(proxyURL)
 		}
 	}
+	observation.Inspected = true
 	observation.CheckedAt = time.Now().UTC()
 	s.mgr.mu.Lock()
 	s.mgr.observations[account.ID] = observation
@@ -1371,6 +1398,61 @@ func (s *Service) BindingStatesForAccounts(accounts []Account) []BindingState {
 	}
 	projections := s.env.ProxyStore().ProxyBindingProjectionsForIDs(ids)
 	return s.resolveBindingStates(accounts, projections)
+}
+
+const (
+	visibleBindingConfirmationLimit   = 200
+	visibleBindingConfirmationWorkers = 4
+	visibleBindingConfirmationBudget  = 750 * time.Millisecond
+)
+
+// BindingStatesForAccountsContext resolves a visible management page and
+// confirms runtime-only managed auths when their cached observation has
+// expired. Runtime-only auths have no auth-file metadata job to recover them,
+// so without this bounded fallback they remain "checking" indefinitely.
+func (s *Service) BindingStatesForAccountsContext(ctx context.Context, accounts []Account) []BindingState {
+	states := s.BindingStatesForAccounts(accounts)
+	if len(states) == 0 {
+		return states
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
+		return states
+	}
+	candidates := make([]Account, 0, min(len(accounts), visibleBindingConfirmationLimit))
+	for index, state := range states {
+		if index >= len(accounts) || len(candidates) >= visibleBindingConfirmationLimit {
+			break
+		}
+		account := accounts[index]
+		if state.Status != "checking" || strings.TrimSpace(account.Path) != "" || state.SourceID == "" {
+			continue
+		}
+		candidates = append(candidates, account)
+	}
+	if len(candidates) == 0 {
+		return states
+	}
+	confirmCtx, cancel := context.WithTimeout(ctx, visibleBindingConfirmationBudget)
+	defer cancel()
+	sem := make(chan struct{}, visibleBindingConfirmationWorkers)
+	var wait sync.WaitGroup
+	for _, account := range candidates {
+		if confirmCtx.Err() != nil {
+			break
+		}
+		sem <- struct{}{}
+		wait.Add(1)
+		go func(account Account) {
+			defer wait.Done()
+			defer func() { <-sem }()
+			s.confirmProxyObservation(confirmCtx, account)
+		}(account)
+	}
+	wait.Wait()
+	return s.BindingStatesForAccounts(accounts)
 }
 
 func (s *Service) BindingVersion() uint64 {
@@ -1454,9 +1536,10 @@ func (s *Service) resolveBindingStates(accounts []Account, projections []statepk
 			Masked:    account.ProxyMasked,
 			Hash:      account.ProxyHash,
 			Known:     account.ProxyURLKnown || account.ProxyMasked != "",
+			Inspected: account.ProxyMetaInspected,
 			CheckedAt: account.ModTime,
 		}
-		if current, ok := s.mgr.observations[account.ID]; ok && now.Sub(current.CheckedAt) < catalogRefreshTTL && (account.ModTime.IsZero() || !account.ModTime.After(current.CheckedAt)) {
+		if current, ok := s.mgr.observations[account.ID]; ok && proxyObservationFreshAt(account, current, now) {
 			observation = current
 		}
 		state := bindingStateFromProjection(account, projection, observation)
@@ -1476,7 +1559,7 @@ func bindingStateFromProjection(account Account, projection statepkg.ProxyBindin
 		Generation:     projection.Generation,
 		LeaseAccount:   projection.LeaseAccount,
 		Pending:        projection.Pending,
-		Inspected:      observation.Known || account.ProxyMetaInspected,
+		Inspected:      observation.Known || observation.Inspected || account.ProxyMetaInspected,
 		Known:          observation.Known,
 	}
 	switch {
@@ -1485,7 +1568,7 @@ func bindingStateFromProjection(account Account, projection statepkg.ProxyBindin
 	case !observation.Known:
 		if strings.TrimSpace(account.Path) == "" && projection.SourceID == "" && strings.TrimSpace(observation.Masked) == "" {
 			state.Status = "unbound"
-		} else if account.ProxyMetaInspected {
+		} else if account.ProxyMetaInspected || observation.Inspected {
 			state.Status = "read_failed"
 		} else {
 			state.Status = "checking"

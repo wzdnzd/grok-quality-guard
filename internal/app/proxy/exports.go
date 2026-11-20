@@ -144,6 +144,9 @@ func (s *Service) ActionBindingsList(ctx context.Context, params map[string]any)
 func (s *Service) BindingStates(accounts []Account) []BindingState {
 	return s.BindingStatesForAccounts(accounts)
 }
+func (s *Service) BindingStatesContext(ctx context.Context, accounts []Account) []BindingState {
+	return s.BindingStatesForAccountsContext(ctx, accounts)
+}
 func (s *Service) TouchBindings(_ []string) { s.TouchBindingStates(nil) }
 func (s *Service) ActionBindingEndpoint(ctx context.Context, params map[string]any) (any, int, error) {
 	return s.actionProxyBindingEndpoint(ctx, params)
