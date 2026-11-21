@@ -162,6 +162,7 @@ func (s *Service) applyVerdictLocked(
 			account.LastReason = verdict.Class
 			account.LastEvidence = qualityEvidenceFromVerdict(verdict, source, now)
 		}
+		observeRoutingVerdict(account, source, verdict, now, policy.Probe.HealthyIntervalHours)
 		if source == "probe" {
 			account.LastProbeAt = now
 			if isProbeErrorClass(verdict.Class) || verdict.Class == ClassIgnored {

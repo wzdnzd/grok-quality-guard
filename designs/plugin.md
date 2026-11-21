@@ -1218,12 +1218,12 @@ sessionKey = SHA256(
 - 成功请求刷新 TTL
 - TTL 过期后删除绑定
 - 绑定只在内存中保存，进程重启后自然丢失
-- 超过 `session_affinity_max_entries` 时淘汰最旧绑定
+- 超过 `routing.affinity.max_entries` 时淘汰最旧绑定
 - TTL 过期和超限淘汰使用按到期时间、绑定时间维护的最小堆；堆项惰性校验并定期压缩，避免每次请求全表扫描
 
 没有稳定 session signal 时不创建绑定，请求仍享受分层、preferred 和并发分散。
 
-#### 6.10.8 In-flight 与层内策略
+#### 6.10.8 In-flight、评分桶与桶内策略
 
 插件维护进程内：
 
@@ -1238,46 +1238,72 @@ activeAttempts map[authID]int
 - auth 解析失败、执行前失败、Resin 轮换后失败和所有提前返回路径都必须释放
 - 使用 `attempt.Release()` 统一释放，禁止在 selection lock 内调用上游网络
 
-普通策略采用两遍选择：
+健康账号按每个 `(质量, Priority)` 层内的 EWMA 分数降序排列，再按 `routing.scoring.max_accounts_per_bucket` 切分为不可变桶；`unknown` 不计算评分，按 Auth ID 排序后使用相同容量分桶。桶数由账号数动态计算，不写死。评分综合：
 
-1. idle pass：优先尝试当前层中未被占用且未尝试的 auth
-2. busy pass：只有 idle pass 没有任何候选时，才允许按同一策略使用正在被其他请求占用的 auth
+- 成功率
+- 首 Token 耗时
+- 输出 TPS
+- 主动探测、透明请求、被动观测三类来源证据
+
+半衰期统一由 `probe.healthy_interval_hours` 推导并限制在 `12h..168h`；该值为 `0` 时使用 `168h`。来源区别由证据权重表达，而不是使用互相不可比的衰减时间。
+
+普通策略先在当前评分桶内执行 idle pass，再依次进入较低评分桶；本层所有桶的 idle pass 都没有候选后，才执行 busy pass：
+
+1. idle pass：按评分桶顺序优先尝试未被占用且未尝试的 auth
+2. busy pass：只有本层所有评分桶的 idle pass 都没有候选时，才允许按同一策略使用正在被其他请求占用的 auth
 
 这避免了 preferred 正在使用时，普通 round-robin 又立刻选中同一个 auth，同时不会因为所有 auth 都忙而直接返回无候选。
 
-层内策略：
+桶内策略：
 
 `round_robin`
 
-- 每个 `(quality, priority)` 层维护独立游标
+- 每个评分桶维护独立游标
 - 每个新请求从游标当前位置开始
 - 游标在选号时原子推进，不等待网络请求完成
 - session 或 preferred 命中不推进普通游标
-- 回退顺序按层内环形顺序遍历，不重复尝试
+- 回退顺序按桶内环形顺序遍历，不重复尝试
 
 `random`
 
-- 每次请求在当前层随机选择一个起始下标
+- 每次请求在当前桶随机选择一个起始下标
 - 从该下标开始环形遍历
 - 不生成完整随机排列
 - 不使用有放回随机
 
 `fill_first`
 
-- 当前层始终从排序后的第一个 auth 开始
+- 当前桶始终从排序后的第一个 auth 开始
 - 如果第一个 auth 忙，idle pass 会继续寻找空闲 auth
-- 当前层全部不可用后才进入下一层
+- 当前桶全部不可用后才进入下一桶，本层全部不可用后才进入下一层
 - 适合明确希望集中消耗账号的场景，不作为默认值
 
 默认：
 
 ```yaml
 routing:
-  selection_strategy: round_robin
-  prefer_last_success: true
-  session_affinity: true
-  session_affinity_ttl: 1h
-  session_affinity_max_entries: 10000
+  strategy:
+    selection: round_robin
+    prefer_last_success: true
+  affinity:
+    enabled: true
+    ttl: 1h
+    max_entries: 10000
+  scoring:
+    enabled: true
+    max_accounts_per_bucket: 512
+    weights:
+      success: 0.50
+      ttft: 0.30
+      tps: 0.20
+    evidence:
+      probe: 0.65
+      transparent: 0.35
+      passive: 0.0
+    refresh:
+      min_interval: 5m
+      max_age: 30m
+      drift_threshold: 0.03
 ```
 
 #### 6.10.9 单请求选择流程
@@ -1293,39 +1319,41 @@ for each layer in snapshot.Order:
       try bound auth
       if success: refresh binding, return
       if hard account failure: delete binding
-      continue to next candidate in this layer
+      continue with scored buckets in this layer
 
-  if preferred auth exists and belongs to top layer:
-    if preferred is healthy and TryReservePreferred succeeds:
-      try preferred
-      if success: refresh preferred, return
-      if hard account failure: clear preferred
-      continue to next candidate in this layer
-    else if preferred is healthy but busy:
-      keep preferred
-      skip it in idle pass
+  for each bucket in layer.Buckets (score descending):
+    if preferred auth exists and belongs to the top bucket:
+      if preferred is healthy and TryReservePreferred succeeds:
+        try preferred
+        if success: refresh preferred, return
+        if hard account failure: clear preferred
+        continue to next candidate in this bucket
+      else if preferred is healthy but busy:
+        keep preferred
+        skip it in idle pass
 
-  start := strategyStart(layer)
-  for idle candidate in layer:
-    if excluded, tried, ineligible or busy: continue
-    reserve idle attempt
-    resolve auth
-    if session binding was created by a concurrent request: switch to bound auth
-    try candidate
-    if success: bind/refresh session and update preferred if needed
-    if retryable with Resin rotation: retry same candidate once
-    mark excluded
+    start := strategyStart(bucket)
+    for idle candidate in bucket:
+      if excluded, tried, ineligible or busy: continue
+      reserve idle attempt
+      resolve auth
+      if session binding was created by a concurrent request: switch to bound auth
+      try candidate
+      if success: bind/refresh session and update preferred if needed
+      if retryable with Resin rotation: retry same candidate once
+      mark excluded
 
-  if idle pass found no candidate:
-    for busy candidate in layer:
-      same strategy order, reserve shared attempt, try once
+  if no bucket had an idle candidate:
+    for each bucket in layer.Buckets:
+      for busy candidate in bucket:
+        same strategy order, reserve shared attempt, try once
 
   release attempt
 end for
 return quality_degraded
 ```
 
-请求不会复制完整 catalog，也不会对全部 auth 排序。
+请求不会复制完整 catalog，也不会在请求路径对账号重新打分或排序。索引重建为 `O(n log n)`；选择只遍历当前桶，并在桶内候选耗尽时继续向后。
 
 #### 6.10.10 失败分类与绑定更新
 
@@ -1378,23 +1406,45 @@ Resin 轮换语义保持不变：
 
 ```yaml
 routing:
-  selection_strategy: round_robin
-  prefer_last_success: true
-  session_affinity: true
-  session_affinity_ttl: 1h
-  session_affinity_max_entries: 10000
+  strategy:
+    selection: round_robin
+    prefer_last_success: true
+  affinity:
+    enabled: true
+    ttl: 1h
+    max_entries: 10000
+  scoring:
+    enabled: true
+    max_accounts_per_bucket: 512
+    weights:
+      success: 0.50
+      ttft: 0.30
+      tps: 0.20
+    evidence:
+      probe: 0.65
+      transparent: 0.35
+      passive: 0.0
+    refresh:
+      min_interval: 5m
+      max_age: 30m
+      drift_threshold: 0.03
 ```
 
 校验：
 
-- `selection_strategy` 只能是 `round_robin`、`random`、`fill_first`
-- `session_affinity_ttl > 0` 且不超过 `168h`
-- `session_affinity_max_entries > 0` 且不超过 `100000`
+- `routing.strategy.selection` 只能是 `round_robin`、`random`、`fill_first`
+- `routing.affinity.ttl > 0` 且不超过 `168h`
+- `routing.affinity.max_entries > 0` 且不超过 `100000`
+- `routing.scoring.max_accounts_per_bucket` 为 `16..4096` 的整数
+- 指标权重与证据权重均为 `0..1` 的有限数，且各自至少一项大于 `0`
+- `routing.scoring.refresh.min_interval >= 10s`
+- `routing.scoring.refresh.max_age` 位于 `min_interval..7d`
+- `routing.scoring.refresh.drift_threshold` 位于 `0..1`
 - 缺失字段使用默认值
-- 旧 state.json 没有 `routing` 时不需要 schema 迁移
+- 不兼容旧的扁平 `routing` 字段；配置必须使用新的分层结构
 - 管理页保存策略后必须同步更新 `p.policy.Routing` 和 `p.cfg.Routing`
 
-preferred、session binding、round-robin 游标和 in-flight 计数不写入 state.json。
+每个账号的紧凑 `routing_stats` 随账号状态持久化；原始样本、preferred、session binding、桶游标和 in-flight 计数不写入 state.json。评分索引只由请求触发刷新：无流量时不空转，有流量时根据请求速率、评分漂移和最大陈旧时间在后台重建。
 
 #### 6.10.12 并发安全要求
 
@@ -1407,7 +1457,7 @@ preferred、session binding、round-robin 游标和 in-flight 计数不写入 st
 - round-robin 游标推进是原子的
 - session binding 的 `GetOrBind` 是原子的
 - activeAttempts 的增减是原子的
-- 不同层游标互不影响
+- 不同评分桶游标互不影响
 - 选择锁不得跨越上游网络调用
 - 不得在持有 selection lock 时执行 host callback、Resin API 调用或长耗时 I/O
 - 请求失败时只能条件删除自己的 session 绑定，不能误删其他请求刚写入的新绑定
@@ -1422,6 +1472,10 @@ preferred、session binding、round-robin 游标和 in-flight 计数不写入 st
 - `healthy` 整体优先于 `unknown`
 - `suspect` / `degraded` 不进入候选
 - `unknown -> healthy` 增量移动到 healthy 层且不触发全量重建
+- EWMA 半衰期随 `probe.healthy_interval_hours` 动态变化
+- 新鲜证据提高评分，陈旧证据向中性分衰减
+- 评分桶按容量动态切分，`unknown` 也遵守同一容量上限
+- 累计评分漂移或最大索引年龄触发后台重建
 - 10 个同层 healthy auth 并发首轮选择 10 个不同 auth
 - round-robin 游标并发的精确推进
 - preferred 健康且空闲时被复用
@@ -1994,11 +2048,28 @@ plugins:
         - "grok-"
 
       routing:
-        selection_strategy: round_robin
-        prefer_last_success: true
-        session_affinity: true
-        session_affinity_ttl: "1h"
-        session_affinity_max_entries: 10000
+        strategy:
+          selection: round_robin
+          prefer_last_success: true
+        affinity:
+          enabled: true
+          ttl: "1h"
+          max_entries: 10000
+        scoring:
+          enabled: true
+          max_accounts_per_bucket: 512
+          weights:
+            success: 0.50
+            ttft: 0.30
+            tps: 0.20
+          evidence:
+            probe: 0.65
+            transparent: 0.35
+            passive: 0.0
+          refresh:
+            min_interval: "5m"
+            max_age: "30m"
+            drift_threshold: 0.03
 
       quality:
         soft_tps: 500
@@ -2106,11 +2177,16 @@ YAML 决定以下部署级字段：
 - `auto_action=observe`
 - `on_exhausted=fail_closed`
 - `max_attempts=6`
-- `routing.selection_strategy=round_robin`
-- `routing.prefer_last_success=true`
-- `routing.session_affinity=true`
-- `routing.session_affinity_ttl=1h`
-- `routing.session_affinity_max_entries=10000`
+- `routing.strategy.selection=round_robin`
+- `routing.strategy.prefer_last_success=true`
+- `routing.affinity.enabled=true`
+- `routing.affinity.ttl=1h`
+- `routing.affinity.max_entries=10000`
+- `routing.scoring.enabled=true`
+- `routing.scoring.max_accounts_per_bucket=512`
+- `routing.scoring.refresh.min_interval=5m`
+- `routing.scoring.refresh.max_age=30m`
+- `routing.scoring.refresh.drift_threshold=0.03`
 - `quality.consecutive_soft=2`
 - `quality.consecutive_errors=2`
 - `quality.consecutive_missing_thinking=1`

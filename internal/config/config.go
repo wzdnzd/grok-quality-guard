@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +31,15 @@ const (
 	maxTaskHistoryMaxRecords         = 10000
 	maxTaskHistoryMaxBytes           = int64(4 << 30)
 	maxTaskHistoryMaxItems           = 100000
+
+	defaultRoutingMaxAccountsPerBucket = 512
+	minRoutingMaxAccountsPerBucket     = 16
+	maxRoutingMaxAccountsPerBucket     = 4096
+	defaultRoutingRefreshMinInterval   = 5 * time.Minute
+	defaultRoutingRefreshMaxAge        = 30 * time.Minute
+	defaultRoutingDriftThreshold       = 0.03
+	minRoutingRefreshInterval          = 10 * time.Second
+	maxRoutingRefreshAge               = 7 * 24 * time.Hour
 )
 
 // Duration accepts YAML and JSON duration strings while keeping a stable text form
@@ -126,12 +136,47 @@ type ProbeConfig struct {
 	ExitProtocol         string   `yaml:"exit_protocol" json:"exit_protocol"`
 }
 
+type RoutingStrategyConfig struct {
+	Selection         string `yaml:"selection" json:"selection"`
+	PreferLastSuccess bool   `yaml:"prefer_last_success" json:"prefer_last_success"`
+}
+
+type RoutingAffinityConfig struct {
+	Enabled    bool     `yaml:"enabled" json:"enabled"`
+	TTL        Duration `yaml:"ttl" json:"ttl"`
+	MaxEntries int      `yaml:"max_entries" json:"max_entries"`
+}
+
+type RoutingScoringWeightsConfig struct {
+	Success float64 `yaml:"success" json:"success"`
+	TTFT    float64 `yaml:"ttft" json:"ttft"`
+	TPS     float64 `yaml:"tps" json:"tps"`
+}
+
+type RoutingEvidenceWeightsConfig struct {
+	Probe       float64 `yaml:"probe" json:"probe"`
+	Transparent float64 `yaml:"transparent" json:"transparent"`
+	Passive     float64 `yaml:"passive" json:"passive"`
+}
+
+type RoutingScoringRefreshConfig struct {
+	MinInterval    Duration `yaml:"min_interval" json:"min_interval"`
+	MaxAge         Duration `yaml:"max_age" json:"max_age"`
+	DriftThreshold float64  `yaml:"drift_threshold" json:"drift_threshold"`
+}
+
+type RoutingScoringConfig struct {
+	Enabled              bool                         `yaml:"enabled" json:"enabled"`
+	MaxAccountsPerBucket int                          `yaml:"max_accounts_per_bucket" json:"max_accounts_per_bucket"`
+	Weights              RoutingScoringWeightsConfig  `yaml:"weights" json:"weights"`
+	Evidence             RoutingEvidenceWeightsConfig `yaml:"evidence" json:"evidence"`
+	Refresh              RoutingScoringRefreshConfig  `yaml:"refresh" json:"refresh"`
+}
+
 type RoutingConfig struct {
-	SelectionStrategy      string   `yaml:"selection_strategy" json:"selection_strategy"`
-	PreferLastSuccess      bool     `yaml:"prefer_last_success" json:"prefer_last_success"`
-	SessionAffinity        bool     `yaml:"session_affinity" json:"session_affinity"`
-	SessionAffinityTTL     Duration `yaml:"session_affinity_ttl" json:"session_affinity_ttl"`
-	SessionAffinityMaxSize int      `yaml:"session_affinity_max_entries" json:"session_affinity_max_entries"`
+	Strategy RoutingStrategyConfig `yaml:"strategy" json:"strategy"`
+	Affinity RoutingAffinityConfig `yaml:"affinity" json:"affinity"`
+	Scoring  RoutingScoringConfig  `yaml:"scoring" json:"scoring"`
 }
 
 type TaskHistoryConfig struct {
@@ -190,11 +235,34 @@ type Policy struct {
 
 func DefaultRoutingConfig() RoutingConfig {
 	return RoutingConfig{
-		SelectionStrategy:      "round_robin",
-		PreferLastSuccess:      true,
-		SessionAffinity:        true,
-		SessionAffinityTTL:     NewDuration(time.Hour),
-		SessionAffinityMaxSize: 10000,
+		Strategy: RoutingStrategyConfig{
+			Selection:         "round_robin",
+			PreferLastSuccess: true,
+		},
+		Affinity: RoutingAffinityConfig{
+			Enabled:    true,
+			TTL:        NewDuration(time.Hour),
+			MaxEntries: 10000,
+		},
+		Scoring: RoutingScoringConfig{
+			Enabled:              true,
+			MaxAccountsPerBucket: defaultRoutingMaxAccountsPerBucket,
+			Weights: RoutingScoringWeightsConfig{
+				Success: 0.50,
+				TTFT:    0.30,
+				TPS:     0.20,
+			},
+			Evidence: RoutingEvidenceWeightsConfig{
+				Probe:       0.65,
+				Transparent: 0.35,
+				Passive:     0.0,
+			},
+			Refresh: RoutingScoringRefreshConfig{
+				MinInterval:    NewDuration(defaultRoutingRefreshMinInterval),
+				MaxAge:         NewDuration(defaultRoutingRefreshMaxAge),
+				DriftThreshold: defaultRoutingDriftThreshold,
+			},
+		},
 	}
 }
 
@@ -369,28 +437,86 @@ func normalizeRouting(r *RoutingConfig) error {
 		return errors.New("routing config is nil")
 	}
 	defaults := DefaultRoutingConfig()
-	r.SelectionStrategy = strings.ToLower(strings.TrimSpace(r.SelectionStrategy))
-	if r.SelectionStrategy == "" {
-		r.SelectionStrategy = defaults.SelectionStrategy
+	r.Strategy.Selection = strings.ToLower(strings.TrimSpace(r.Strategy.Selection))
+	if r.Strategy.Selection == "" {
+		r.Strategy.Selection = defaults.Strategy.Selection
 	}
-	switch r.SelectionStrategy {
+	switch r.Strategy.Selection {
 	case "round_robin", "random", "fill_first":
 	default:
-		return fmt.Errorf("routing.selection_strategy must be round_robin, random, or fill_first")
+		return fmt.Errorf("routing.strategy.selection must be round_robin, random, or fill_first")
 	}
-	if r.SessionAffinityTTL.Duration <= 0 {
-		r.SessionAffinityTTL = defaults.SessionAffinityTTL
+	if r.Affinity.TTL.Duration <= 0 {
+		r.Affinity.TTL = defaults.Affinity.TTL
 	}
-	if r.SessionAffinityTTL.Duration > 168*time.Hour {
-		return fmt.Errorf("routing.session_affinity_ttl must be <= 168h")
+	if r.Affinity.TTL.Duration > 168*time.Hour {
+		return fmt.Errorf("routing.affinity.ttl must be <= 168h")
 	}
-	if r.SessionAffinityMaxSize <= 0 {
-		r.SessionAffinityMaxSize = defaults.SessionAffinityMaxSize
+	if r.Affinity.MaxEntries <= 0 {
+		r.Affinity.MaxEntries = defaults.Affinity.MaxEntries
 	}
-	if r.SessionAffinityMaxSize > 100000 {
-		return fmt.Errorf("routing.session_affinity_max_entries must be <= 100000")
+	if r.Affinity.MaxEntries > 100000 {
+		return fmt.Errorf("routing.affinity.max_entries must be <= 100000")
+	}
+	if r.Scoring.MaxAccountsPerBucket == 0 {
+		r.Scoring.MaxAccountsPerBucket = defaults.Scoring.MaxAccountsPerBucket
+	}
+	if r.Scoring.MaxAccountsPerBucket < minRoutingMaxAccountsPerBucket || r.Scoring.MaxAccountsPerBucket > maxRoutingMaxAccountsPerBucket {
+		return fmt.Errorf("routing.scoring.max_accounts_per_bucket must be between %d and %d", minRoutingMaxAccountsPerBucket, maxRoutingMaxAccountsPerBucket)
+	}
+	if !validRoutingWeight(r.Scoring.Weights.Success) || !validRoutingWeight(r.Scoring.Weights.TTFT) || !validRoutingWeight(r.Scoring.Weights.TPS) {
+		return fmt.Errorf("routing.scoring.weights must be between 0 and 1")
+	}
+	if r.Scoring.Weights.Success+r.Scoring.Weights.TTFT+r.Scoring.Weights.TPS <= 0 {
+		return fmt.Errorf("routing.scoring.weights must contain at least one positive weight")
+	}
+	if !validRoutingWeight(r.Scoring.Evidence.Probe) || !validRoutingWeight(r.Scoring.Evidence.Transparent) || !validRoutingWeight(r.Scoring.Evidence.Passive) {
+		return fmt.Errorf("routing.scoring.evidence must be between 0 and 1")
+	}
+	if r.Scoring.Evidence.Probe+r.Scoring.Evidence.Transparent+r.Scoring.Evidence.Passive <= 0 {
+		return fmt.Errorf("routing.scoring.evidence must contain at least one positive weight")
+	}
+	if r.Scoring.Refresh.MinInterval.Duration <= 0 {
+		r.Scoring.Refresh.MinInterval = defaults.Scoring.Refresh.MinInterval
+	}
+	if r.Scoring.Refresh.MinInterval.Duration < minRoutingRefreshInterval {
+		return fmt.Errorf("routing.scoring.refresh.min_interval must be >= %s", minRoutingRefreshInterval)
+	}
+	if r.Scoring.Refresh.MaxAge.Duration <= 0 {
+		r.Scoring.Refresh.MaxAge = defaults.Scoring.Refresh.MaxAge
+	}
+	if r.Scoring.Refresh.MaxAge.Duration > maxRoutingRefreshAge {
+		return fmt.Errorf("routing.scoring.refresh.max_age must be <= %s", maxRoutingRefreshAge)
+	}
+	if r.Scoring.Refresh.MaxAge.Duration < r.Scoring.Refresh.MinInterval.Duration {
+		return fmt.Errorf("routing.scoring.refresh.max_age must be >= min_interval")
+	}
+	if math.IsNaN(r.Scoring.Refresh.DriftThreshold) || math.IsInf(r.Scoring.Refresh.DriftThreshold, 0) || r.Scoring.Refresh.DriftThreshold < 0 || r.Scoring.Refresh.DriftThreshold > 1 {
+		return fmt.Errorf("routing.scoring.refresh.drift_threshold must be between 0 and 1")
 	}
 	return nil
+}
+
+func validRoutingWeight(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
+}
+
+// RoutingEWMAHalfLife keeps routing evidence on the same time scale as the
+// configured healthy-account probe cadence. All evidence sources share this
+// half-life so their scores remain comparable; source weights express how much
+// each source contributes rather than silently changing the meaning of time.
+func RoutingEWMAHalfLife(healthyIntervalHours int) time.Duration {
+	if healthyIntervalHours <= 0 {
+		return 168 * time.Hour
+	}
+	hours := time.Duration(healthyIntervalHours) * time.Hour
+	if hours < 12*time.Hour {
+		return 12 * time.Hour
+	}
+	if hours > 168*time.Hour {
+		return 168 * time.Hour
+	}
+	return hours
 }
 
 func normalizeQuality(q *QualityConfig) error {

@@ -112,6 +112,7 @@ type AccountState struct {
 	Proxy                        proxy.Binding              `json:"proxy_binding,omitempty"`
 	AutoBind                     proxy.AutoBindAccountState `json:"auto_bind,omitempty"`
 	Metrics                      Metrics                    `json:"metrics"`
+	RoutingStats                 RoutingStats               `json:"routing_stats,omitzero"`
 }
 
 type AccountStateSummary struct {
@@ -691,6 +692,37 @@ func (s *Store) AccountStateValues() map[string]string {
 	for authID, account := range s.state.Accounts {
 		if account != nil {
 			values[authID] = account.State
+		}
+	}
+	return values
+}
+
+func (s *Store) RoutingStatsValue(authID string) RoutingStats {
+	if s == nil {
+		return RoutingStats{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	account := s.state.Accounts[authID]
+	if account == nil {
+		return RoutingStats{}
+	}
+	return account.RoutingStats
+}
+
+// RoutingStatsValues returns the compact scoring state for every persisted
+// account. The value type has no pointers, so copying it does not retain any
+// mutable state-store reference.
+func (s *Store) RoutingStatsValues() map[string]RoutingStats {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	values := make(map[string]RoutingStats, len(s.state.Accounts))
+	for authID, account := range s.state.Accounts {
+		if account != nil {
+			values[authID] = account.RoutingStats
 		}
 	}
 	return values

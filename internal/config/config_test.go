@@ -155,44 +155,110 @@ func TestDecodeConfigRoutingDefaults(t *testing.T) {
 	if errDecode != nil {
 		t.Fatalf("Decode() error = %v", errDecode)
 	}
-	if cfg.Routing.SelectionStrategy != "round_robin" || !cfg.Routing.PreferLastSuccess || !cfg.Routing.SessionAffinity {
+	if cfg.Routing.Strategy.Selection != "round_robin" || !cfg.Routing.Strategy.PreferLastSuccess || !cfg.Routing.Affinity.Enabled {
 		t.Fatalf("unexpected routing defaults: %#v", cfg.Routing)
 	}
-	if cfg.Routing.SessionAffinityTTL.Duration != time.Hour || cfg.Routing.SessionAffinityMaxSize != 10000 {
+	if cfg.Routing.Affinity.TTL.Duration != time.Hour || cfg.Routing.Affinity.MaxEntries != 10000 {
 		t.Fatalf("unexpected routing affinity defaults: %#v", cfg.Routing)
+	}
+	if !cfg.Routing.Scoring.Enabled || cfg.Routing.Scoring.MaxAccountsPerBucket != defaultRoutingMaxAccountsPerBucket {
+		t.Fatalf("unexpected routing scoring defaults: %#v", cfg.Routing.Scoring)
+	}
+	if cfg.Routing.Scoring.Refresh.MinInterval.Duration != defaultRoutingRefreshMinInterval || cfg.Routing.Scoring.Refresh.MaxAge.Duration != defaultRoutingRefreshMaxAge {
+		t.Fatalf("unexpected routing refresh defaults: %#v", cfg.Routing.Scoring.Refresh)
 	}
 }
 
 func TestDecodeConfigRoutingValidation(t *testing.T) {
 	for _, raw := range []string{
-		"routing:\n  selection_strategy: unsupported\n",
-		"routing:\n  session_affinity_ttl: 169h\n",
-		"routing:\n  session_affinity_max_entries: 100001\n",
+		"routing:\n  strategy:\n    selection: unsupported\n",
+		"routing:\n  affinity:\n    ttl: 169h\n",
+		"routing:\n  affinity:\n    max_entries: 100001\n",
+		"routing:\n  scoring:\n    max_accounts_per_bucket: 15\n",
+		"routing:\n  scoring:\n    max_accounts_per_bucket: 4097\n",
+		"routing:\n  scoring:\n    weights:\n      success: 0\n      ttft: 0\n      tps: 0\n",
+		"routing:\n  scoring:\n    weights:\n      success: 1.1\n",
+		"routing:\n  scoring:\n    evidence:\n      probe: 0\n      transparent: 0\n      passive: 0\n",
+		"routing:\n  scoring:\n    evidence:\n      probe: 1.1\n",
+		"routing:\n  scoring:\n    refresh:\n      min_interval: 5m\n      max_age: 1m\n",
+		"routing:\n  scoring:\n    refresh:\n      drift_threshold: 1.1\n",
 	} {
 		if _, errDecode := Decode([]byte(raw)); errDecode == nil {
 			t.Fatalf("expected routing config error for %q", raw)
 		}
 	}
 }
-func TestDecodeConfigPartialRoutingKeepsBooleanDefaults(t *testing.T) {
-	cfg, errDecode := Decode([]byte("routing:\n  selection_strategy: fill_first\n"))
+
+func TestDecodeConfigRoutingWeightsAllowInclusiveUpperBound(t *testing.T) {
+	cfg, errDecode := Decode([]byte("routing:\n  scoring:\n    weights:\n      success: 1\n      ttft: 0\n      tps: 0\n    evidence:\n      probe: 0\n      transparent: 1\n      passive: 0\n"))
 	if errDecode != nil {
 		t.Fatalf("Decode() error = %v", errDecode)
 	}
-	if cfg.Routing.SelectionStrategy != "fill_first" || !cfg.Routing.PreferLastSuccess || !cfg.Routing.SessionAffinity {
+	if cfg.Routing.Scoring.Weights.Success != 1 || cfg.Routing.Scoring.Evidence.Transparent != 1 {
+		t.Fatalf("inclusive weight bounds were not preserved: %#v", cfg.Routing.Scoring)
+	}
+}
+
+func TestDecodeConfigRejectsLegacyFlatRouting(t *testing.T) {
+	if _, errDecode := Decode([]byte("routing:\n  selection_strategy: round_robin\n")); errDecode == nil {
+		t.Fatal("legacy flat routing fields must be rejected instead of migrated")
+	}
+}
+
+func TestDecodeConfigPartialRoutingKeepsBooleanDefaults(t *testing.T) {
+	cfg, errDecode := Decode([]byte("routing:\n  strategy:\n    selection: fill_first\n"))
+	if errDecode != nil {
+		t.Fatalf("Decode() error = %v", errDecode)
+	}
+	if cfg.Routing.Strategy.Selection != "fill_first" || !cfg.Routing.Strategy.PreferLastSuccess || !cfg.Routing.Affinity.Enabled {
 		t.Fatalf("partial routing config lost defaults: %#v", cfg.Routing)
 	}
 }
+
+func TestDecodeConfigPartialRoutingScoringKeepsDefaults(t *testing.T) {
+	cfg, errDecode := Decode([]byte("routing:\n  scoring:\n    max_accounts_per_bucket: 64\n    weights:\n      tps: 0.7\n"))
+	if errDecode != nil {
+		t.Fatalf("Decode() error = %v", errDecode)
+	}
+	scoring := cfg.Routing.Scoring
+	if scoring.MaxAccountsPerBucket != 64 || scoring.Weights.Success != 0.5 || scoring.Weights.TTFT != 0.3 || scoring.Weights.TPS != 0.7 {
+		t.Fatalf("partial scoring config lost defaults: %#v", scoring)
+	}
+	if scoring.Evidence.Probe != 0.65 || scoring.Evidence.Transparent != 0.35 || scoring.Evidence.Passive != 0 {
+		t.Fatalf("partial scoring config lost evidence defaults: %#v", scoring.Evidence)
+	}
+	if scoring.Refresh.MinInterval.Duration != defaultRoutingRefreshMinInterval || scoring.Refresh.MaxAge.Duration != defaultRoutingRefreshMaxAge {
+		t.Fatalf("partial scoring config lost refresh defaults: %#v", scoring.Refresh)
+	}
+}
+
 func TestPolicyJSONWithoutRoutingUsesRoutingDefaults(t *testing.T) {
 	var policy Policy
 	if errUnmarshal := json.Unmarshal([]byte(`{"passive_guard":true,"auto_action":"observe"}`), &policy); errUnmarshal != nil {
 		t.Fatal(errUnmarshal)
 	}
-	if policy.Routing.SelectionStrategy != "round_robin" || !policy.Routing.PreferLastSuccess || !policy.Routing.SessionAffinity {
+	if policy.Routing.Strategy.Selection != "round_robin" || !policy.Routing.Strategy.PreferLastSuccess || !policy.Routing.Affinity.Enabled {
 		t.Fatalf("policy without routing did not inherit routing defaults: %#v", policy.Routing)
 	}
-	if policy.Routing.SessionAffinityTTL.Duration != time.Hour || policy.Routing.SessionAffinityMaxSize != 10000 {
+	if policy.Routing.Affinity.TTL.Duration != time.Hour || policy.Routing.Affinity.MaxEntries != 10000 {
 		t.Fatalf("policy without affinity settings did not inherit affinity defaults: %#v", policy.Routing)
+	}
+}
+
+func TestRoutingEWMAHalfLifeUsesHealthyInterval(t *testing.T) {
+	for _, test := range []struct {
+		hours int
+		want  time.Duration
+	}{
+		{hours: 0, want: 168 * time.Hour},
+		{hours: 6, want: 12 * time.Hour},
+		{hours: 24, want: 24 * time.Hour},
+		{hours: 72, want: 72 * time.Hour},
+		{hours: 240, want: 168 * time.Hour},
+	} {
+		if got := RoutingEWMAHalfLife(test.hours); got != test.want {
+			t.Fatalf("RoutingEWMAHalfLife(%d) = %s, want %s", test.hours, got, test.want)
+		}
 	}
 }
 func TestPolicyQualityMissingFieldsUseDefaults(t *testing.T) {

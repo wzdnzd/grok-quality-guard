@@ -211,11 +211,28 @@ plugins:
         - "grok-"
 
       routing:
-        selection_strategy: round_robin
-        prefer_last_success: true
-        session_affinity: true
-        session_affinity_ttl: "1h"
-        session_affinity_max_entries: 10000
+        strategy:
+          selection: round_robin
+          prefer_last_success: true
+        affinity:
+          enabled: true
+          ttl: "1h"
+          max_entries: 10000
+        scoring:
+          enabled: true
+          max_accounts_per_bucket: 512
+          weights:
+            success: 0.50
+            ttft: 0.30
+            tps: 0.20
+          evidence:
+            probe: 0.65
+            transparent: 0.35
+            passive: 0.0
+          refresh:
+            min_interval: "5m"
+            max_age: "30m"
+            drift_threshold: 0.03
 
       quality:
         soft_tps: 500
@@ -358,17 +375,24 @@ plugins:
 
 ### 透明 Auth 选择
 
-透明模式完全接管 Grok/xAI auth 选择，CPA 只执行插件指定的 `AuthID`。插件在后台维护不可变分层快照，请求只加载快照，不扫描账号池：
+透明模式完全接管 Grok/xAI auth 选择，CPA 只执行插件指定的 `AuthID`。插件在后台维护不可变分层、分桶快照，请求只读取快照，不扫描或在请求路径排序账号池：
 
 - 先按质量分层：`healthy` 整体优先于 `unknown`
 - 同一质量状态下按 Auth Priority 数值从大到小分层
-- 层内可选择 `round_robin`、`random` 或 `fill_first`
-- 当前层未耗尽时不进入下一层
-- 普通策略优先选择空闲 auth；只有当前层全部 busy 时才进入 busy fallback
-- `prefer_last_success=true` 时，上次透明请求成功的 auth 只在仍健康、仍属于最高层且当前空闲时优先使用
-- `session_affinity=true` 时，同一稳定 session 尽量固定到同一 auth；绑定只存在内存中，默认 TTL `1h`，最多 `10000` 条
+- `healthy` 按 EWMA 质量分从高到低排序；`unknown` 不计算评分，保持 Auth ID 顺序
+- 每个 `(质量, Priority)` 层按 `routing.scoring.max_accounts_per_bucket` 自动分桶；桶数由该层账号数决定，不写死
+- 健康账号评分综合成功率、首 Token 耗时和输出速度，并按主动探测、透明请求、被动观测分别保留证据
+- 同一评分来源与模型类别使用时间衰减 EWMA；半衰期由 `probe.healthy_interval_hours` 推导，并限制在 `12h..168h`（未启用周期探测时按 `168h`）
+- 层内先尝试当前评分桶；当前桶没有空闲候选后再进入下一桶，所有桶都忙时才进入当前层的 busy fallback
+- `round_robin`、`random`、`fill_first` 只在当前评分桶内生效
+- `routing.strategy.prefer_last_success=true` 时，上次透明请求成功的 auth 只在仍健康、仍属于最高评分桶且当前空闲时优先使用
+- `routing.affinity.enabled=true` 时，同一稳定 session 尽量固定到同一 auth；绑定只存在内存中，默认 TTL `1h`，最多 `10000` 条
 
-这解决 10 个以上健康 auth 并发时，所有请求都从第一个账号开始、把流量压到同一 auth 的问题。顺序流量仍会优先填满健康且空闲的 preferred auth；并发流量在 preferred busy 时自动分散。账号 `unknown -> healthy` 后，索引在 state 提交成功后增量移动，下一个请求即可从 healthy 层看到该账号，不需要等待周期性全量刷新。
+评分权重与证据权重均限制在 `0..1`，两组分别归一化，不需要总和为 `1`。默认更重视实际成功率和主动探测证据，避免把最近被透明请求使用过的账号误判为“更新鲜”。每个账号只持久化紧凑的 EWMA 状态，不保存原始采样列表。
+
+评分索引只由路由流量驱动：长时间没有请求时完全不刷新；有请求时，刷新间隔在 `refresh.min_interval` 和 `refresh.max_age` 之间随请求速率调整，并受 `drift_threshold` 触发。`min_interval` 至少为 `10s`，`max_age` 位于 `min_interval..7d`，`drift_threshold` 位于 `0..1`。重建在后台进行，选择请求始终读取旧快照，避免与用户请求争抢同步 CPU。账号 `unknown -> healthy` 或 `suspect` 等层变化仍通过增量 `Upsert` 在下一次请求前生效。
+
+`max_accounts_per_bucket` 默认 `512`，允许 `16..4096`。该上限同时约束 `unknown` 的 ID 有序分桶；评分关闭时健康账号也按 ID 顺序使用相同桶容量。4000 个账号在默认配置下通常形成约 8 个健康评分桶，选择路径不会逐个重算所有账号。
 
 透明模式在首次向客户端 emit 前完成质量门。一旦开始 emit，插件不能回滚已经发送的内容；如果所有候选账号耗尽，默认返回 `503 quality_degraded`。可配置 `on_exhausted: fail_open` 在失败时返回最后一个已缓冲响应，但这会牺牲 fail-closed 语义。透明缓冲超过 `hold_max_buffer_bytes` 时也会 fail closed，不会把未完成质量判定的内容下发给客户端。
 

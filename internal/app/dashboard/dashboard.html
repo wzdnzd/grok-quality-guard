@@ -1334,7 +1334,8 @@
     }
 
     .policy-group-quality,
-    .policy-group-probe {
+    .policy-group-probe,
+    .policy-group-scoring {
       grid-column: 1 / -1;
     }
 
@@ -1362,6 +1363,22 @@
     .policy-group-quality .field-grid,
     .policy-group-probe .field-grid {
       grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .policy-group-scoring .field-grid {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+
+    .policy-group-scoring .check-card,
+    .policy-group-scoring .field.full,
+    .policy-group-scoring .field.score-bucket {
+      grid-column: span 3;
+    }
+
+    .policy-group-scoring .field.score-metric,
+    .policy-group-scoring .field.score-refresh,
+    .policy-group-scoring .field.score-guidance {
+      grid-column: span 2;
     }
 
     .policy-group-quality .check-card {
@@ -3027,6 +3044,7 @@
 
       .policy-group-quality,
       .policy-group-probe,
+      .policy-group-scoring,
       .policy-actions {
         grid-column: auto;
       }
@@ -3034,6 +3052,22 @@
       .policy-group-quality .field-grid,
       .policy-group-probe .field-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .policy-group-scoring .field-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .policy-group-scoring .check-card,
+      .policy-group-scoring .field.full,
+      .policy-group-scoring .field.score-bucket {
+        grid-column: 1 / -1;
+      }
+
+      .policy-group-scoring .field.score-metric,
+      .policy-group-scoring .field.score-refresh,
+      .policy-group-scoring .field.score-guidance {
+        grid-column: auto;
       }
 
       .policy-group-quality .check-card {
@@ -4776,6 +4810,48 @@
                         class="check-desc">ui.keep_a_session_on_the_same_auth_while_the</span></span></label>
                   <div class="field"><label for="p_session_affinity_max_entries">ui.session_binding_limit</label><input
                       id="p_session_affinity_max_entries" type="number" min="1" max="100000"></div>
+                </div>
+              </section>
+              <section class="policy-group policy-group-routing policy-group-scoring">
+                <h3 class="section-title"><svg class="icon">
+                    <use href="#i-gauge"></use>
+                  </svg>ui.ewma_health_ranking</h3>
+                <div class="field-grid">
+                  <label class="check-card compact score-toggle"><input id="p_scoring_enabled" type="checkbox"><span
+                      class="check-copy"><span class="check-title">ui.ewma_health_ranking</span><span
+                        class="check-desc">ui.score_enabled_hint</span></span></label>
+                  <div class="field score-bucket"><label for="p_max_accounts_per_bucket">ui.score_bucket_limit</label><input
+                      id="p_max_accounts_per_bucket" type="number" min="16" max="4096" value="512"><span
+                        class="hint">ui.score_bucket_range_hint</span></div>
+                  <div class="field score-metric"><label for="p_score_success_weight">ui.score_success_weight</label><input
+                      id="p_score_success_weight" type="number" min="0" max="1" step="0.01" value="0.5"><span
+                        class="hint">ui.score_success_hint</span></div>
+                  <div class="field score-metric"><label for="p_score_ttft_weight">ui.score_ttft_weight</label><input
+                      id="p_score_ttft_weight" type="number" min="0" max="1" step="0.01" value="0.3"><span
+                        class="hint">ui.score_ttft_hint</span></div>
+                  <div class="field score-metric"><label for="p_score_tps_weight">ui.score_tps_weight</label><input
+                      id="p_score_tps_weight" type="number" min="0" max="1" step="0.01" value="0.2"><span
+                        class="hint">ui.score_tps_hint</span></div>
+                  <div class="field score-metric"><label for="p_score_probe_weight">ui.score_probe_weight</label><input
+                      id="p_score_probe_weight" type="number" min="0" max="1" step="0.01" value="0.65"><span
+                        class="hint">ui.score_probe_hint</span></div>
+                  <div class="field score-metric"><label for="p_score_transparent_weight">ui.score_transparent_weight</label><input
+                      id="p_score_transparent_weight" type="number" min="0" max="1" step="0.01" value="0.35"><span
+                        class="hint">ui.score_transparent_hint</span></div>
+                  <div class="field score-metric"><label for="p_score_passive_weight">ui.score_passive_weight</label><input
+                      id="p_score_passive_weight" type="number" min="0" max="1" step="0.01" value="0"><span
+                        class="hint">ui.score_passive_hint</span></div>
+                  <div class="field score-guidance"><span class="hint">ui.score_bucket_hint</span></div>
+                  <div class="field score-guidance"><span class="hint">ui.score_weights_hint</span></div>
+                  <div class="field score-guidance"><span class="hint">ui.score_half_life_hint</span></div>
+                  <div class="field score-refresh"><label for="p_score_min_interval">ui.score_min_interval</label><input
+                      id="p_score_min_interval" type="text" placeholder="5m"><span
+                        class="hint">ui.score_min_interval_hint</span></div>
+                  <div class="field score-refresh"><label for="p_score_max_age">ui.score_max_age</label><input
+                      id="p_score_max_age" type="text" placeholder="30m"><span class="hint">ui.score_refresh_hint</span></div>
+                  <div class="field score-refresh"><label for="p_score_drift_threshold">ui.score_drift_threshold</label><input
+                      id="p_score_drift_threshold" type="number" min="0" max="1" step="0.01" value="0.03"><span
+                        class="hint">ui.score_drift_hint</span></div>
                 </div>
               </section>
               <section class="policy-group policy-group-task-history">
@@ -9508,6 +9584,12 @@
       const quality = policy.quality || {};
       const probe = policy.probe || {};
       const routing = policy.routing || {};
+      const strategy = routing.strategy || {};
+      const affinity = routing.affinity || {};
+      const scoring = routing.scoring || {};
+      const scoreWeights = scoring.weights || {};
+      const evidenceWeights = scoring.evidence || {};
+      const scoreRefresh = scoring.refresh || {};
       const taskHistory = policy.task_history || {};
       setChecked('p_passive', policy.passive_guard !== false);
       setChecked('p_transparent', policy.transparent_guard === true);
@@ -9520,11 +9602,22 @@
       setValue('p_task_history_max_bytes_mib', Math.max(1, Math.round(Number(taskHistory.max_bytes || 134217728) / 1048576)));
       setValue('p_task_history_max_items', taskHistory.max_items_per_task || 10000);
       setValue('p_state_file', (state.overview && state.overview.state_file) || '');
-      setValue('p_selection_strategy', routing.selection_strategy || 'round_robin');
-      setChecked('p_prefer_last_success', routing.prefer_last_success !== false);
-      setChecked('p_session_affinity', routing.session_affinity !== false);
-      setValue('p_session_affinity_ttl', routing.session_affinity_ttl || '1h');
-      setValue('p_session_affinity_max_entries', routing.session_affinity_max_entries || 10000);
+      setValue('p_selection_strategy', strategy.selection || 'round_robin');
+      setChecked('p_prefer_last_success', strategy.prefer_last_success !== false);
+      setChecked('p_session_affinity', affinity.enabled !== false);
+      setValue('p_session_affinity_ttl', affinity.ttl || '1h');
+      setValue('p_session_affinity_max_entries', affinity.max_entries || 10000);
+      setChecked('p_scoring_enabled', scoring.enabled !== false);
+      setValue('p_max_accounts_per_bucket', scoring.max_accounts_per_bucket || 512);
+      setValue('p_score_success_weight', scoreWeights.success ?? 0.5);
+      setValue('p_score_ttft_weight', scoreWeights.ttft ?? 0.3);
+      setValue('p_score_tps_weight', scoreWeights.tps ?? 0.2);
+      setValue('p_score_probe_weight', evidenceWeights.probe ?? 0.65);
+      setValue('p_score_transparent_weight', evidenceWeights.transparent ?? 0.35);
+      setValue('p_score_passive_weight', evidenceWeights.passive ?? 0);
+      setValue('p_score_min_interval', scoreRefresh.min_interval || '5m');
+      setValue('p_score_max_age', scoreRefresh.max_age || '30m');
+      setValue('p_score_drift_threshold', scoreRefresh.drift_threshold ?? 0.03);
       setValue('p_soft_tps', quality.soft_tps || 500);
       setValue('p_hard_tps', quality.hard_tps || 1000);
       setValue('p_consecutive_soft', quality.consecutive_soft || 2);
@@ -9574,11 +9667,28 @@
       policy.task_history.max_bytes = Math.round(numberValue('p_task_history_max_bytes_mib', 128) * 1048576);
       policy.task_history.max_items_per_task = numberValue('p_task_history_max_items', 10000);
       policy.routing = policy.routing || {};
-      policy.routing.selection_strategy = valueOf('p_selection_strategy') || 'round_robin';
-      policy.routing.prefer_last_success = document.getElementById('p_prefer_last_success').checked;
-      policy.routing.session_affinity = document.getElementById('p_session_affinity').checked;
-      policy.routing.session_affinity_ttl = valueOf('p_session_affinity_ttl');
-      policy.routing.session_affinity_max_entries = numberValue('p_session_affinity_max_entries', 10000);
+      policy.routing.strategy = policy.routing.strategy || {};
+      policy.routing.strategy.selection = valueOf('p_selection_strategy') || 'round_robin';
+      policy.routing.strategy.prefer_last_success = document.getElementById('p_prefer_last_success').checked;
+      policy.routing.affinity = policy.routing.affinity || {};
+      policy.routing.affinity.enabled = document.getElementById('p_session_affinity').checked;
+      policy.routing.affinity.ttl = valueOf('p_session_affinity_ttl');
+      policy.routing.affinity.max_entries = numberValue('p_session_affinity_max_entries', 10000);
+      policy.routing.scoring = policy.routing.scoring || {};
+      policy.routing.scoring.enabled = document.getElementById('p_scoring_enabled').checked;
+      policy.routing.scoring.max_accounts_per_bucket = numberValue('p_max_accounts_per_bucket', 512);
+      policy.routing.scoring.weights = policy.routing.scoring.weights || {};
+      policy.routing.scoring.weights.success = signedNumberValue('p_score_success_weight', 0.5);
+      policy.routing.scoring.weights.ttft = signedNumberValue('p_score_ttft_weight', 0.3);
+      policy.routing.scoring.weights.tps = signedNumberValue('p_score_tps_weight', 0.2);
+      policy.routing.scoring.evidence = policy.routing.scoring.evidence || {};
+      policy.routing.scoring.evidence.probe = signedNumberValue('p_score_probe_weight', 0.65);
+      policy.routing.scoring.evidence.transparent = signedNumberValue('p_score_transparent_weight', 0.35);
+      policy.routing.scoring.evidence.passive = signedNumberValue('p_score_passive_weight', 0);
+      policy.routing.scoring.refresh = policy.routing.scoring.refresh || {};
+      policy.routing.scoring.refresh.min_interval = valueOf('p_score_min_interval');
+      policy.routing.scoring.refresh.max_age = valueOf('p_score_max_age');
+      policy.routing.scoring.refresh.drift_threshold = signedNumberValue('p_score_drift_threshold', 0.03);
       policy.quality = policy.quality || {};
       policy.quality.soft_tps = numberValue('p_soft_tps', 500);
       policy.quality.hard_tps = numberValue('p_hard_tps', 1000);
@@ -9623,7 +9733,15 @@
       if (!(policy.quality.soft_tps < policy.quality.hard_tps)) { toast(i18n.t("ui.soft_tps_below_hard"), 'error'); return; }
       if (!(policy.probe.queue_size >= 1 && policy.probe.queue_size <= 1000000)) { toast(i18n.t("ui.queue_capacity_range"), 'error'); return; }
       if (!Number.isInteger(policy.probe.healthy_interval_hours) || policy.probe.healthy_interval_hours < 0) { toast(i18n.t("ui.healthy_probe_interval_range"), 'error'); return; }
-      if (!policy.routing.session_affinity_ttl) { toast(i18n.t("ui.session_ttl_required"), 'error'); return; }
+      if (!policy.routing.affinity.ttl) { toast(i18n.t("ui.session_ttl_required"), 'error'); return; }
+      const scoring = policy.routing.scoring;
+      if (!Number.isInteger(scoring.max_accounts_per_bucket) || !(scoring.max_accounts_per_bucket >= 16 && scoring.max_accounts_per_bucket <= 4096)) { toast(i18n.t("ui.score_bucket_limit_invalid"), 'error'); return; }
+      const metricWeights = [scoring.weights.success, scoring.weights.ttft, scoring.weights.tps];
+      if (!metricWeights.every(value => Number.isFinite(value) && value >= 0 && value <= 1) || metricWeights.reduce((sum, value) => sum + value, 0) <= 0) { toast(i18n.t("ui.score_weights_invalid"), 'error'); return; }
+      const evidenceWeights = [scoring.evidence.probe, scoring.evidence.transparent, scoring.evidence.passive];
+      if (!evidenceWeights.every(value => Number.isFinite(value) && value >= 0 && value <= 1) || evidenceWeights.reduce((sum, value) => sum + value, 0) <= 0) { toast(i18n.t("ui.score_evidence_invalid"), 'error'); return; }
+      if (!scoring.refresh.min_interval || !scoring.refresh.max_age) { toast(i18n.t("ui.score_refresh_invalid"), 'error'); return; }
+      if (!Number.isFinite(scoring.refresh.drift_threshold) || !(scoring.refresh.drift_threshold >= 0 && scoring.refresh.drift_threshold <= 1)) { toast(i18n.t("ui.score_drift_invalid"), 'error'); return; }
       if (!nextStateFile) { toast(i18n.t("ui.state_file_required"), 'error'); return; }
       const taskHistory = policy.task_history || {};
       if (!(taskHistory.retention_days >= 1 && taskHistory.retention_days <= 365)) { toast(i18n.t("ui.retention_days_range"), 'error'); return; }

@@ -13,11 +13,6 @@ const (
 	transparentSourceStrategy  = "strategy"
 )
 
-const (
-	selectionNormalIdlePass = iota
-	selectionNormalBusyPass
-)
-
 type transparentSelection struct {
 	plugin  *Service
 	routing RoutingConfig
@@ -27,15 +22,19 @@ type transparentSelection struct {
 	preferredID        string
 	snapshot           *routingSelectionSnapshot
 	topLayerKey        string
+	topBucketKey       string
 	layerOrder         []string
 	layerIndex         int
 	currentLayerKey    string
+	currentBuckets     []routingSelectionBucket
+	currentBucketIndex int
+	currentBucketKey   string
 	currentLayer       []Account
 	currentLayerLoaded bool
 	specialsDone       bool
 	normalStart        int
 	normalOffset       int
-	normalPass         int
+	busyPass           bool
 	tried              map[string]struct{}
 	totalCandidates    int
 }
@@ -76,6 +75,7 @@ func (s *Service) newTransparentSelectionWithSession(sessionKey string) (*transp
 	if errEnsure := s.ensureSelectionIndex(); errEnsure != nil {
 		return nil, errEnsure
 	}
+	s.maybeRefreshSelectionIndex(time.Now().UTC())
 	policy := s.env.Policy()
 	snapshot := s.selectionIndex.Load()
 	if snapshot == nil {
@@ -94,10 +94,13 @@ func (s *Service) newTransparentSelectionWithSession(sessionKey string) (*transp
 	for _, key := range selection.layerOrder {
 		if len(snapshot.Layer(key)) > 0 {
 			selection.topLayerKey = key
+			if buckets := snapshot.Buckets(key); len(buckets) > 0 {
+				selection.topBucketKey = buckets[0].Key
+			}
 			break
 		}
 	}
-	if selection.routing.SessionAffinity {
+	if selection.routing.Affinity.Enabled {
 		selection.sessionKey = sessionKey
 		if selection.sessionKey != "" {
 			if authID, ok := s.selectionRuntime.LookupBinding(selection.sessionKey, time.Now().UTC()); ok {
@@ -105,10 +108,11 @@ func (s *Service) newTransparentSelectionWithSession(sessionKey string) (*transp
 			}
 		}
 	}
-	if selection.routing.PreferLastSuccess {
+	if selection.routing.Strategy.PreferLastSuccess {
 		if authID, _ := s.selectionRuntime.Preferred(); authID != "" {
 			layerKey, ok := snapshot.LayerForAuth(authID)
-			if !ok || layerKey != selection.topLayerKey {
+			bucketKey, bucketOK := snapshot.BucketForAuth(authID)
+			if !ok || layerKey != selection.topLayerKey || !bucketOK || bucketKey != selection.topBucketKey {
 				s.selectionRuntime.ClearPreferred(authID)
 			} else {
 				selection.preferredID = authID
@@ -125,12 +129,14 @@ func (selection *transparentSelection) HasRemainingCandidates() bool {
 		return false
 	}
 	for _, key := range selection.layerOrder {
-		for _, candidate := range selection.snapshot.Layer(key) {
-			if _, tried := selection.tried[candidate.ID]; tried {
-				continue
-			}
-			if selection.candidateEligible(candidate.ID) {
-				return true
+		for _, bucket := range selection.snapshot.Buckets(key) {
+			for _, candidate := range bucket.Accounts {
+				if _, tried := selection.tried[candidate.ID]; tried {
+					continue
+				}
+				if selection.candidateEligible(candidate.ID) {
+					return true
+				}
 			}
 		}
 	}
@@ -147,18 +153,18 @@ func (selection *transparentSelection) Next(ctx context.Context) (transparentCan
 				return transparentCandidateAttempt{}, false
 			}
 			key := selection.layerOrder[selection.layerIndex]
-			layer := selection.snapshot.Layer(key)
-			if len(layer) == 0 {
+			buckets := selection.snapshot.Buckets(key)
+			if len(buckets) == 0 {
 				selection.layerIndex++
 				continue
 			}
 			selection.currentLayerKey = key
-			selection.currentLayer = layer
+			selection.currentBuckets = buckets
+			selection.currentBucketIndex = 0
+			selection.busyPass = false
+			selection.loadCurrentBucket()
 			selection.currentLayerLoaded = true
 			selection.specialsDone = false
-			selection.normalStart = -1
-			selection.normalOffset = 0
-			selection.normalPass = selectionNormalIdlePass
 		}
 		if !selection.specialsDone {
 			selection.specialsDone = true
@@ -169,65 +175,81 @@ func (selection *transparentSelection) Next(ctx context.Context) (transparentCan
 				return attempt, true
 			}
 		}
-		if attempt, ok := selection.tryNormalCandidate(ctx); ok {
+		if attempt, ok := selection.tryNormalCandidate(ctx, selection.busyPass); ok {
 			return attempt, true
+		}
+		selection.currentBucketIndex++
+		if selection.currentBucketIndex < len(selection.currentBuckets) {
+			selection.loadCurrentBucket()
+			selection.specialsDone = false
+			continue
+		}
+		if !selection.busyPass {
+			selection.busyPass = true
+			selection.currentBucketIndex = 0
+			selection.loadCurrentBucket()
+			selection.specialsDone = true
+			continue
 		}
 		selection.currentLayerLoaded = false
 		selection.layerIndex++
 	}
 }
 
-func (selection *transparentSelection) tryNormalCandidate(ctx context.Context) (transparentCandidateAttempt, bool) {
+func (selection *transparentSelection) loadCurrentBucket() {
+	if selection == nil || selection.currentBucketIndex < 0 || selection.currentBucketIndex >= len(selection.currentBuckets) {
+		selection.currentLayer = nil
+		selection.currentBucketKey = ""
+		return
+	}
+	bucket := selection.currentBuckets[selection.currentBucketIndex]
+	selection.currentBucketKey = bucket.Key
+	selection.currentLayer = bucket.Accounts
+	selection.normalStart = -1
+	selection.normalOffset = 0
+}
+
+func (selection *transparentSelection) tryNormalCandidate(ctx context.Context, busyPass bool) (transparentCandidateAttempt, bool) {
 	if selection.normalStart < 0 {
 		selection.normalStart = selection.plugin.selectionRuntime.StrategyStart(
-			selection.currentLayerKey,
-			selection.routing.SelectionStrategy,
+			selection.currentBucketKey,
+			selection.routing.Strategy.Selection,
 			len(selection.currentLayer),
 		)
 	}
-	for selection.normalPass <= selectionNormalBusyPass {
-		for selection.normalOffset < len(selection.currentLayer) {
-			position := (selection.normalStart + selection.normalOffset) % len(selection.currentLayer)
-			selection.normalOffset++
-			candidate := selection.currentLayer[position]
-			if _, tried := selection.tried[candidate.ID]; tried {
-				continue
-			}
-			if !selection.candidateEligible(candidate.ID) {
-				selection.tried[candidate.ID] = struct{}{}
-				selection.plugin.refreshSelectionAccount(candidate.ID)
-				continue
-			}
-			if selection.normalPass == selectionNormalIdlePass {
-				if !selection.plugin.selectionRuntime.TryReserveIdle(candidate.ID) {
-					continue
-				}
-			} else {
-				selection.plugin.selectionRuntime.ReserveAttempt(candidate.ID)
-			}
-			account, raw, ok := selection.plugin.env.ExecutableAuth(ctx, candidate.ID)
-			if !ok {
-				selection.plugin.selectionRuntime.ReleaseAttempt(candidate.ID)
-				selection.tried[candidate.ID] = struct{}{}
-				selection.plugin.refreshSelectionAccount(candidate.ID)
-				continue
-			}
-			attempt := transparentCandidateAttempt{
-				selection: selection,
-				Account:   account,
-				Raw:       raw,
-				Source:    transparentSourceStrategy,
-			}
-			selection.applySessionBinding(ctx, &attempt)
-			selection.tried[attempt.Account.ID] = struct{}{}
-			return attempt, true
-		}
-		if selection.normalPass == selectionNormalIdlePass {
-			selection.normalPass = selectionNormalBusyPass
-			selection.normalOffset = 0
+	for selection.normalOffset < len(selection.currentLayer) {
+		position := (selection.normalStart + selection.normalOffset) % len(selection.currentLayer)
+		selection.normalOffset++
+		candidate := selection.currentLayer[position]
+		if _, tried := selection.tried[candidate.ID]; tried {
 			continue
 		}
-		break
+		if !selection.candidateEligible(candidate.ID) {
+			selection.tried[candidate.ID] = struct{}{}
+			selection.plugin.refreshSelectionAccount(candidate.ID)
+			continue
+		}
+		if busyPass {
+			selection.plugin.selectionRuntime.ReserveAttempt(candidate.ID)
+		} else if !selection.plugin.selectionRuntime.TryReserveIdle(candidate.ID) {
+			continue
+		}
+		account, raw, ok := selection.plugin.env.ExecutableAuth(ctx, candidate.ID)
+		if !ok {
+			selection.plugin.selectionRuntime.ReleaseAttempt(candidate.ID)
+			selection.tried[candidate.ID] = struct{}{}
+			selection.plugin.refreshSelectionAccount(candidate.ID)
+			continue
+		}
+		attempt := transparentCandidateAttempt{
+			selection: selection,
+			Account:   account,
+			Raw:       raw,
+			Source:    transparentSourceStrategy,
+		}
+		selection.applySessionBinding(ctx, &attempt)
+		selection.tried[attempt.Account.ID] = struct{}{}
+		return attempt, true
 	}
 	return transparentCandidateAttempt{}, false
 }
@@ -240,8 +262,8 @@ func (selection *transparentSelection) applySessionBinding(ctx context.Context, 
 		selection.sessionKey,
 		attempt.Account.ID,
 		time.Now().UTC(),
-		selection.routing.SessionAffinityTTL.Duration,
-		selection.routing.SessionAffinityMaxSize,
+		selection.routing.Affinity.TTL.Duration,
+		selection.routing.Affinity.MaxEntries,
 	)
 	if boundID == "" || boundID == attempt.Account.ID {
 		return
@@ -313,15 +335,16 @@ func (selection *transparentSelection) trySessionSpecial(ctx context.Context) (t
 }
 
 func (selection *transparentSelection) tryPreferredSpecial(ctx context.Context) (transparentCandidateAttempt, bool) {
-	if selection.preferredID == "" || !selection.routing.PreferLastSuccess {
+	if selection.preferredID == "" || !selection.routing.Strategy.PreferLastSuccess {
 		return transparentCandidateAttempt{}, false
 	}
-	if selection.currentLayerKey != selection.topLayerKey {
+	if selection.currentLayerKey != selection.topLayerKey || selection.currentBucketKey != selection.topBucketKey {
 		return transparentCandidateAttempt{}, false
 	}
 	authID := selection.preferredID
 	layerKey, ok := selection.snapshot.LayerForAuth(authID)
-	if !ok || layerKey != selection.topLayerKey {
+	bucketKey, bucketOK := selection.snapshot.BucketForAuth(authID)
+	if !ok || layerKey != selection.topLayerKey || !bucketOK || bucketKey != selection.topBucketKey {
 		selection.plugin.selectionRuntime.ClearPreferred(authID)
 		selection.preferredID = ""
 		return transparentCandidateAttempt{}, false
@@ -369,7 +392,8 @@ func (selection *transparentSelection) candidateEligible(authID string) bool {
 
 func (selection *transparentSelection) preferredEligible(authID string) bool {
 	layerKey, ok := selection.snapshot.LayerForAuth(authID)
-	if !ok || layerKey != selection.topLayerKey {
+	bucketKey, bucketOK := selection.snapshot.BucketForAuth(authID)
+	if !ok || layerKey != selection.topLayerKey || !bucketOK || bucketKey != selection.topBucketKey {
 		return false
 	}
 	state, ok := selection.plugin.env.StateAccount(authID)
@@ -381,19 +405,19 @@ func (selection *transparentSelection) MarkSuccess(authID, source string) {
 		return
 	}
 	now := time.Now().UTC()
-	if selection.routing.SessionAffinity && selection.sessionKey != "" {
+	if selection.routing.Affinity.Enabled && selection.sessionKey != "" {
 		selection.plugin.selectionRuntime.RefreshBinding(
 			selection.sessionKey,
 			authID,
 			now,
-			selection.routing.SessionAffinityTTL.Duration,
+			selection.routing.Affinity.TTL.Duration,
 		)
 	}
 	switch source {
 	case transparentSourcePreferred:
 		selection.plugin.selectionRuntime.RefreshPreferred(authID, now)
 	case transparentSourceStrategy:
-		if !selection.routing.PreferLastSuccess {
+		if !selection.routing.Strategy.PreferLastSuccess {
 			return
 		}
 		currentPreferred, _ := selection.plugin.selectionRuntime.Preferred()

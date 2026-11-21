@@ -16,6 +16,7 @@ import (
 
 	"grok-quality-guard/internal/app/i18n"
 	"grok-quality-guard/internal/app/redact"
+	appstate "grok-quality-guard/internal/app/state"
 	"grok-quality-guard/internal/config"
 	proxy "grok-quality-guard/internal/proxy"
 )
@@ -723,6 +724,16 @@ func (s *Service) markProbeSuccess(authID string, sig Signals) error {
 			EncryptedBytes:  sig.EncryptedBytes,
 			TPS:             sig.TPS,
 		}
+		appstate.ObserveRoutingSample(
+			&account.RoutingStats,
+			appstate.RoutingSourceProbe,
+			sig.ReasoningRequired || sig.ReasoningTokens > 0 || sig.HasReasoningDelta || sig.HasThinking,
+			true,
+			sig.FirstTokenMS,
+			sig.TPS,
+			now,
+			appstate.RoutingSampleHalfLife(appstate.RoutingSourceProbe, s.env.Policy().Probe.HealthyIntervalHours),
+		)
 		events := []Event{{
 			Time:      time.Now().UTC(),
 			AuthID:    authID,

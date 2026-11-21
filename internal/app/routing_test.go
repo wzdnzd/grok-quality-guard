@@ -9,6 +9,7 @@ import (
 	appstate "grok-quality-guard/internal/app/state"
 	appconfig "grok-quality-guard/internal/config"
 	qualitypkg "grok-quality-guard/internal/quality"
+	"math"
 	"net/http"
 	"testing"
 	"time"
@@ -85,9 +86,9 @@ func TestTransparentSelectionRoundRobinDistributesConcurrentIdleAuths(t *testing
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		cfg.TransparentGuard = true
-		cfg.Routing.SelectionStrategy = "round_robin"
-		cfg.Routing.PreferLastSuccess = false
-		cfg.Routing.SessionAffinity = false
+		cfg.Routing.Strategy.Selection = "round_robin"
+		cfg.Routing.Strategy.PreferLastSuccess = false
+		cfg.Routing.Affinity.Enabled = false
 	})
 	states := make(map[string]string, len(entries))
 	for _, entry := range entries {
@@ -144,14 +145,89 @@ func TestTransparentSelectionRoundRobinDistributesConcurrentIdleAuths(t *testing
 	}
 }
 
+func healthyRoutingStats(success float32, ttftMS, tps float64) appstate.RoutingStats {
+	nowMS := time.Now().UTC().UnixMilli()
+	window := appstate.RoutingSampleWindow{
+		Samples:        8,
+		SuccessEWMA:    success,
+		FailureEWMA:    1 - success,
+		LogTTFTEWMA:    float32(math.Log(ttftMS)),
+		LogTPSEWMA:     float32(math.Log(tps)),
+		LastObservedMS: nowMS,
+	}
+	return appstate.RoutingStats{Probe: appstate.RoutingSourceStats{Reasoning: window}}
+}
+
+func TestTransparentSelectionUsesHighestScoreBucketAndFallsBackByScore(t *testing.T) {
+	entries := manyGrokAuths(t, 17)
+	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.TransparentGuard = true
+		cfg.Routing.Strategy.Selection = "fill_first"
+		cfg.Routing.Strategy.PreferLastSuccess = false
+		cfg.Routing.Affinity.Enabled = false
+		cfg.Routing.Scoring.MaxAccountsPerBucket = 16
+	})
+	if errUpdate := plugin.stateStore().UpdateIfChanged(func(state *appstate.State) (bool, error) {
+		for index := 1; index <= 17; index++ {
+			authID := fmt.Sprintf("auth-%02d", index)
+			plugin.ensureStateAccount(state, authID).State = appstate.StateHealthy
+		}
+		state.Accounts["auth-01"].RoutingStats = healthyRoutingStats(0.10, 9000, 20)
+		state.Accounts["auth-02"].RoutingStats = healthyRoutingStats(0.95, 250, 900)
+		for index := 3; index <= 17; index++ {
+			authID := fmt.Sprintf("auth-%02d", index)
+			success := float32(0.80) - float32(index-3)*0.02
+			state.Accounts[authID].RoutingStats = healthyRoutingStats(success, float64(900+index*80), float64(600-index*15))
+		}
+		return true, nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if errRebuild := plugin.rebuildSelectionIndex(); errRebuild != nil {
+		t.Fatal(errRebuild)
+	}
+
+	_, firstAttempt := nextSelectionAttempt(t, plugin, "")
+	if firstAttempt.Account.ID != "auth-02" {
+		t.Fatalf("first auth = %s, want highest-score auth-02", firstAttempt.Account.ID)
+	}
+	if count := plugin.routingSvc.Runtime().ActiveAttemptCount("auth-02"); count != 1 {
+		t.Fatalf("first attempt reservation count = %d, want 1", count)
+	}
+	attempts := []routingapp.CandidateAttempt{firstAttempt}
+	seen := map[string]bool{firstAttempt.Account.ID: true}
+	for index := 1; index < 16; index++ {
+		_, attempt := nextSelectionAttempt(t, plugin, "")
+		if seen[attempt.Account.ID] {
+			t.Fatalf("top-bucket attempt %d reused busy auth %s", index, attempt.Account.ID)
+		}
+		seen[attempt.Account.ID] = true
+		attempts = append(attempts, attempt)
+	}
+	for _, attempt := range attempts {
+		if count := plugin.routingSvc.Runtime().ActiveAttemptCount(attempt.Account.ID); count != 1 {
+			t.Fatalf("attempt reservation for %s = %d, want 1", attempt.Account.ID, count)
+		}
+	}
+	_, fallback := nextSelectionAttempt(t, plugin, "")
+	if fallback.Account.ID != "auth-01" {
+		t.Fatalf("busy top bucket did not fall back to the lowest-score bucket: %#v", fallback)
+	}
+	for _, attempt := range attempts {
+		attempt.Release()
+	}
+	fallback.Release()
+}
+
 func TestTransparentSelectionPreferredBusyFallsBackToIdleAuth(t *testing.T) {
 	entries := manyGrokAuths(t, 2)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		cfg.TransparentGuard = true
-		cfg.Routing.SelectionStrategy = "fill_first"
-		cfg.Routing.PreferLastSuccess = true
-		cfg.Routing.SessionAffinity = false
+		cfg.Routing.Strategy.Selection = "fill_first"
+		cfg.Routing.Strategy.PreferLastSuccess = true
+		cfg.Routing.Affinity.Enabled = false
 	})
 	setSelectionStates(t, plugin, map[string]string{"auth-01": appstate.StateHealthy, "auth-02": appstate.StateHealthy})
 
@@ -191,9 +267,9 @@ func TestTransparentSelectionConcurrentFirstSessionRequestsShareAuth(t *testing.
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		cfg.TransparentGuard = true
-		cfg.Routing.SelectionStrategy = "round_robin"
-		cfg.Routing.PreferLastSuccess = false
-		cfg.Routing.SessionAffinity = true
+		cfg.Routing.Strategy.Selection = "round_robin"
+		cfg.Routing.Strategy.PreferLastSuccess = false
+		cfg.Routing.Affinity.Enabled = true
 	})
 	setSelectionStates(t, plugin, map[string]string{"auth-01": appstate.StateHealthy, "auth-02": appstate.StateHealthy})
 
@@ -278,20 +354,20 @@ func TestRoutingPolicyUpdateHotReloadsSelectionConfig(t *testing.T) {
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, nil)
 	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
-	policy.Routing.SelectionStrategy = "fill_first"
-	policy.Routing.PreferLastSuccess = false
-	policy.Routing.SessionAffinity = false
-	policy.Routing.SessionAffinityTTL = appconfig.NewDuration(2 * time.Hour)
-	policy.Routing.SessionAffinityMaxSize = 77
+	policy.Routing.Strategy.Selection = "fill_first"
+	policy.Routing.Strategy.PreferLastSuccess = false
+	policy.Routing.Affinity.Enabled = false
+	policy.Routing.Affinity.TTL = appconfig.NewDuration(2 * time.Hour)
+	policy.Routing.Affinity.MaxEntries = 77
 
 	_, status, errUpdate := plugin.actionPolicyUpdate(map[string]any{"policy": policy})
 	if errUpdate != nil || status != http.StatusOK {
 		t.Fatalf("policy update status=%d err=%v", status, errUpdate)
 	}
-	if plugin.cfg.Routing.SelectionStrategy != "fill_first" || plugin.cfg.Routing.PreferLastSuccess || plugin.cfg.Routing.SessionAffinity {
+	if plugin.cfg.Routing.Strategy.Selection != "fill_first" || plugin.cfg.Routing.Strategy.PreferLastSuccess || plugin.cfg.Routing.Affinity.Enabled {
 		t.Fatalf("routing config was not hot-reloaded: %#v", plugin.cfg.Routing)
 	}
-	if plugin.cfg.Routing.SessionAffinityTTL.Duration != 2*time.Hour || plugin.cfg.Routing.SessionAffinityMaxSize != 77 {
+	if plugin.cfg.Routing.Affinity.TTL.Duration != 2*time.Hour || plugin.cfg.Routing.Affinity.MaxEntries != 77 {
 		t.Fatalf("routing TTL config was not hot-reloaded: %#v", plugin.cfg.Routing)
 	}
 }
@@ -301,9 +377,9 @@ func TestTransparentSelectionRebindsSessionAfterAuthBecomesIneligible(t *testing
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		cfg.TransparentGuard = true
-		cfg.Routing.SelectionStrategy = "fill_first"
-		cfg.Routing.PreferLastSuccess = false
-		cfg.Routing.SessionAffinity = true
+		cfg.Routing.Strategy.Selection = "fill_first"
+		cfg.Routing.Strategy.PreferLastSuccess = false
+		cfg.Routing.Affinity.Enabled = true
 	})
 	setSelectionStates(t, plugin, map[string]string{"auth-01": appstate.StateHealthy, "auth-02": appstate.StateHealthy})
 

@@ -18,6 +18,7 @@ func (s *Service) Index() *routingSelectionIndex     { return &s.selectionIndex 
 func (s *Service) EnsureIndex() error                { return s.ensureSelectionIndex() }
 func (s *Service) RebuildIndex() error               { return s.rebuildSelectionIndex() }
 func (s *Service) RefreshAccount(authID string)      { s.refreshSelectionAccount(authID) }
+func (s *Service) InvalidatePolicy()                 { s.selectionIndex.InvalidatePolicy() }
 func (s *Service) IndexReady() bool                  { return s.selectionIndex.Ready() }
 func (s *Service) IndexTotal() int                   { return s.selectionIndex.Total() }
 func (s *Service) BuildGeneration() uint64           { return s.selectionIndex.BuildGeneration() }
@@ -81,6 +82,11 @@ func (runtime *routingSelectionRuntime) BindingCount() int {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	return len(runtime.bindings)
+}
+func (runtime *routingSelectionRuntime) ActiveAttemptCount(authID string) int {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	return runtime.activeAttempts[authID]
 }
 func IsTransparentSelectionHardFailure(class string) bool {
 	return isTransparentSelectionHardFailure(class)

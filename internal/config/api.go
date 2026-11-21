@@ -1,12 +1,18 @@
 package config
 
 const (
-	DefaultEventsLimit               = defaultEventsLimit
-	DefaultProbeQueueSize            = defaultProbeQueueSize
-	MaxProbeQueueSize                = maxProbeQueueSize
-	DefaultProbeUnknownJitter        = defaultProbeUnknownJitter
-	DefaultProbeScanInterval         = defaultProbeScanInterval
-	DefaultProbeHealthyIntervalHours = defaultProbeHealthyIntervalHours
+	DefaultEventsLimit                 = defaultEventsLimit
+	DefaultProbeQueueSize              = defaultProbeQueueSize
+	MaxProbeQueueSize                  = maxProbeQueueSize
+	DefaultProbeUnknownJitter          = defaultProbeUnknownJitter
+	DefaultProbeScanInterval           = defaultProbeScanInterval
+	DefaultProbeHealthyIntervalHours   = defaultProbeHealthyIntervalHours
+	DefaultRoutingMaxAccountsPerBucket = defaultRoutingMaxAccountsPerBucket
+	MinRoutingMaxAccountsPerBucket     = minRoutingMaxAccountsPerBucket
+	MaxRoutingMaxAccountsPerBucket     = maxRoutingMaxAccountsPerBucket
+	DefaultRoutingRefreshMinInterval   = defaultRoutingRefreshMinInterval
+	DefaultRoutingRefreshMaxAge        = defaultRoutingRefreshMaxAge
+	DefaultRoutingDriftThreshold       = defaultRoutingDriftThreshold
 )
 
 // Decode parses YAML over the built-in defaults and normalizes the result.

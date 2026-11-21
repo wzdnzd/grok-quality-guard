@@ -149,7 +149,7 @@ function harness(options = {}) {
     },
     HTMLElement: Element,
     CSS: { escape: (value) => String(value) },
-    Blob, URL, TextEncoder, Date, Intl, JSON, Map, Set,
+    Blob, URL, TextEncoder, AbortController, Date, Intl, JSON, Map, Set,
     fetch: options.fetch || (async () => { throw new Error('Unexpected network request'); })
   });
   const runtimeSource = options.i18nResources === undefined
@@ -1547,20 +1547,26 @@ test('Overview cards pair into equal-height rows', () => {
 test('Policy settings use a compact grouped grid with responsive density', () => {
   assert.match(html, /<form id="policyForm" class="settings-layout policy-settings-form">/);
   assert.match(html, /<div class="policy-settings-grid">/);
-  for (const group of ['mode', 'task-history', 'routing', 'quality', 'probe']) {
-    assert.match(html, new RegExp('class="policy-group policy-group-' + group + '"'));
+  for (const group of ['mode', 'task-history', 'routing', 'scoring', 'quality', 'probe']) {
+    assert.match(html, new RegExp('class="policy-group[^"]*policy-group-' + group + '(?:[ "])'));
   }
   const modeStart = html.indexOf('class="policy-group policy-group-mode"');
+  const affinityStart = html.indexOf('class="policy-group policy-group-routing"');
+  const scoringStart = html.indexOf('class="policy-group policy-group-routing policy-group-scoring"');
   const taskHistoryStart = html.indexOf('class="policy-group policy-group-task-history"');
-  const routingStart = html.indexOf('class="policy-group policy-group-routing"');
   const qualityStart = html.indexOf('class="policy-group policy-group-quality"');
   const probeStart = html.indexOf('class="policy-group policy-group-probe"');
-  assert.ok(modeStart < routingStart && routingStart < taskHistoryStart && taskHistoryStart < qualityStart && qualityStart < probeStart);
+  assert.ok(modeStart < affinityStart && affinityStart < scoringStart && scoringStart < taskHistoryStart && taskHistoryStart < qualityStart && qualityStart < probeStart);
   assert.match(html, /\.policy-settings-grid\s*\{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
   assert.match(html, /\.policy-group-quality \.field-grid,\s*\.policy-group-probe \.field-grid\s*\{\s*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.match(html, /\.policy-group-scoring\s*\{\s*grid-column: 1 \/ -1;/);
+  assert.match(html, /\.policy-group-scoring \.field-grid\s*\{\s*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);/);
+  assert.match(html, /\.policy-group-scoring \.field\.score-metric,\s*\.policy-group-scoring \.field\.score-refresh,\s*\.policy-group-scoring \.field\.score-guidance\s*\{\s*grid-column: span 2;/);
+  assert.match(html, /<label class="check-card compact score-toggle"><input id="p_scoring_enabled"/);
   assert.match(html, /\.policy-group-quality \.check-card\s*\{\s*grid-column: span 2;/);
   assert.match(html, /@media \(max-width: 1180px\)\s*\{[\s\S]*?\.settings-summary-card \.summary-grid\s*\{\s*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
   assert.match(html, /@media \(max-width: 920px\)\s*\{[\s\S]*?\.policy-settings-grid\s*\{\s*grid-template-columns: 1fr;/);
+  assert.match(html, /@media \(max-width: 920px\)\s*\{[\s\S]*?\.policy-group-scoring \.field-grid\s*\{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
   assert.match(html, /class="form-actions policy-actions"/);
 });
 
@@ -1592,6 +1598,44 @@ test('Routing affinity cards share a row and parameter hints explain their effec
   assert.doesNotMatch(html, /resinFormHost|resinSourceBar|data-open-resin title=/);
 });
 
+test('Routing scoring controls expose dynamic buckets, weights, and request-driven refresh', () => {
+  for (const id of [
+    'p_scoring_enabled',
+    'p_max_accounts_per_bucket',
+    'p_score_success_weight',
+    'p_score_ttft_weight',
+    'p_score_tps_weight',
+    'p_score_probe_weight',
+    'p_score_transparent_weight',
+    'p_score_passive_weight',
+    'p_score_min_interval',
+    'p_score_max_age',
+    'p_score_drift_threshold'
+  ]) {
+    assert.match(html, new RegExp('id="' + id + '"'));
+  }
+  assert.match(html, /ui\.score_bucket_range_hint/);
+  assert.match(html, /ui\.score_weights_hint/);
+  assert.match(html, /ui\.score_enabled_hint/);
+  assert.match(html, /ui\.score_success_hint/);
+  assert.match(html, /ui\.score_ttft_hint/);
+  assert.match(html, /ui\.score_tps_hint/);
+  assert.match(html, /ui\.score_probe_hint/);
+  assert.match(html, /ui\.score_transparent_hint/);
+  assert.match(html, /ui\.score_passive_hint/);
+  assert.match(html, /ui\.score_min_interval_hint/);
+  assert.match(html, /ui\.score_refresh_hint/);
+  assert.match(html, /ui\.score_drift_hint/);
+  for (const id of ['p_score_success_weight', 'p_score_ttft_weight', 'p_score_tps_weight', 'p_score_probe_weight', 'p_score_transparent_weight', 'p_score_passive_weight']) {
+    assert.match(html, new RegExp('id="' + id + '"[^>]*max="1"'));
+  }
+  assert.match(html, /metricWeights\.every\(value => Number\.isFinite\(value\) && value >= 0 && value <= 1\)/);
+  assert.match(html, /evidenceWeights\.every\(value => Number\.isFinite\(value\) && value >= 0 && value <= 1\)/);
+  assert.match(html, /policy\.routing\.scoring\.max_accounts_per_bucket = numberValue/);
+  assert.match(html, /policy\.routing\.scoring\.weights\.success = signedNumberValue/);
+  assert.match(html, /policy\.routing\.scoring\.refresh\.drift_threshold = signedNumberValue/);
+});
+
 test('Network and management API failures use actionable Chinese copy', async () => {
   const { dashboard: ui, context, mock, get } = harness();
   context.fetch = async () => { throw new TypeError('Failed to fetch'); };
@@ -1599,6 +1643,7 @@ test('Network and management API failures use actionable Chinese copy', async ()
   context.fetch = async () => ({
     ok: false,
     status: 409,
+    headers: { get: () => null },
     json: async () => ({ ok: false, error: { code: 'auto_bind_source_unavailable', message: 'automatic source availability changed' } })
   });
   await assert.rejects(ui.api('proxy.auto_bind.run'), (error) => {

@@ -31,11 +31,22 @@ func TestRegistrationIncludesRoutingSelectionConfig(t *testing.T) {
 		fields[field.Name] = true
 	}
 	for _, name := range []string{
-		"routing.selection_strategy",
-		"routing.prefer_last_success",
-		"routing.session_affinity",
-		"routing.session_affinity_ttl",
-		"routing.session_affinity_max_entries",
+		"routing.strategy.selection",
+		"routing.strategy.prefer_last_success",
+		"routing.affinity.enabled",
+		"routing.affinity.ttl",
+		"routing.affinity.max_entries",
+		"routing.scoring.enabled",
+		"routing.scoring.max_accounts_per_bucket",
+		"routing.scoring.weights.success",
+		"routing.scoring.weights.ttft",
+		"routing.scoring.weights.tps",
+		"routing.scoring.evidence.probe",
+		"routing.scoring.evidence.transparent",
+		"routing.scoring.evidence.passive",
+		"routing.scoring.refresh.min_interval",
+		"routing.scoring.refresh.max_age",
+		"routing.scoring.refresh.drift_threshold",
 	} {
 		if !fields[name] {
 			t.Fatalf("registration is missing config field %q", name)
