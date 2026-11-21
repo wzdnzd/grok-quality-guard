@@ -1577,6 +1577,7 @@ test('Policy settings use a compact grouped grid with responsive density', () =>
   assert.match(html, /\.policy-group-scoring\s*\{\s*grid-column: 1 \/ -1;/);
   assert.match(html, /\.policy-group-scoring \.field-grid\s*\{\s*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);/);
   assert.match(html, /\.policy-group-scoring \.field\.score-metric,\s*\.policy-group-scoring \.field\.score-refresh,\s*\.policy-group-scoring \.field\.score-guidance\s*\{\s*grid-column: span 2;/);
+  assert.match(html, /\.policy-group-scoring \.field>\.hint\s*\{\s*white-space: nowrap;\s*overflow: hidden;\s*text-overflow: ellipsis;/s);
   assert.match(html, /<div class="field score-toggle"><label for="p_scoring_enabled">ui\.score_toggle_label<\/label>/);
   assert.match(html, /\.policy-group-quality \.check-card\s*\{\s*grid-column: span 2;/);
   assert.match(html, /@media \(max-width: 1180px\)\s*\{[\s\S]*?\.settings-summary-card \.summary-grid\s*\{\s*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
