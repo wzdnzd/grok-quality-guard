@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	execapp "grok-quality-guard/internal/app/executor"
 	appstate "grok-quality-guard/internal/app/state"
 	appconfig "grok-quality-guard/internal/config"
@@ -279,6 +280,34 @@ func TestTransparentStreamUnsafeRequestUsesSingleAttempt(t *testing.T) {
 	}
 	if len(host.emitted["plugin-stream-4"]) != 0 {
 		t.Fatal("unsafe request emitted degraded content")
+	}
+}
+
+func TestTransparentUnsafeRequestFailsOverOnPreResponseTransportError(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	host.scriptStreamError("auth-1", errors.New("net/http: TLS handshake timeout"))
+	host.scriptStream("auth-2", goodStreamScript()...)
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+	req := streamRequestForTest()
+	req.OriginalRequest = []byte(`{"model":"grok-4.5","previous_response_id":"resp_1"}`)
+	plugin.runTransparentStreamBridge(context.Background(), req, "plugin-stream-unsafe-transport")
+
+	joined := strings.Builder{}
+	for _, payload := range host.emitted["plugin-stream-unsafe-transport"] {
+		joined.Write(payload)
+	}
+	if !strings.Contains(joined.String(), "good answer") {
+		t.Fatalf("transport failover did not deliver the healthy account response: %s", joined.String())
+	}
+	if detail := host.closes["plugin-stream-unsafe-transport"]; detail != nil {
+		t.Fatalf("transport failover closed with error: %#v", detail)
+	}
+	if len(host.modelCalls) != 2 {
+		t.Fatalf("pre-response transport failure used %d attempts, want 2", len(host.modelCalls))
+	}
+	if host.modelCalls[0].AuthID != "auth-1" || host.modelCalls[1].AuthID != "auth-2" {
+		t.Fatalf("pre-response transport failure did not switch accounts: %#v", host.modelCalls)
 	}
 }
 
@@ -1048,5 +1077,136 @@ func TestSSEOutputNormalizerPairsEventWithData(t *testing.T) {
 		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}\n\n"
 	if len(output) != 1 || string(output[0]) != want {
 		t.Fatalf("event and data were not emitted as one complete frame: %q", output)
+	}
+}
+
+func TestTransparentUnsafeRequestDoesNotFailoverAfterStreamOpened(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1", pluginapi.HostModelStreamReadResponse{Error: "unexpected EOF while reading upstream stream"})
+	host.scriptStream("auth-2", goodStreamScript()...)
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+	req := streamRequestForTest()
+	req.OriginalRequest = []byte(`{"model":"grok-4.5","stream":true,"previous_response_id":"resp_1","messages":[{"role":"user","content":"hi"}]}`)
+	plugin.runTransparentStreamBridge(context.Background(), req, "plugin-stream-unsafe-read-error")
+
+	if len(host.modelCalls) != 1 {
+		t.Fatalf("post-response read error used %d attempts, want 1", len(host.modelCalls))
+	}
+	detail := host.closes["plugin-stream-unsafe-read-error"]
+	if detail == nil || detail.Code != "quality_degraded" || detail.HTTPStatus != http.StatusServiceUnavailable {
+		t.Fatalf("unexpected close detail: %#v", detail)
+	}
+	if len(host.emitted["plugin-stream-unsafe-read-error"]) != 0 {
+		t.Fatalf("unsafe request emitted content after a read error: %#v", host.emitted["plugin-stream-unsafe-read-error"])
+	}
+}
+
+func TestTransparentUnsafeNonStreamFailsOverOnPreResponseTransportError(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	host.scriptModelError("auth-1", errors.New("net/http: TLS handshake timeout"))
+	host.scriptModelResponse("auth-2", pluginapi.HostModelExecutionResponse{
+		StatusCode: http.StatusOK,
+		Headers:    http.Header{"Content-Type": []string{"application/json"}},
+		Body:       []byte(`{"id":"resp_2","object":"response","model":"grok-4.6","output":[{"id":"rs_2","type":"reasoning","summary":[{"type":"summary_text","text":"plan the answer"}]},{"id":"msg_2","type":"message","content":[{"type":"output_text","text":"final answer"}]}],"usage":{"input_tokens":10,"output_tokens":20,"output_tokens_details":{"reasoning_tokens":8}}}`),
+	})
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+	req := responsesRequestForTest("grok-4.6", false)
+	req.OriginalRequest = []byte(`{"model":"grok-4.6","stream":false,"input":"hi","previous_response_id":"resp_1","reasoning":{"effort":"medium"}}`)
+	encoded, errMarshal := json.Marshal(req)
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	response, errExecute := plugin.Execute(encoded)
+	if errExecute != nil {
+		t.Fatal(errExecute)
+	}
+	var envelope struct {
+		OK     bool                       `json:"ok"`
+		Result pluginapi.ExecutorResponse `json:"result"`
+	}
+	if errUnmarshal := json.Unmarshal(response, &envelope); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	if !envelope.OK || !strings.Contains(string(envelope.Result.Payload), "final answer") {
+		t.Fatalf("pre-response transport error did not fail over: %s", response)
+	}
+	if len(host.modelCalls) != 2 || host.modelCalls[0].AuthID != "auth-1" || host.modelCalls[1].AuthID != "auth-2" {
+		t.Fatalf("pre-response transport error did not switch accounts: %#v", host.modelCalls)
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.LastAttempt == nil || account.LastAttempt.Reason != "reason.detail.upstream_network_error" {
+		t.Fatalf("transparent transport reason was not recorded with the i18n key: %#v", account.LastAttempt)
+	}
+}
+
+func TestTransparentUnsafeBufferedStreamFailsOverOnPreResponseTransportError(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	host.scriptStreamError("auth-1", errors.New("net/http: TLS handshake timeout"))
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+	req := responsesRequestForTest("grok-4.6", true)
+	req.StreamID = ""
+	req.OriginalRequest = []byte(`{"model":"grok-4.6","stream":true,"input":"hi","previous_response_id":"resp_1","reasoning":{"effort":"medium"}}`)
+	encoded, errMarshal := json.Marshal(req)
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	raw, errExecute := plugin.ExecuteStream(encoded)
+	if errExecute != nil {
+		t.Fatal(errExecute)
+	}
+	var envelope struct {
+		OK     bool                   `json:"ok"`
+		Result execapp.StreamResponse `json:"result"`
+	}
+	if errUnmarshal := json.Unmarshal(raw, &envelope); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	if !envelope.OK {
+		t.Fatalf("buffered transport failover failed: %s", raw)
+	}
+	joined := strings.Builder{}
+	for _, chunk := range envelope.Result.Chunks {
+		joined.Write(chunk.Payload)
+	}
+	if !strings.Contains(joined.String(), "good answer") {
+		t.Fatalf("buffered transport failover did not deliver the healthy account response: %s", joined.String())
+	}
+	if len(host.modelCalls) != 2 || host.modelCalls[0].AuthID != "auth-1" || host.modelCalls[1].AuthID != "auth-2" {
+		t.Fatalf("buffered transport failover did not switch accounts: %#v", host.modelCalls)
+	}
+}
+
+func TestTransparentUnsafeBufferedStreamDoesNotFailoverAfterStreamOpened(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1", pluginapi.HostModelStreamReadResponse{Error: "unexpected EOF while reading upstream stream"})
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+	req := responsesRequestForTest("grok-4.6", true)
+	req.StreamID = ""
+	req.OriginalRequest = []byte(`{"model":"grok-4.6","stream":true,"input":"hi","previous_response_id":"resp_1","reasoning":{"effort":"medium"}}`)
+	encoded, errMarshal := json.Marshal(req)
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	raw, errExecute := plugin.ExecuteStream(encoded)
+	if errExecute != nil {
+		t.Fatal(errExecute)
+	}
+	var envelope struct {
+		OK bool `json:"ok"`
+	}
+	if errUnmarshal := json.Unmarshal(raw, &envelope); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	if envelope.OK {
+		t.Fatalf("post-open read error unexpectedly delivered a response: %s", raw)
+	}
+	if len(host.modelCalls) != 1 {
+		t.Fatalf("post-open read error used %d attempts, want 1: %#v", len(host.modelCalls), host.modelCalls)
 	}
 }

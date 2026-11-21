@@ -12,15 +12,34 @@ import (
 	"grok-quality-guard/internal/app/i18n"
 )
 
-func transparentMaxAttempts(policy Policy, replayable bool) int {
-	if !replayable {
-		return 1
-	}
+func transparentMaxAttempts(policy Policy) int {
 	maxAttempts := policy.Quality.MaxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = 6
 	}
 	return maxAttempts
+}
+
+func transparentFailureCanFailover(replayable, emitted, preResponse bool, class string) bool {
+	if emitted {
+		return false
+	}
+	if replayable {
+		return true
+	}
+	// A non-replayable request is still safe to move to another account when
+	// transport failed before the host returned a response or opened a stream.
+	// Once a stream exists, a read failure may follow a partially executed
+	// request, so only replayable bodies may be retried.
+	if !preResponse {
+		return false
+	}
+	switch class {
+	case ClassProxyError, ClassProbeError:
+		return true
+	default:
+		return false
+	}
 }
 
 func shouldRotateTransparentFailure(hasAlternative bool, class string) bool {

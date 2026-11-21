@@ -122,6 +122,14 @@ func (s *Service) readModelStreamErrorBody(ctx context.Context, streamID string)
 	return body
 }
 
+func classifyTransparentTransportFailure(errValue error) (string, string) {
+	class, reason := classifyTransportFailure(errValue)
+	if (class == ClassProbeError || class == ClassProxyError) && reason == "reason.detail.probe_transport_error" {
+		reason = "reason.detail.upstream_network_error"
+	}
+	return class, reason
+}
+
 func classifyTransportFailure(errValue error) (string, string) {
 	if errValue == nil {
 		return ClassProbeError, "reason.detail.probe_transport_error"

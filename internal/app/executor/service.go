@@ -49,6 +49,9 @@ type Result struct {
 	Headers   http.Header
 	Chunks    []pluginapi.ExecutorStreamChunk
 	Available bool
+	// PreResponse marks a transport failure before any upstream response was
+	// returned, which makes failover safe even for a non-replayable body.
+	PreResponse bool
 }
 
 type StreamAttempt struct {
@@ -59,6 +62,9 @@ type StreamAttempt struct {
 	Emitted   bool
 	Available bool
 	Aborted   bool
+	// PreResponse marks a transport failure before the model stream was opened.
+	// Read failures after this point require a replayable request to fail over.
+	PreResponse bool
 }
 
 type Facts struct {

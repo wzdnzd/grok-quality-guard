@@ -46,7 +46,7 @@ func (s *Service) transparentExecute(ctx context.Context, req Request) (Result, 
 	if errSelection != nil {
 		return Result{}, errSelection
 	}
-	maxAttempts := transparentMaxAttempts(policy, replayable)
+	maxAttempts := transparentMaxAttempts(policy)
 	attempts := 0
 	last := Result{}
 candidateLoop:
@@ -93,7 +93,8 @@ candidateLoop:
 			}
 			_ = s.recordAttemptError(account.ID, class, errAttempt)
 			selection.MarkFailure(account.ID, source, class)
-			if replayable && attempts < maxAttempts && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
+			failureRetryable := attempts < maxAttempts && transparentFailureCanFailover(replayable, false, result.PreResponse, class)
+			if failureRetryable && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
 				didRotate, errRotate := s.rotateAfterFailure(ctx, account.ID, class)
 				if errRotate == nil && didRotate {
 					rotated = true
@@ -102,6 +103,9 @@ candidateLoop:
 			}
 			s.applyTransparentFailureVerdict(ctx, account.ID, verdict, class, errAttempt, req.HostCallbackID)
 			attempt.Release()
+			if !failureRetryable {
+				break candidateLoop
+			}
 			break
 		}
 	}
@@ -129,7 +133,7 @@ func (s *Service) transparentExecuteBufferedStream(ctx context.Context, req Requ
 	if errSelection != nil {
 		return Result{}, errSelection
 	}
-	maxAttempts := transparentMaxAttempts(policy, replayable)
+	maxAttempts := transparentMaxAttempts(policy)
 	attempts := 0
 	last := Result{}
 candidateLoop:
@@ -176,7 +180,8 @@ candidateLoop:
 			}
 			_ = s.recordAttemptError(account.ID, class, errAttempt)
 			selection.MarkFailure(account.ID, source, class)
-			if replayable && attempts < maxAttempts && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
+			failureRetryable := attempts < maxAttempts && transparentFailureCanFailover(replayable, false, result.PreResponse, class)
+			if failureRetryable && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
 				didRotate, errRotate := s.rotateAfterFailure(ctx, account.ID, class)
 				if errRotate == nil && didRotate {
 					rotated = true
@@ -185,6 +190,9 @@ candidateLoop:
 			}
 			s.applyTransparentFailureVerdict(ctx, account.ID, verdict, class, errAttempt, req.HostCallbackID)
 			attempt.Release()
+			if !failureRetryable {
+				break candidateLoop
+			}
 			break
 		}
 	}
@@ -205,8 +213,8 @@ func (s *Service) executeTransparentOnce(ctx context.Context, execution pluginap
 		if ctx.Err() != nil {
 			return Result{}, QualityVerdict{}, errTransparentAttemptAborted
 		}
-		class, reason := classifyTransportFailure(errExecute)
-		return Result{}, QualityVerdict{Class: class, Reason: reason}, errExecute
+		class, reason := classifyTransparentTransportFailure(errExecute)
+		return Result{PreResponse: true}, QualityVerdict{Class: class, Reason: reason}, errExecute
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		class, reason := classifyUpstreamStatus(response.StatusCode, response.Body)
@@ -237,8 +245,8 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 		if ctx.Err() != nil {
 			return Result{}, QualityVerdict{}, errTransparentAttemptAborted
 		}
-		class, reason := classifyTransportFailure(errExecute)
-		return Result{}, QualityVerdict{Class: class, Reason: reason}, errExecute
+		class, reason := classifyTransparentTransportFailure(errExecute)
+		return Result{PreResponse: true}, QualityVerdict{Class: class, Reason: reason}, errExecute
 	}
 	var reader *modelStreamReader
 	defer func() {
@@ -270,7 +278,7 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 			if ctx.Err() != nil {
 				return Result{}, QualityVerdict{}, errTransparentAttemptAborted
 			}
-			class, reason := classifyTransportFailure(errRead)
+			class, reason := classifyTransparentTransportFailure(errRead)
 			return Result{}, QualityVerdict{Class: class, Reason: reason}, errRead
 		}
 		if len(read.Payload) > 0 {
@@ -289,7 +297,7 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 				return Result{}, QualityVerdict{}, errTransparentAttemptAborted
 			}
 			errRead := fmt.Errorf("%s", read.Error)
-			class, reason := classifyTransportFailure(errRead)
+			class, reason := classifyTransparentTransportFailure(errRead)
 			return Result{}, QualityVerdict{Class: class, Reason: reason}, errRead
 		}
 		if read.Done {
@@ -344,7 +352,7 @@ func (s *Service) runTransparentStreamBridge(ctx context.Context, req Request, s
 		s.closePluginErrorStream(streamID, locale, "quality_degraded", http.StatusServiceUnavailable)
 		return
 	}
-	maxAttempts := transparentMaxAttempts(policy, replayable)
+	maxAttempts := transparentMaxAttempts(policy)
 	attempts := 0
 	last := StreamAttempt{}
 candidateLoop:
@@ -413,7 +421,8 @@ candidateLoop:
 			}
 			_ = s.recordAttemptError(account.ID, class, outcome.Err)
 			selection.MarkFailure(account.ID, source, class)
-			if replayable && attempts < maxAttempts && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
+			failureRetryable := attempts < maxAttempts && transparentFailureCanFailover(replayable, outcome.Emitted, outcome.PreResponse, class)
+			if failureRetryable && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
 				didRotate, errRotate := s.rotateAfterFailure(ctx, account.ID, class)
 				if errRotate == nil && didRotate {
 					rotated = true
@@ -422,6 +431,9 @@ candidateLoop:
 			}
 			s.applyTransparentFailureVerdict(ctx, account.ID, outcome.Verdict, class, outcome.Err, req.HostCallbackID)
 			attempt.Release()
+			if !failureRetryable {
+				break candidateLoop
+			}
 			break
 		}
 	}
@@ -446,8 +458,8 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 		if ctx.Err() != nil {
 			return StreamAttempt{Err: ctx.Err(), Aborted: true}
 		}
-		class, reason := classifyTransportFailure(errExecute)
-		return StreamAttempt{Class: class, Verdict: QualityVerdict{Class: class, Reason: reason}, Err: errExecute}
+		class, reason := classifyTransparentTransportFailure(errExecute)
+		return StreamAttempt{Class: class, Verdict: QualityVerdict{Class: class, Reason: reason}, Err: errExecute, PreResponse: true}
 	}
 	attemptCtx, cancelAttempt := context.WithCancel(ctx)
 	if stream.StatusCode < 200 || stream.StatusCode >= 300 {
@@ -591,7 +603,7 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 				return finish()
 			}
 			if event.Err != nil {
-				class, reason := classifyTransportFailure(event.Err)
+				class, reason := classifyTransparentTransportFailure(event.Err)
 				verdict := QualityVerdict{Class: class, Reason: reason}
 				if emitted {
 					return StreamAttempt{Class: class, Verdict: verdict, Err: event.Err, Emitted: true}
@@ -622,7 +634,7 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 			}
 			if event.Response.Error != "" {
 				errRead := fmt.Errorf("%s", event.Response.Error)
-				class, reason := classifyTransportFailure(errRead)
+				class, reason := classifyTransparentTransportFailure(errRead)
 				verdict := QualityVerdict{Class: class, Reason: reason}
 				if emitted {
 					return StreamAttempt{Class: class, Verdict: verdict, Err: errRead, Emitted: true}

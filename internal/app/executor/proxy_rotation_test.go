@@ -1,6 +1,9 @@
 package executor
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestProxyFailureReachedRotationThreshold(t *testing.T) {
 	cases := []struct {
@@ -37,5 +40,45 @@ func TestTransparentProxyFailurePrefersAccountSwitch(t *testing.T) {
 	}
 	if !shouldRotateTransparentFailure(true, ClassBufferedBurst) {
 		t.Fatal("quality failure rotation behavior changed")
+	}
+}
+
+func TestTransparentFailureCanFailoverByStage(t *testing.T) {
+	cases := []struct {
+		name        string
+		replayable  bool
+		emitted     bool
+		preResponse bool
+		class       string
+		want        bool
+	}{
+		{name: "replayable quality failure", replayable: true, class: ClassMissingThinking, want: true},
+		{name: "unsafe pre-response probe error", preResponse: true, class: ClassProbeError, want: true},
+		{name: "unsafe pre-response proxy error", preResponse: true, class: ClassProxyError, want: true},
+		{name: "unsafe post-open probe error", class: ClassProbeError, want: false},
+		{name: "non-transport pre-response failure", preResponse: true, class: ClassMissingThinking, want: false},
+		{name: "already emitted", replayable: true, emitted: true, preResponse: true, class: ClassProbeError, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := transparentFailureCanFailover(tc.replayable, tc.emitted, tc.preResponse, tc.class); got != tc.want {
+				t.Fatalf("transparentFailureCanFailover(...) = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTransparentTransportFailureUsesNetworkReason(t *testing.T) {
+	for _, message := range []string{
+		"net/http: TLS handshake timeout",
+		"proxyconnect tcp: dial tcp 127.0.0.1:2260: connect: connection refused",
+	} {
+		class, reason := classifyTransparentTransportFailure(errors.New(message))
+		if class != ClassProbeError && class != ClassProxyError {
+			t.Fatalf("%q classified as %q", message, class)
+		}
+		if reason != "reason.detail.upstream_network_error" {
+			t.Fatalf("%q reason = %q, want upstream_network_error", message, reason)
+		}
 	}
 }

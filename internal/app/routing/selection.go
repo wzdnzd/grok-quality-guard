@@ -446,8 +446,14 @@ func (selection *transparentSelection) MarkFailure(authID, _ string, class strin
 
 func isTransparentSelectionHardFailure(class string) bool {
 	switch class {
-	case "", ClassIgnored, ClassRateLimited, ClassProbeError, ClassProxyError:
+	case "", ClassIgnored, ClassRateLimited:
 		return false
+	case ClassProbeError, ClassProxyError:
+		// Transport/proxy failures invalidate the sticky session binding so the
+		// next request can move to another account instead of repeatedly
+		// selecting the same unreachable auth. Rate limits remain sticky because
+		// they can be a short-lived per-model condition.
+		return true
 	default:
 		return true
 	}

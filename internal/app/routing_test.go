@@ -307,6 +307,36 @@ func TestTransparentSelectionConcurrentFirstSessionRequestsShareAuth(t *testing.
 	}
 }
 
+func TestTransportFailuresInvalidateSessionAffinity(t *testing.T) {
+	for _, class := range []string{qualitypkg.ClassProxyError, qualitypkg.ClassProbeError} {
+		t.Run(class, func(t *testing.T) {
+			entries := manyGrokAuths(t, 2)
+			host := newMockHostCall(entries, selectionAuthRaw(t, entries))
+			plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+				cfg.TransparentGuard = true
+				cfg.Routing.Strategy.Selection = "round_robin"
+				cfg.Routing.Strategy.PreferLastSuccess = false
+				cfg.Routing.Affinity.Enabled = true
+			})
+			setSelectionStates(t, plugin, map[string]string{"auth-01": appstate.StateHealthy, "auth-02": appstate.StateHealthy})
+
+			selection, attempt := nextSelectionAttempt(t, plugin, "session-transport-failure")
+			selection.MarkSuccess(attempt.Account.ID, attempt.Source)
+			request := selectionRequestWithSession("session-transport-failure")
+			sessionKey := plugin.selectionSessionKey(request, request.OriginalRequest, request.SourceFormat)
+			if bound, ok := plugin.routingSvc.Runtime().LookupBinding(sessionKey, time.Now().UTC()); !ok || bound != attempt.Account.ID {
+				t.Fatalf("session binding = %q, %v, want %s", bound, ok, attempt.Account.ID)
+			}
+
+			selection.MarkFailure(attempt.Account.ID, attempt.Source, class)
+			if bound, ok := plugin.routingSvc.Runtime().LookupBinding(sessionKey, time.Now().UTC()); ok {
+				t.Fatalf("%s failure kept sticky session auth %q", class, bound)
+			}
+			attempt.Release()
+		})
+	}
+}
+
 func TestUnknownToHealthyMovesAuthToHealthyLayerWithoutFullRebuild(t *testing.T) {
 	entries := manyGrokAuths(t, 2)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
