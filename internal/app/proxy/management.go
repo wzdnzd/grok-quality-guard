@@ -944,7 +944,7 @@ func (s *Service) actionProxyBindingsList(ctx context.Context, params map[string
 	}
 	items := make([]map[string]any, len(rows))
 	for i, row := range rows {
-		items[i] = proxyRowView(row)
+		items[i] = s.proxyRowView(row)
 	}
 	return map[string]any{"items": items, "total": total, "page": page, "page_size": size, "binding_counts": bindingCounts, "binding_total": bindingTotal, "binding_version": bindingVersion}, 200, nil
 }
@@ -1662,6 +1662,12 @@ func (s *Service) walkProxyCatalogWithVersionContext(ctx context.Context, visit 
 		}
 	}
 	return len(accounts), version, nil
+}
+
+func (s *Service) proxyRowView(row proxyCatalogRow) map[string]any {
+	view := proxyRowView(row)
+	view["proxy_source_name"], _ = s.proxySourceInfo(row.State.SourceID)
+	return view
 }
 
 func proxyRowView(row proxyCatalogRow) map[string]any {

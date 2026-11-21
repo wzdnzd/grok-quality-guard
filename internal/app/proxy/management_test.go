@@ -579,6 +579,9 @@ func TestProxyBindingsListConfirmsVisibleRuntimeBinding(t *testing.T) {
 	}
 	environment := newRuntimeManagedRecoveryEnvironment(t, proxyURLHash(proxyURL))
 	environment.raw = map[string]json.RawMessage{"proxy_url": raw}
+	environment.store.UpdateStateForTest(func(state *appstate.State) {
+		state.Proxy.Nodes = []coreproxy.Node{{ID: "node-1", Name: "CPA", Enabled: true}}
+	})
 	service := NewService(environment)
 
 	result, status, errList := service.actionProxyBindingsList(context.Background(), map[string]any{"page_size": 10})
@@ -592,6 +595,9 @@ func TestProxyBindingsListConfirmsVisibleRuntimeBinding(t *testing.T) {
 	items, ok := data["items"].([]map[string]any)
 	if !ok || len(items) != 1 || items[0]["proxy_status"] != "bound" {
 		t.Fatalf("bindings list items = %#v", data["items"])
+	}
+	if got := items[0]["proxy_source_name"]; got != "CPA" {
+		t.Fatalf("binding source name = %v, want CPA", got)
 	}
 	counts, ok := data["binding_counts"].(map[string]int)
 	if !ok || counts["bound"] != 1 || counts["checking"] != 0 {

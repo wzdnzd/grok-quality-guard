@@ -1215,6 +1215,18 @@ test('Resin source editor uses the shared template lifecycle and reserved accoun
   assert.equal(input.placeholders.some((item) => item.name === 'account'), false);
 });
 
+test('Lease rows use binding source names before the source list loads', () => {
+  const { dashboard: ui } = harness();
+  ui.state.proxySources = [];
+  const row = ui.leaseRow({
+    auth_id: 'auth-1', auth_id_display: 'auth-1', display: 'a***@example.com', display_full: '[EMAIL]',
+    proxy: 'socks5h://us***r:******@resin:2260', proxy_status: 'bound',
+    proxy_source_id: 'resin-5a1f576f27fb4f601a90ee44', proxy_source_kind: 'resin', proxy_source_name: 'CPA'
+  });
+  assert.match(row, /Resin · CPA/);
+  assert.doesNotMatch(row, /resin-5a1f576f27fb4f601a90ee44/);
+});
+
 test('Lease endpoints stay masked until the eye reveals the full endpoint', async () => {
   const { dashboard: ui, mock } = harness();
   ui.state.proxy = {};
@@ -1522,16 +1534,19 @@ test('A late task-center detail response cannot replace a newer selection', asyn
   await first;
   assert.equal(ui.state.taskCenterDetail.task.task_id, 'task-2');
 });
-test('Checkbox controls reserve a label line and retry fields share one row', () => {
-  assert.match(html, /\.field>\.check-row:first-child\s*\{\s*margin-top: 20px;/);
+test('Labeled checkbox controls align with neighboring fields', () => {
+  assert.match(html, /<div class="field score-toggle"><label for="p_scoring_enabled">ui\.score_toggle_label<\/label>\s*<label class="check-row"><input id="p_scoring_enabled" type="checkbox"><span>ui\.enable_health_scoring<\/span><\/label>\s*<span class="hint">ui\.score_enabled_hint<\/span><\/div>/);
+  assert.doesNotMatch(html, /check-card compact score-toggle/);
+  assert.doesNotMatch(html, /check-card\.compact/);
+  assert.match(html, /\.field>\.field-error\s*\{\s*color: var\(--bad\);/);
   assert.match(html, /\.settings-group \.retry-grid\s*\{\s*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
   assert.match(html, /class="field-grid retry-grid"/);
-  assert.match(html, /ui.wait_time_after_the_first_failure/);
-  assert.match(html, /ui.longest_backoff_wait/);
+  assert.match(html, /ui\.wait_time_after_the_first_failure/);
+  assert.match(html, /ui\.longest_backoff_wait/);
 });
 
-test('Task history checkbox keeps its hint below the control and matches field height', () => {
-  assert.match(html, /<div class="field task-history-field">\s*<label class="check-row"><input id="p_task_history_enabled" type="checkbox"><span>ui.save_task_history<\/span><\/label>\s*<span class="hint">ui.stop_saving_new_task_records_when_disabled<\/span>/);
+test('Task history checkbox has a label above its control and a hint below', () => {
+  assert.match(html, /<div class="field task-history-field">\s*<label for="p_task_history_enabled">ui\.task_history_toggle_label<\/label>\s*<label class="check-row"><input id="p_task_history_enabled" type="checkbox"><span>ui\.save_task_history<\/span><\/label>\s*<span class="hint">ui\.stop_saving_new_task_records_when_disabled<\/span>/);
   assert.match(html, /\.policy-group-task-history \.field > \.check-row,\s*\.policy-group-task-history \.field > input\s*\{\s*height: 33px;\s*min-height: 33px;/);
   assert.doesNotMatch(html, /task-history-switch/);
 });
@@ -1545,7 +1560,7 @@ test('Overview cards pair into equal-height rows', () => {
 });
 
 test('Policy settings use a compact grouped grid with responsive density', () => {
-  assert.match(html, /<form id="policyForm" class="settings-layout policy-settings-form">/);
+  assert.match(html, /<form id="policyForm" class="settings-layout policy-settings-form" novalidate>/);
   assert.match(html, /<div class="policy-settings-grid">/);
   for (const group of ['mode', 'task-history', 'routing', 'scoring', 'quality', 'probe']) {
     assert.match(html, new RegExp('class="policy-group[^"]*policy-group-' + group + '(?:[ "])'));
@@ -1562,7 +1577,7 @@ test('Policy settings use a compact grouped grid with responsive density', () =>
   assert.match(html, /\.policy-group-scoring\s*\{\s*grid-column: 1 \/ -1;/);
   assert.match(html, /\.policy-group-scoring \.field-grid\s*\{\s*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);/);
   assert.match(html, /\.policy-group-scoring \.field\.score-metric,\s*\.policy-group-scoring \.field\.score-refresh,\s*\.policy-group-scoring \.field\.score-guidance\s*\{\s*grid-column: span 2;/);
-  assert.match(html, /<label class="check-card compact score-toggle"><input id="p_scoring_enabled"/);
+  assert.match(html, /<div class="field score-toggle"><label for="p_scoring_enabled">ui\.score_toggle_label<\/label>/);
   assert.match(html, /\.policy-group-quality \.check-card\s*\{\s*grid-column: span 2;/);
   assert.match(html, /@media \(max-width: 1180px\)\s*\{[\s\S]*?\.settings-summary-card \.summary-grid\s*\{\s*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
   assert.match(html, /@media \(max-width: 920px\)\s*\{[\s\S]*?\.policy-settings-grid\s*\{\s*grid-template-columns: 1fr;/);
@@ -1586,7 +1601,7 @@ test('Routing affinity cards share a row and parameter hints explain their effec
   assert.match(html, /ui.choose_only_healthy_unexpired_proxies/);
   assert.match(html, /:password@proxy\.example:1080/);
   assert.doesNotMatch(html, /:密码@proxy\.example:1080/);
-  assert.match(html, /\.check-card\.compact\s*\{[^}]*min-height: 33px;[^}]*margin-top: 20px;/s);
+  assert.match(html, /\.policy-group-scoring \.field\.score-toggle,\s*\.policy-group-scoring \.field\.full,\s*\.policy-group-scoring \.field\.score-bucket\s*\{\s*grid-column: span 3;/);
   assert.match(html, /id="p_probe_healthy_interval_hours" type="number" min="0" step="1"/);
   assert.match(html, /id="p_probe_healthy_interval_hours"[\s\S]*ui\.hours_zero_disables_active_healthy_probes/);
   assert.match(html, /id="p_probe_scan_interval"/);
@@ -1626,6 +1641,12 @@ test('Routing scoring controls expose dynamic buckets, weights, and request-driv
   assert.match(html, /ui\.score_min_interval_hint/);
   assert.match(html, /ui\.score_refresh_hint/);
   assert.match(html, /ui\.score_drift_hint/);
+  assert.match(html, /ui\.score_toggle_label/);
+  assert.match(html, /ui\.enable_health_scoring/);
+  assert.match(html, /ui\.score_min_interval_invalid/);
+  assert.match(html, /ui\.score_max_age_invalid/);
+  assert.match(html, /ui\.score_refresh_order_invalid/);
+  assert.match(html, /ui\.policy_fix_invalid_fields/);
   for (const id of ['p_score_success_weight', 'p_score_ttft_weight', 'p_score_tps_weight', 'p_score_probe_weight', 'p_score_transparent_weight', 'p_score_passive_weight']) {
     assert.match(html, new RegExp('id="' + id + '"[^>]*max="1"'));
   }
@@ -1634,6 +1655,42 @@ test('Routing scoring controls expose dynamic buckets, weights, and request-driv
   assert.match(html, /policy\.routing\.scoring\.max_accounts_per_bucket = numberValue/);
   assert.match(html, /policy\.routing\.scoring\.weights\.success = signedNumberValue/);
   assert.match(html, /policy\.routing\.scoring\.refresh\.drift_threshold = signedNumberValue/);
+  assert.match(html, /addEventListener\('input', \(event\) => \{\s*if \(event\.target\?\.id\) validatePolicyField\(event\.target\.id\);/);
+  assert.match(html, /if \(!validatePolicyForm\(\)\) \{\s*toast\(i18n\.t\('ui\.policy_fix_invalid_fields'\), 'error'\);/);
+});
+
+test('Policy fields validate inline and clear when corrected', async () => {
+  const { dashboard: ui, get } = harness();
+  const form = get('policyForm');
+  const field = new Element('score-weight-field');
+  const error = new Element('score-weight-error');
+  field.selectors.set('.field-error', error);
+  for (const [id, value] of [
+    ['p_score_success_weight', '0.5'],
+    ['p_score_ttft_weight', '0.3'],
+    ['p_score_tps_weight', '0.2']
+  ]) {
+    const input = get(id);
+    input.value = value;
+    input.setAttribute('type', 'number');
+    input.setAttribute('min', '0');
+    input.setAttribute('max', '1');
+    input.setAttribute('step', '0.01');
+    input.ancestors = new Map();
+  }
+  const success = get('p_score_success_weight');
+  success.ancestors.set('.field', field);
+
+  success.value = '1.2';
+  await form.emit('input', { target: success });
+  assert.equal(success.getAttribute('aria-invalid'), 'true');
+  assert.equal(error.hidden, false);
+  assert.match(error.textContent, /0–1/);
+
+  success.value = '0.5';
+  await form.emit('input', { target: success });
+  assert.equal(success.hasAttribute('aria-invalid'), false);
+  assert.equal(error.hidden, true);
 });
 
 test('Network and management API failures use actionable Chinese copy', async () => {

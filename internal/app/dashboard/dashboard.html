@@ -1369,7 +1369,7 @@
       grid-template-columns: repeat(6, minmax(0, 1fr));
     }
 
-    .policy-group-scoring .check-card,
+    .policy-group-scoring .field.score-toggle,
     .policy-group-scoring .field.full,
     .policy-group-scoring .field.score-bucket {
       grid-column: span 3;
@@ -1391,10 +1391,6 @@
       background: var(--surface);
     }
 
-    .policy-group .check-card.compact {
-      min-height: 33px;
-      padding: 6px 9px;
-    }
 
     .policy-actions {
       grid-column: 1 / -1;
@@ -1490,6 +1486,13 @@
       color: var(--subtle);
       font-size: 10px;
       line-height: 1.45;
+    }
+
+    .field>.field-error {
+      color: var(--bad);
+      font-size: 10px;
+      font-weight: 600;
+      line-height: 1.4;
     }
 
     .proxy-source-picker {
@@ -1613,24 +1616,6 @@
       accent-color: var(--primary);
     }
 
-    .check-card.compact {
-      align-self: start;
-      min-height: 33px;
-      margin-top: 20px;
-      padding: 6px 9px;
-      align-items: center;
-    }
-
-    .check-card.compact .check-copy {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 2px 8px;
-    }
-
-    .check-card.compact .check-desc {
-      margin-top: 0;
-    }
 
     .check-copy {
       min-width: 0;
@@ -3058,7 +3043,7 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
-      .policy-group-scoring .check-card,
+      .policy-group-scoring .field.score-toggle,
       .policy-group-scoring .field.full,
       .policy-group-scoring .field.score-bucket {
         grid-column: 1 / -1;
@@ -3129,9 +3114,6 @@
         grid-template-columns: 1fr;
       }
 
-      .check-card.compact {
-        margin-top: 0;
-      }
 
       .page {
         padding: 18px 14px 42px;
@@ -4765,7 +4747,7 @@
               </select>
             </div>
           </section>
-          <form id="policyForm" class="settings-layout policy-settings-form">
+          <form id="policyForm" class="settings-layout policy-settings-form" novalidate>
             <div class="policy-settings-grid">
               <section class="policy-group policy-group-mode">
                 <h3 class="section-title"><svg class="icon">
@@ -4817,9 +4799,9 @@
                     <use href="#i-gauge"></use>
                   </svg>ui.ewma_health_ranking</h3>
                 <div class="field-grid">
-                  <label class="check-card compact score-toggle"><input id="p_scoring_enabled" type="checkbox"><span
-                      class="check-copy"><span class="check-title">ui.ewma_health_ranking</span><span
-                        class="check-desc">ui.score_enabled_hint</span></span></label>
+                  <div class="field score-toggle"><label for="p_scoring_enabled">ui.score_toggle_label</label>
+                    <label class="check-row"><input id="p_scoring_enabled" type="checkbox"><span>ui.enable_health_scoring</span></label>
+                    <span class="hint">ui.score_enabled_hint</span></div>
                   <div class="field score-bucket"><label for="p_max_accounts_per_bucket">ui.score_bucket_limit</label><input
                       id="p_max_accounts_per_bucket" type="number" min="16" max="4096" value="512"><span
                         class="hint">ui.score_bucket_range_hint</span></div>
@@ -4858,6 +4840,7 @@
                 <h3 class="section-title"><svg class="icon"><use href="#i-terminal"></use></svg>ui.task_center_and_history</h3>
                 <div class="field-grid">
                   <div class="field task-history-field">
+                    <label for="p_task_history_enabled">ui.task_history_toggle_label</label>
                     <label class="check-row"><input id="p_task_history_enabled" type="checkbox"><span>ui.save_task_history</span></label>
                     <span class="hint">ui.stop_saving_new_task_records_when_disabled</span>
                   </div>
@@ -6872,9 +6855,9 @@
       const status = leaseStatus(account);
       const selected = state.leaseSelection.has(account.auth_id);
       const canBind = proxyCanBind();
-      const source = (state.proxySources || []).find((item) => item.id === account.proxy_source_id);
-      const sourceLabel = source ? source.name : (account.proxy_source_id || '-');
-      const sourceKind = source ? proxySourceLabel(source.kind) : (account.proxy_source_kind || '');
+      const sourceIdentity = proxySourceIdentity(account);
+      const sourceLabel = sourceIdentity.name;
+      const sourceKind = sourceIdentity.kindLabel;
       const bindingTone = status === 'bound' ? 'info' : (status === 'drifted' ? 'warn' : (status === 'reconcile_required' || status === 'read_failed' || status === 'unknown' ? 'bad' : ''));
       const bindingKey = catalogKey('proxy.binding.', status || 'unbound');
       const statusBadge = badge(hasCatalogKey(bindingKey) ? i18n.t(bindingKey) : i18n.t('proxy.binding.unbound'), bindingTone);
@@ -6894,7 +6877,8 @@
       const actions = '<span class="' + primaryClass + '">' + primaryActions + '</span>' +
         '<button class="btn btn-xs btn-ghost" type="button" data-proxy-action="' + (account.auto_bind_excluded ? 'resume-auto' : 'pause-auto') + '" data-auth="' + authID + '">' + (account.auto_bind_excluded ? esc(i18n.t('ui.resume_auto_bind')) : esc(i18n.t('ui.pause_auto_bind'))) + '</button>';
       const proxy = endpointCell(account.proxy, state.leaseProxyDetails.get(account.auth_id), 'data-lease-endpoint', authID);
-      const sourceDetail = sourceLabel !== '-' ? '<div class="subline">' + esc(sourceKind) + i18n.t('ui.meta_separator') + esc(sourceLabel) + '</div>' : '';
+      const sourceParts = [sourceKind, sourceLabel].filter(Boolean);
+      const sourceDetail = sourceParts.length ? '<div class="subline">' + esc(sourceParts.join(i18n.t('ui.meta_separator'))) + '</div>' : '';
       return '<tr><td class="select-cell"><input type="checkbox" data-lease-select="' + authID + '" aria-label="' + i18n.t('ui.select_account') + '" ' + (selected ? 'checked' : '') + '></td>' +
         '<td><div class="account-name truncate-line" title="' + esc(account.display_full || account.auth_id || account.display || account.label || i18n.t('ui.unnamed_account')) + '">' + esc(account.display || account.label || i18n.t('ui.unnamed_account')) + '</div><div class="subline truncate-line" title="' + esc(account.auth_id) + '">' + esc(account.auth_id_display || account.auth_id) + '</div>' + (account.auto_bind_excluded ? '<div class="subline">' + esc(i18n.t('ui.auto_bind_paused')) + '</div>' : '') + '</td>' +
         '<td>' + (sourceDetail || '<span class="subtle">-</span>') + '</td><td>' + proxy + '</td><td class="mono">' + (account.proxy_source_revision ? 'r' + esc(account.proxy_source_revision) : '-') + '</td><td>' + statusBadge + '</td><td class="actions-cell"><div class="actions">' + actions + '</div></td></tr>';
@@ -9578,8 +9562,199 @@
     function numberValue(id, fallback) { const parsed = Number(valueOf(id)); return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback; }
     function nonNegativeIntegerValue(id, fallback) { const text = valueOf(id); if (!text) return fallback; const parsed = Number(text); return Number.isInteger(parsed) && parsed >= 0 ? parsed : NaN; }
     function signedNumberValue(id, fallback) { const raw = valueOf(id); if (raw === '') return fallback; const parsed = Number(raw); return Number.isFinite(parsed) ? parsed : fallback; }
+    const POLICY_DURATION_FIELDS = new Set([
+      'p_session_affinity_ttl',
+      'p_score_min_interval',
+      'p_score_max_age',
+      'p_missing_cooldown',
+      'p_empty_cooldown',
+      'p_hold_timeout',
+      'p_probe_timeout',
+      'p_probe_scan_interval',
+      'p_probe_unknown_delay',
+      'p_probe_unknown_jitter',
+      'p_probe_suspect_backoff',
+      'p_probe_max_backoff'
+    ]);
+    const POLICY_DURATION_RULES = new Map([
+      ['p_session_affinity_ttl', { minSeconds: 0, maxSeconds: 604800, message: 'ui.session_ttl_invalid' }],
+      ['p_score_min_interval', { minSeconds: 10, maxSeconds: 604800, message: 'ui.score_min_interval_invalid' }],
+      ['p_score_max_age', { minSeconds: 10, maxSeconds: 604800, message: 'ui.score_max_age_invalid' }]
+    ]);
+    const POLICY_NUMBER_MESSAGES = {
+      p_max_accounts_per_bucket: 'ui.score_bucket_limit_invalid',
+      p_score_success_weight: 'ui.score_weights_invalid',
+      p_score_ttft_weight: 'ui.score_weights_invalid',
+      p_score_tps_weight: 'ui.score_weights_invalid',
+      p_score_probe_weight: 'ui.score_evidence_invalid',
+      p_score_transparent_weight: 'ui.score_evidence_invalid',
+      p_score_passive_weight: 'ui.score_evidence_invalid',
+      p_score_drift_threshold: 'ui.score_drift_invalid',
+      p_task_history_retention_days: 'ui.retention_days_range',
+      p_task_history_max_records: 'ui.history_records_range',
+      p_task_history_max_bytes_mib: 'ui.history_bytes_range',
+      p_task_history_max_items: 'ui.task_items_range',
+      p_probe_queue_size: 'ui.queue_capacity_range',
+      p_probe_healthy_interval_hours: 'ui.healthy_probe_interval_range'
+    };
+    const SCORE_METRIC_WEIGHTS = ['p_score_success_weight', 'p_score_ttft_weight', 'p_score_tps_weight'];
+    const SCORE_EVIDENCE_WEIGHTS = ['p_score_probe_weight', 'p_score_transparent_weight', 'p_score_passive_weight'];
+    const SCORE_REFRESH_FIELDS = ['p_score_min_interval', 'p_score_max_age'];
+    const SOFT_HARD_FIELDS = ['p_soft_tps', 'p_hard_tps'];
+
+    function parsePolicyDurationSeconds(text) {
+      const input = String(text || '').trim();
+      if (!input) return NaN;
+      const units = { ns: 1e-9, us: 1e-6, 'µs': 1e-6, 'μs': 1e-6, ms: 1e-3, s: 1, m: 60, h: 3600 };
+      const pattern = /([+-]?(?:\d+(?:\.\d*)?|\.\d+))(ns|us|µs|μs|ms|s|m|h)/g;
+      let total = 0;
+      let consumed = 0;
+      let match;
+      while ((match = pattern.exec(input)) !== null) {
+        if (match.index !== consumed) return NaN;
+        total += Number(match[1]) * units[match[2]];
+        consumed = pattern.lastIndex;
+      }
+      return consumed === input.length ? total : NaN;
+    }
+
+    function policyFieldOwnError(id) {
+      const field = document.getElementById(id);
+      if (!field) return '';
+      const raw = String(field.value == null ? '' : field.value).trim();
+      if (id === 'p_state_file') return raw ? '' : i18n.t('ui.state_file_required');
+      const type = String(field.getAttribute('type') || field.type || '').toLowerCase();
+      if (type === 'number') {
+        const value = Number(raw);
+        const minRaw = field.getAttribute('min');
+        const maxRaw = field.getAttribute('max');
+        const stepRaw = field.getAttribute('step');
+        const min = minRaw == null || minRaw === '' ? null : Number(minRaw);
+        const max = maxRaw == null || maxRaw === '' ? null : Number(maxRaw);
+        const integer = stepRaw == null || stepRaw === '' || Number(stepRaw) === 1;
+        const specific = POLICY_NUMBER_MESSAGES[id];
+        if (!raw || !Number.isFinite(value) || (integer && !Number.isInteger(value)) ||
+          (min != null && value < min) || (max != null && value > max)) {
+          if (specific) return i18n.t(specific);
+          if (!raw) return i18n.t('ui.policy_number_required');
+          if (!Number.isFinite(value)) return i18n.t('ui.policy_number_required');
+          if (integer && !Number.isInteger(value)) return i18n.t('ui.policy_integer_required');
+          if (min != null && max != null) return i18n.t('ui.policy_number_range', { min, max });
+          if (min != null) return i18n.t('ui.policy_number_min', { min });
+          return i18n.t('ui.policy_number_max', { max });
+        }
+      }
+      if (POLICY_DURATION_FIELDS.has(id)) {
+        const rule = POLICY_DURATION_RULES.get(id);
+        const message = rule?.message || 'ui.policy_duration_invalid';
+        if (!raw || !Number.isFinite(parsePolicyDurationSeconds(raw))) return i18n.t(message);
+        const seconds = parsePolicyDurationSeconds(raw);
+        const minSeconds = rule?.minSeconds ?? 0;
+        if (seconds <= minSeconds || (rule?.maxSeconds != null && seconds > rule.maxSeconds)) return i18n.t(message);
+      }
+      return '';
+    }
+
+    function setPolicyFieldError(id, message) {
+      const field = document.getElementById(id);
+      const container = field?.closest?.('.field');
+      if (!field || !container) return;
+      let error = container.querySelector('.field-error');
+      if (!message && !error) return;
+      if (!error) {
+        error = document.createElement('span');
+        error.className = 'field-error';
+        error.id = id + '-error';
+        error.setAttribute('role', 'alert');
+        error.setAttribute('aria-live', 'polite');
+        container.appendChild(error);
+      }
+      error.textContent = message || '';
+      error.hidden = !message;
+      if (message) {
+        field.setAttribute('aria-invalid', 'true');
+        field.setAttribute('aria-describedby', error.id);
+      } else {
+        field.removeAttribute('aria-invalid');
+        if (field.getAttribute('aria-describedby') === error.id) field.removeAttribute('aria-describedby');
+      }
+    }
+
+    function validateWeightGroup(ids, messageKey) {
+      const ownErrors = ids.map((id) => policyFieldOwnError(id));
+      ids.forEach((id, index) => setPolicyFieldError(id, ownErrors[index]));
+      if (ownErrors.some(Boolean)) return false;
+      const values = ids.map((id) => Number(String(document.getElementById(id)?.value || '').trim()));
+      if (values.reduce((sum, value) => sum + value, 0) > 0) return true;
+      ids.forEach((id) => setPolicyFieldError(id, i18n.t(messageKey)));
+      return false;
+    }
+
+    function validateSoftHardPair() {
+      const ownErrors = SOFT_HARD_FIELDS.map((id) => policyFieldOwnError(id));
+      SOFT_HARD_FIELDS.forEach((id, index) => setPolicyFieldError(id, ownErrors[index]));
+      if (ownErrors.some(Boolean)) return false;
+      const soft = Number(valueOf('p_soft_tps'));
+      const hard = Number(valueOf('p_hard_tps'));
+      if (soft < hard) return true;
+      setPolicyFieldError('p_hard_tps', i18n.t('ui.soft_tps_below_hard'));
+      return false;
+    }
+
+    function validateScoreRefreshPair() {
+      const ownErrors = SCORE_REFRESH_FIELDS.map((id) => policyFieldOwnError(id));
+      SCORE_REFRESH_FIELDS.forEach((id, index) => setPolicyFieldError(id, ownErrors[index]));
+      if (ownErrors.some(Boolean)) return false;
+      const minSeconds = parsePolicyDurationSeconds(valueOf('p_score_min_interval'));
+      const maxSeconds = parsePolicyDurationSeconds(valueOf('p_score_max_age'));
+      if (maxSeconds >= minSeconds) return true;
+      setPolicyFieldError('p_score_max_age', i18n.t('ui.score_refresh_order_invalid'));
+      return false;
+    }
+
+    function validatePolicyField(id) {
+      if (SCORE_METRIC_WEIGHTS.includes(id)) return validateWeightGroup(SCORE_METRIC_WEIGHTS, 'ui.score_weights_invalid');
+      if (SCORE_EVIDENCE_WEIGHTS.includes(id)) return validateWeightGroup(SCORE_EVIDENCE_WEIGHTS, 'ui.score_evidence_invalid');
+      if (SOFT_HARD_FIELDS.includes(id)) return validateSoftHardPair();
+      if (SCORE_REFRESH_FIELDS.includes(id)) return validateScoreRefreshPair();
+      const message = policyFieldOwnError(id);
+      setPolicyFieldError(id, message);
+      return !message;
+    }
+
+    function validatePolicyForm() {
+      let valid = true;
+      document.querySelectorAll('#policyForm input[type="number"]').forEach((field) => {
+        if (!validatePolicyField(field.id)) valid = false;
+      });
+      POLICY_DURATION_FIELDS.forEach((id) => {
+        if (!validatePolicyField(id)) valid = false;
+      });
+      if (!validatePolicyField('p_state_file')) valid = false;
+      const firstError = document.querySelector('#policyForm [aria-invalid="true"]');
+      if (firstError) {
+        valid = false;
+        firstError.focus?.();
+      }
+      return valid;
+    }
+
+    function clearPolicyValidation() {
+      const form = document.getElementById('policyForm');
+      if (!form) return;
+      form.querySelectorAll('.field-error').forEach((error) => {
+        error.textContent = '';
+        error.hidden = true;
+      });
+      form.querySelectorAll('[aria-invalid="true"]').forEach((field) => {
+        field.removeAttribute('aria-invalid');
+        field.removeAttribute('aria-describedby');
+      });
+    }
+
     function populatePolicyForm() {
       if (isFormDirty('policyForm')) return;
+      clearPolicyValidation();
       const policy = state.policy || {};
       const quality = policy.quality || {};
       const probe = policy.probe || {};
@@ -9728,6 +9903,10 @@
     }
     async function savePolicy(button) {
       const revision = formDraftRevision('policyForm');
+      if (!validatePolicyForm()) {
+        toast(i18n.t('ui.policy_fix_invalid_fields'), 'error');
+        return;
+      }
       const policy = collectPolicy();
       const nextStateFile = valueOf('p_state_file');
       if (!(policy.quality.soft_tps < policy.quality.hard_tps)) { toast(i18n.t("ui.soft_tps_below_hard"), 'error'); return; }
@@ -9758,6 +9937,7 @@
           if (moved && moved.state_file) setValue('p_state_file', moved.state_file);
         }
         await api('policy.update', { policy: policy });
+        clearPolicyValidation();
         clearFormDraft('policyForm', revision);
         document.getElementById('policyStatus').textContent = i18n.t("ui.settings_saved_hot_reload");
         toast(i18n.t("ui.settings_saved"), 'success');
@@ -10532,6 +10712,12 @@
     document.getElementById('proxySourceFilter').addEventListener('change', (event) => { state.proxySourceFilter = event.target.value; state.proxySourcePage = 1; scheduleListReload('sources'); });
     document.getElementById('proxySourceEnabledFilter').addEventListener('change', (event) => { state.proxySourceEnabledFilter = event.target.value; state.proxySourcePage = 1; scheduleListReload('sources'); });
     document.getElementById('proxySourceHealthFilter').addEventListener('change', (event) => { state.proxySourceHealthFilter = event.target.value; state.proxySourcePage = 1; scheduleListReload('sources'); });
+    document.getElementById('policyForm').addEventListener('input', (event) => {
+      if (event.target?.id) validatePolicyField(event.target.id);
+    });
+    document.getElementById('policyForm').addEventListener('change', (event) => {
+      if (event.target?.id) validatePolicyField(event.target.id);
+    });
     document.getElementById('policyForm').addEventListener('submit', (event) => {
       event.preventDefault();
       savePolicy(event.submitter || document.querySelector('#policyForm button[type="submit"]'));
