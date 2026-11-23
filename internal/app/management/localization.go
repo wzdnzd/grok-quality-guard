@@ -52,6 +52,22 @@ func localizeEvent(locale string, event state.Event) state.Event {
 		event.Detail = i18n.T(locale, event.DetailKey, localizeEventArgs(locale, event.DetailArgs))
 		return event
 	}
+	rawDetail := strings.TrimSpace(event.Detail)
+	if event.Action == "internal_error" {
+		// Internal error details are sanitized when recorded. Keep free-form
+		// diagnostics out of the localization pass, which drops unknown text.
+		if rawDetail == "" || rawDetail == event.Action {
+			event.Detail = i18n.T(locale, "event.detail.internal_error", nil)
+			return event
+		}
+		if i18n.Has(locale, rawDetail) || responseLocalizationKey(rawDetail) != "" || i18n.TranslateSource(locale, rawDetail) != rawDetail {
+			event.Detail = localizeDetailText(locale, rawDetail, "")
+			return event
+		}
+		event.DetailRaw = rawDetail
+		event.Detail = i18n.T(locale, "event.detail.internal_error", nil)
+		return event
+	}
 	event.Detail = localizeDetailText(locale, event.Detail, "event.detail.generic_error")
 	return event
 }

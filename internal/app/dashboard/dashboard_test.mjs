@@ -2325,6 +2325,68 @@ test('English proxy editor surfaces do not leak Simplified Chinese copy', async 
   await check('import', () => ui.openProxyImportEditor());
   assert.deepEqual(failures, []);
 });
+test('Internal error events show the sanitized diagnostic', () => {
+  const { dashboard: ui, get } = harness();
+  const diagnostic = 'read tcp 10.0.0.5:443: i/o timeout';
+  ui.state.events = [{
+    time: '2026-11-23T08:00:00Z',
+    auth_id: 'auth-1',
+    action: 'internal_error',
+    result: 'error',
+    detail: '发生内部错误，请查看日志',
+    detail_raw: diagnostic
+  }];
+  ui.state.eventList = { total: 1, page: 1, page_size: 50 };
+  ui.renderEvents();
+  const rendered = get('eventRows').innerHTML;
+  assert.match(rendered, /内部错误/);
+  assert.match(rendered, /event-log-link/);
+  assert.match(rendered, /event-log-tooltip/);
+  assert.match(rendered, /原始错误日志/);
+  assert.match(rendered, /i\/o timeout/);
+  assert.match(rendered, /read tcp/);
+  ui.i18n.applyLocale('en');
+  ui.state.events[0].detail = 'An internal error occurred. Check the logs';
+  ui.renderEvents();
+  assert.match(get('eventRows').innerHTML, />Check the logs</);
+  ui.i18n.applyLocale('zh-TW');
+  ui.state.events[0].detail = '發生內部錯誤，請查看記錄';
+  ui.renderEvents();
+  assert.match(get('eventRows').innerHTML, />查看記錄</);
+  ui.i18n.applyLocale('zh-CN');
+  ui.state.events[0].detail = '发生内部错误，请查看日志';
+  ui.state.eventQuery = 'i/o timeout';
+  assert.equal(ui.eventMatches(ui.state.events[0]), true);
+});
+test('Account transport errors link to filtered probe events', async () => {
+  const { dashboard: ui, get, context, mock } = harness();
+  mock('api', async () => ({}));
+  const account = {
+    auth_id: 'auth-1',
+    state: 'degraded',
+    last_reason: 'probe_error',
+    last_attempt: { class: 'probe_error', reason: 'reason.detail.probe_transport_error', source: 'probe' },
+    last_observed_at: '2026-11-23T08:00:00Z'
+  };
+  const row = ui.accountRow(account);
+  assert.match(row, /href="#events\/auth-1\/probe_errors"/);
+  assert.match(row, />探测传输错误<\/a>/);
+  const localizedRow = ui.accountRow({ ...account, last_attempt: { ...account.last_attempt, reason: '探测传输错误' } });
+  assert.match(localizedRow, /href="#events\/auth-1\/probe_errors"/);
+
+  context.window.location.hash = '#events/auth-1/probe_errors';
+  ui.applyLocationHash();
+  assert.equal(ui.state.activeTab, 'events');
+  assert.equal(ui.state.eventQuery, 'auth-1');
+  assert.equal(ui.state.eventType, 'probe_errors');
+  assert.equal(get('eventSearch').value, 'auth-1');
+  assert.equal(get('eventTypeFilter').value, 'probe_errors');
+  assert.equal(ui.eventMatches({ auth_id: 'auth-1', action: 'probe', class: 'probe_error' }), true);
+  assert.equal(ui.eventMatches({ auth_id: 'auth-1', action: 'internal_error' }), true);
+  assert.equal(ui.eventMatches({ auth_id: 'auth-1', action: 'probe', class: '' }), false);
+  assert.equal(ui.eventMatches({ auth_id: 'auth-2', action: 'probe', class: 'probe_error' }), false);
+  await Promise.resolve();
+});
 for (const { name, run } of cases) {
   await run();
   console.log('PASS ' + name);

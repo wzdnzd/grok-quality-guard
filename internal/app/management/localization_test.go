@@ -228,3 +228,62 @@ func TestLocalizeEventTranslatesGuardDisableKindAndReconcileSource(t *testing.T)
 		})
 	}
 }
+
+func TestLocalizeEventPreservesSanitizedInternalErrorDiagnostic(t *testing.T) {
+	diagnostic := "read tcp 10.0.0.5:443: i/o timeout"
+	tests := map[string]string{
+		"zh-CN": "发生内部错误，请查看日志",
+		"zh-TW": "發生內部錯誤，請查看記錄",
+		"en":    "An internal error occurred. Check the logs",
+	}
+	for locale, want := range tests {
+		t.Run(locale, func(t *testing.T) {
+			event := localizeEvent(locale, Event{
+				Action: "internal_error",
+				Result: "error",
+				Detail: diagnostic,
+			})
+			if event.Detail != want {
+				t.Fatalf("detail = %q, want %q", event.Detail, want)
+			}
+			if event.DetailRaw != diagnostic {
+				t.Fatalf("detail_raw = %q, want %q", event.DetailRaw, diagnostic)
+			}
+		})
+	}
+}
+
+func TestLocalizeEventDoesNotExposeInternalErrorMarkerAsDiagnostic(t *testing.T) {
+	for _, locale := range []string{"zh-CN", "zh-TW", "en"} {
+		t.Run(locale, func(t *testing.T) {
+			for _, marker := range []string{"internal_error", "event.detail.internal_error"} {
+				event := localizeEvent(locale, Event{
+					Action: "internal_error",
+					Result: "error",
+					Detail: marker,
+				})
+				if event.DetailRaw != "" {
+					t.Fatalf("detail_raw for marker %q = %q, want empty", marker, event.DetailRaw)
+				}
+				if event.Detail == "" || event.Detail == marker {
+					t.Fatalf("detail for marker %q was not localized: %q", marker, event.Detail)
+				}
+			}
+		})
+	}
+}
+
+func TestLocalizeEventPreservesStructuredInternalErrorDiagnostic(t *testing.T) {
+	diagnostic := "error=context deadline exceeded"
+	event := localizeEvent("en", Event{
+		Action: "internal_error",
+		Result: "error",
+		Detail: diagnostic,
+	})
+	if event.DetailRaw != diagnostic {
+		t.Fatalf("detail_raw = %q, want %q", event.DetailRaw, diagnostic)
+	}
+	if event.Detail != "An internal error occurred. Check the logs" {
+		t.Fatalf("detail = %q", event.Detail)
+	}
+}

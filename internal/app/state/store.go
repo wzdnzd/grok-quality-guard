@@ -155,6 +155,7 @@ type Event struct {
 	Action     string         `json:"action,omitempty"`
 	Result     string         `json:"result,omitempty"`
 	Detail     string         `json:"detail,omitempty"`
+	DetailRaw  string         `json:"detail_raw,omitempty"`
 	DetailKey  string         `json:"detail_key,omitempty"`
 	DetailArgs map[string]any `json:"detail_args,omitempty"`
 }
