@@ -955,3 +955,80 @@ func TestProbeBroadTransportErrorCountsAndStopsPendingLoop(t *testing.T) {
 		t.Fatal("probe transport error was not preserved in the event log")
 	}
 }
+
+func TestProbeEnablesGuardOwnedDisabledAuthBeforeRequest(t *testing.T) {
+	tests := []struct {
+		name            string
+		rawDisabled     any
+		catalogDisabled bool
+	}{
+		{name: "string bool disabled", rawDisabled: "true"},
+		{name: "catalog disabled with raw enabled", rawDisabled: false, catalogDisabled: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{
+				"disabled": test.rawDisabled,
+			})
+			entries[0].Disabled = test.catalogDisabled
+			host := newMockHostCall(entries, auths)
+			visible := strings.Repeat("reliable systems need careful design. ", 10) + "\\nQUALITY_OK"
+			host.scriptStream("auth-1",
+				streamData("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"plan carefully\"}}]}\n\n"),
+				streamData("data: {\"choices\":[{\"delta\":{\"content\":\""+visible+"\"}}]}\n\n"),
+				streamData("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"completion_tokens\":120,\"completion_tokens_details\":{\"reasoning_tokens\":1}}}\n\n"),
+				pluginapi.HostModelStreamReadResponse{Done: true},
+			)
+			plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+				cfg.Quality.SoftTPS = 1e9
+				cfg.Quality.HardTPS = 2e9
+			})
+			if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+				account := plugin.ensureStateAccount(state, "auth-1")
+				account.State = appstate.StateCooling
+				account.DisableKind = appstate.DisableKindCooldown
+				account.CooldownUntil = time.Now().UTC().Add(-time.Minute)
+				return nil
+			}); errUpdate != nil {
+				t.Fatal(errUpdate)
+			}
+			if errProbe := plugin.ProbeAccount(context.Background(), "auth-1", true, ""); errProbe != nil {
+				t.Fatal(errProbe)
+			}
+			savedRaw, okSaved := host.saves["auth-1"]
+			if !okSaved {
+				t.Fatal("probe did not save the auth before executing the model")
+			}
+			saved, errDecode := rawAuthToMap(savedRaw)
+			if errDecode != nil {
+				t.Fatal(errDecode)
+			}
+			if appauth.Disabled(saved) {
+				t.Fatal("probe did not clear the disabled flag before executing the model")
+			}
+			if len(host.modelCalls) != 1 {
+				t.Fatalf("model calls = %d, want 1", len(host.modelCalls))
+			}
+		})
+	}
+}
+
+func TestProbeDoesNotEnableExternallyDisabledAuth(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	entries[0].Disabled = true
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	if errProbe := plugin.ProbeAccount(context.Background(), "auth-1", true, ""); errProbe != nil {
+		t.Fatal(errProbe)
+	}
+	if len(host.saves) != 0 {
+		t.Fatalf("external disabled auth was saved: %#v", host.saves)
+	}
+	if len(host.modelCalls) != 0 {
+		t.Fatalf("external disabled auth reached model execution: %#v", host.modelCalls)
+	}
+	account, ok := plugin.stateAccount("auth-1")
+	if !ok || account.State != appstate.StateExternallyDisabled {
+		t.Fatalf("state = %#v, want externally disabled", account)
+	}
+}

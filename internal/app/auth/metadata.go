@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -28,10 +29,15 @@ func RawBool(raw map[string]json.RawMessage, key string) bool {
 		return false
 	}
 	var value bool
-	if err := json.Unmarshal(raw[key], &value); err != nil {
-		return false
+	if err := json.Unmarshal(raw[key], &value); err == nil {
+		return value
 	}
-	return value
+	var text string
+	if err := json.Unmarshal(raw[key], &text); err == nil {
+		parsed, errParse := strconv.ParseBool(strings.TrimSpace(text))
+		return errParse == nil && parsed
+	}
+	return false
 }
 
 func RawMap(raw map[string]json.RawMessage, key string) map[string]any {

@@ -577,10 +577,33 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 		return nil
 	}
 	stateAccount, okState := s.stateAccount(authID)
-	wasDisabled := authDisabled(raw)
-	if wasDisabled && (!okState || stateAccount.DisableKind == "") {
+	rawDisabled := authDisabled(raw)
+	catalogDisabled := account.Disabled
+	guardOwned := okState && stateAccount.DisableKind != "" && !stateAccount.PluginOnlyDisable
+
+	// The catalog can lag behind a host.auth.save that just enabled this auth.
+	// When the file is already enabled but the catalog still reports disabled,
+	// refresh before classifying the discrepancy as an external disable.
+	if catalogDisabled && !rawDisabled && !guardOwned {
+		if errRefresh := s.refreshCatalog(ctx); errRefresh != nil {
+			return fmt.Errorf("refresh auth catalog before probe: %w", errRefresh)
+		}
+		account, response, raw, errResolve = s.resolveAuth(ctx, authID)
+		if errResolve != nil {
+			return errResolve
+		}
+		stateAccount, okState = s.stateAccount(authID)
+		rawDisabled = authDisabled(raw)
+		catalogDisabled = account.Disabled
+		guardOwned = okState && stateAccount.DisableKind != "" && !stateAccount.PluginOnlyDisable
+	}
+	if rawDisabled && !guardOwned {
 		return s.setStateExternal(authID, ClassProbeError)
 	}
+	if catalogDisabled && !guardOwned {
+		return s.setStateExternal(authID, ClassProbeError)
+	}
+	wasDisabled := rawDisabled || catalogDisabled
 	if wasDisabled && (stateAccount.DisableKind == DisableKindPermanent || stateAccount.DisableKind == DisableKindCredentialInvalid) {
 		return nil
 	}

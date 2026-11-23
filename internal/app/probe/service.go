@@ -93,6 +93,7 @@ type Environment interface {
 	Policy() config.Policy
 	AccountLock(string) *sync.Mutex
 	ResolveAuth(context.Context, string) (model.Account, pluginapi.HostAuthGetResponse, map[string]json.RawMessage, error)
+	RefreshCatalog(context.Context) error
 	StateAccount(string) (appstate.AccountState, bool)
 	SaveAuth(string, json.RawMessage) (pluginapi.HostAuthSaveResponse, error)
 	SaveAuthDisabled(string, map[string]json.RawMessage, bool) error

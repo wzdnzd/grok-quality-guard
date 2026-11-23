@@ -34,6 +34,7 @@ func (s *Service) accountLock(authID string) *sync.Mutex { return s.env.AccountL
 func (s *Service) resolveAuth(ctx context.Context, authID string) (Account, pluginapi.HostAuthGetResponse, map[string]json.RawMessage, error) {
 	return s.env.ResolveAuth(ctx, authID)
 }
+func (s *Service) refreshCatalog(ctx context.Context) error        { return s.env.RefreshCatalog(ctx) }
 func (s *Service) stateAccount(authID string) (AccountState, bool) { return s.env.StateAccount(authID) }
 func (s *Service) saveAuth(name string, raw json.RawMessage) (pluginapi.HostAuthSaveResponse, error) {
 	return s.env.SaveAuth(name, raw)
