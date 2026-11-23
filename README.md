@@ -67,6 +67,7 @@ TPS 计时从发起上游模型调用前开始，而不是从首个 host stream 
 - Chat、Responses 和 Anthropic Messages 的流式与非流式响应都使用同一套内容、thinking、密文下限、TPS 和空流规则
 - 保留持续可见流误杀保护：只有可见文本持续至少 2 秒且达到最小输出时才可在 dump 窗口后放行，硬 dump 检测始终优先
 - `usage` 中的输出或 reasoning 账单不能替代真实思考证据，但短可见文本不能借输出下限绕过 `missing_thinking`
+- 推理 stub 之后一旦可见输出已经真实流式到达（可见跨度至少 100ms 且达到最小输出）仍无思考证据，立即判 `missing_thinking` 并换号；等待只保留在没有可见输出的阶段，避免每个降智账号把客户端扣满 `hold_timeout`
 
 被动审计对可确定要求推理的流式样本检查 `missing_thinking`：非流式、缺少 TTFT、生成窗口无效，或有效输出与推理账单均不足 32 token 的样本记录为 `ignored`；显式关闭推理时不推断。速度审计仍只对满足流式、TTFT、输出和生成窗口条件的样本生效。
 
@@ -255,6 +256,7 @@ plugins:
         min_passive_output_tokens: 32
         min_hold_output_tokens: 8
         hold_timeout: "30s"
+        stream_idle_timeout: "90s"
         hold_max_buffer_bytes: 4194304
         min_encrypted_bytes: 256
         encrypted_bytes_per_reasoning_token: 4
@@ -402,7 +404,7 @@ plugins:
 
 `max_accounts_per_bucket` 默认 `512`，允许 `16..4096`。该上限同时约束 `unknown` 的 ID 有序分桶；评分关闭时健康账号也按 ID 顺序使用相同桶容量。4000 个账号在默认配置下通常形成约 8 个健康评分桶，选择路径不会逐个重算所有账号。
 
-透明模式在首次向客户端 emit 前完成质量门。一旦开始 emit，插件不能回滚已经发送的内容；如果所有候选账号耗尽，默认返回 `503 quality_degraded`。可配置 `on_exhausted: fail_open` 在失败时返回最后一个已缓冲响应，但这会牺牲 fail-closed 语义。透明缓冲超过 `hold_max_buffer_bytes` 时也会 fail closed，不会把未完成质量判定的内容下发给客户端。
+透明模式在首次向客户端 emit 前完成质量门。一旦开始 emit，插件不能回滚已经发送的内容；如果所有候选账号耗尽，默认返回 `503 quality_degraded`。可配置 `on_exhausted: fail_open` 在失败时返回最后一个已缓冲响应，但这会牺牲 fail-closed 语义。透明缓冲超过 `hold_max_buffer_bytes` 时也会 fail closed，不会把未完成质量判定的内容下发给客户端。`stream_idle_timeout` 默认 `90s`，上游请求在首块到达前或流式读取中超过该时间没有新增生成输出时会终止当前尝试并更换账号重试；仅有 `response.created` 或 reasoning stub 的静默流不会永久等待，也不会在 `fail_open` 下放行空流
 
 ## 通用代理节点、模板与 Resin
 

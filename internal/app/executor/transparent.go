@@ -2,12 +2,15 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
+
+var errTransparentStreamIdleTimeout = errors.New("upstream stream idle timeout")
 
 // startTransparentStreamBridge ties the request-lifetime goroutine to the
 // plugin lifecycle so Quiesce/Shutdown can cancel and wait for it.
@@ -236,14 +239,43 @@ func (s *Service) executeTransparentOnce(ctx context.Context, execution pluginap
 	return result, verdict, fmt.Errorf("quality gate rejected response: %s", verdict.Class)
 }
 
+func (s *Service) openTransparentModelStream(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig) (pluginapi.HostModelStreamResponse, error) {
+	openCtx, cancel := context.WithTimeout(ctx, transparentStreamIdleTimeout(cfg))
+	defer cancel()
+	stream, errExecute := s.env.ExecuteModelStream(openCtx, execution, callbackID)
+	if errExecute != nil {
+		if ctx.Err() != nil {
+			return pluginapi.HostModelStreamResponse{}, ctx.Err()
+		}
+		if errors.Is(openCtx.Err(), context.DeadlineExceeded) {
+			return pluginapi.HostModelStreamResponse{}, errTransparentStreamIdleTimeout
+		}
+		return pluginapi.HostModelStreamResponse{}, errExecute
+	}
+	if ctx.Err() != nil || errors.Is(openCtx.Err(), context.DeadlineExceeded) {
+		if stream.StreamID != "" {
+			_ = s.env.CloseModelStream(stream.StreamID)
+		}
+		if ctx.Err() != nil {
+			return pluginapi.HostModelStreamResponse{}, ctx.Err()
+		}
+		return pluginapi.HostModelStreamResponse{}, errTransparentStreamIdleTimeout
+	}
+	return stream, nil
+}
+
 func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig, reasoningNeeded bool) (Result, QualityVerdict, error) {
 	// The host returns the stream only after the first chunk is readable, so the
-	// TPS clock must start before the call to include upstream TTFT.
+	// stream-open and TPS clocks must start before the call to include upstream TTFT.
 	attemptStartedAt := time.Now()
-	stream, errExecute := s.env.ExecuteModelStream(ctx, execution, callbackID)
+	stream, errExecute := s.openTransparentModelStream(ctx, execution, callbackID, cfg)
 	if errExecute != nil {
 		if ctx.Err() != nil {
 			return Result{}, QualityVerdict{}, errTransparentAttemptAborted
+		}
+		if errors.Is(errExecute, errTransparentStreamIdleTimeout) {
+			verdict := QualityVerdict{Class: ClassProbeError, Reason: "reason.detail.upstream_stream_idle_timeout"}
+			return Result{PreResponse: true}, verdict, errExecute
 		}
 		class, reason := classifyTransparentTransportFailure(errExecute)
 		return Result{PreResponse: true}, QualityVerdict{Class: class, Reason: reason}, errExecute
@@ -267,20 +299,30 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 	var bufferBytes int64
 	holdOverflow := false
 	reader = s.openModelStreamReader(ctx, stream.StreamID)
+	idleTimeout := transparentStreamIdleTimeout(cfg)
+	idleDeadline := attemptStartedAt.Add(idleTimeout)
 	for {
 		select {
 		case <-ctx.Done():
 			return Result{}, QualityVerdict{}, errTransparentAttemptAborted
 		default:
 		}
-		read, errRead := reader.Next()
+		readCtx, cancelRead := context.WithDeadline(ctx, idleDeadline)
+		read, errRead := reader.NextContext(readCtx)
+		readDeadlineErr := readCtx.Err()
+		cancelRead()
 		if errRead != nil {
 			if ctx.Err() != nil {
 				return Result{}, QualityVerdict{}, errTransparentAttemptAborted
 			}
+			if errors.Is(readDeadlineErr, context.DeadlineExceeded) {
+				verdict := QualityVerdict{Class: ClassProbeError, Reason: "reason.detail.upstream_stream_idle_timeout"}
+				return Result{}, verdict, errTransparentStreamIdleTimeout
+			}
 			class, reason := classifyTransparentTransportFailure(errRead)
 			return Result{}, QualityVerdict{Class: class, Reason: reason}, errRead
 		}
+		progressBefore := analyzer.Preview().ProgressEvents
 		if len(read.Payload) > 0 {
 			bufferBytes += int64(len(read.Payload))
 			analyzer.ObserveChunk(read.Payload)
@@ -291,6 +333,9 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 				holdOverflow = true
 				s.recordTransparentOverflow(execution.AuthID, cfg.HoldMaxBufferBytes)
 			}
+		}
+		if analyzer.Preview().ProgressEvents > progressBefore {
+			idleDeadline = time.Now().Add(idleTimeout)
 		}
 		if read.Error != "" {
 			if ctx.Err() != nil {
@@ -458,12 +503,16 @@ func transparentHoldBlocks(cfg QualityConfig, reasoningNeeded bool, verdict Qual
 
 func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig, streamID string, reasoningNeeded bool) StreamAttempt {
 	// The host returns the stream only after the first chunk is readable, so the
-	// TPS clock must start before the call to include upstream TTFT.
+	// stream-open and TPS clocks must start before the call to include upstream TTFT.
 	attemptStartedAt := time.Now()
-	stream, errExecute := s.env.ExecuteModelStream(ctx, execution, callbackID)
+	stream, errExecute := s.openTransparentModelStream(ctx, execution, callbackID, cfg)
 	if errExecute != nil {
 		if ctx.Err() != nil {
 			return StreamAttempt{Err: ctx.Err(), Aborted: true}
+		}
+		if errors.Is(errExecute, errTransparentStreamIdleTimeout) {
+			verdict := QualityVerdict{Class: ClassProbeError, Reason: "reason.detail.upstream_stream_idle_timeout"}
+			return StreamAttempt{Class: ClassProbeError, Verdict: verdict, Err: errExecute, PreResponse: true}
 		}
 		class, reason := classifyTransparentTransportFailure(errExecute)
 		return StreamAttempt{Class: class, Verdict: QualityVerdict{Class: class, Reason: reason}, Err: errExecute, PreResponse: true}
@@ -496,9 +545,17 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 			}
 		}
 	}()
+	streamClosed := false
+	closeUpstream := func() {
+		if streamClosed {
+			return
+		}
+		streamClosed = true
+		_ = s.env.CloseModelStream(stream.StreamID)
+	}
 	defer func() {
 		cancelAttempt()
-		_ = s.env.CloseModelStream(stream.StreamID)
+		closeUpstream()
 		select {
 		case <-readDone:
 		case <-time.After(modelStreamCloseGrace):
@@ -511,6 +568,18 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 	}
 	holdTimer := time.NewTimer(holdTimeout)
 	defer holdTimer.Stop()
+	streamIdleTimeout := transparentStreamIdleTimeout(cfg)
+	streamIdleTimer := time.NewTimer(time.Until(attemptStartedAt.Add(streamIdleTimeout)))
+	defer streamIdleTimer.Stop()
+	resetStreamIdle := func() {
+		if !streamIdleTimer.Stop() {
+			select {
+			case <-streamIdleTimer.C:
+			default:
+			}
+		}
+		streamIdleTimer.Reset(streamIdleTimeout)
+	}
 	holdExpired := false
 	emitted := false
 	overflowed := false
@@ -591,6 +660,14 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 					return abort(errEmit)
 				}
 			}
+		case <-streamIdleTimer.C:
+			if ctx.Err() != nil {
+				return abort(ctx.Err())
+			}
+			cancelAttempt()
+			closeUpstream()
+			verdict := QualityVerdict{Class: ClassProbeError, Reason: "reason.detail.upstream_stream_idle_timeout"}
+			return StreamAttempt{Class: ClassProbeError, Verdict: verdict, Err: errTransparentStreamIdleTimeout, Emitted: emitted}
 		case <-timerC:
 			holdExpired = true
 			preview := analyzer.Preview()
@@ -624,6 +701,7 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 				return StreamAttempt{Class: class, Verdict: verdict, Err: event.Err}
 			}
 			if len(event.Response.Payload) > 0 {
+				progressBefore := analyzer.Preview().ProgressEvents
 				payload := append([]byte(nil), event.Response.Payload...)
 				framedPayloads := outputNormalizer.Feed(payload)
 				if emitted {
@@ -641,6 +719,9 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 					}
 				}
 				analyzer.ObserveChunk(payload)
+				if analyzer.Preview().ProgressEvents > progressBefore {
+					resetStreamIdle()
+				}
 				if analyzer.Preview().Terminal {
 					return finish()
 				}

@@ -329,10 +329,12 @@ func (a *StreamAnalyzer) observeChatDelta(delta map[string]any, now time.Time) {
 	if toolCalls, ok := delta["tool_calls"].([]any); ok && len(toolCalls) > 0 {
 		a.signals.SemanticOutput = true
 		a.markFirstToken(now)
+		a.noteProgress()
 	}
 	if functionCall := delta["function_call"]; functionCall != nil {
 		a.signals.SemanticOutput = true
 		a.markFirstToken(now)
+		a.noteProgress()
 	}
 }
 
@@ -350,6 +352,7 @@ func (a *StreamAnalyzer) observeChatMessage(message map[string]any, now time.Tim
 	if toolCalls, ok := message["tool_calls"].([]any); ok && len(toolCalls) > 0 {
 		a.signals.SemanticOutput = true
 		a.markFirstToken(now)
+		a.noteProgress()
 	}
 }
 
@@ -388,6 +391,7 @@ func (a *StreamAnalyzer) observeResponses(payload map[string]any, now time.Time)
 		if strings.TrimSpace(asString(payload["delta"])) != "" {
 			a.signals.SemanticOutput = true
 			a.markFirstToken(now)
+			a.noteProgress()
 		}
 	case "response.output_item.added", "response.output_item.done":
 		a.observeResponsesItem(payload, now)
@@ -439,6 +443,7 @@ func (a *StreamAnalyzer) observeResponsesItemMap(item map[string]any, now time.T
 			a.reasoningStart = true
 			a.signals.ReasoningStarted = true
 			a.markFirstToken(now)
+			a.noteProgress()
 		}
 		if enc := asString(item["encrypted_content"]); strings.TrimSpace(enc) != "" {
 			a.addEncrypted(enc)
@@ -455,6 +460,9 @@ func (a *StreamAnalyzer) observeResponsesItemMap(item map[string]any, now time.T
 	default:
 		a.signals.SemanticOutput = true
 		a.markFirstToken(now)
+		if responsesItemHasIdentity(item) {
+			a.noteProgress()
+		}
 		return 0
 	}
 }
@@ -496,9 +504,12 @@ func (a *StreamAnalyzer) observeResponsesMessageContent(value any, now time.Time
 		case "tool_call", "function_call":
 			a.signals.SemanticOutput = true
 			a.markFirstToken(now)
+			a.noteProgress()
 		default:
 			if kind != "" {
 				a.signals.SemanticOutput = true
+				a.markFirstToken(now)
+				a.noteProgress()
 			}
 		}
 	}
@@ -515,7 +526,17 @@ func (a *StreamAnalyzer) noteAggregateVisibleText(text string, now time.Time, ki
 	if !a.visibleDelta && a.retainText {
 		a.visibleText.WriteString(text)
 	}
+	a.noteProgress()
 	return int64(utf8.RuneCountInString(text))
+}
+
+func responsesItemHasIdentity(item map[string]any) bool {
+	for _, key := range []string{"id", "call_id", "name"} {
+		if strings.TrimSpace(asString(item[key])) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *StreamAnalyzer) observeAnthropic(payload map[string]any, now time.Time) {
@@ -556,6 +577,7 @@ func (a *StreamAnalyzer) observeAnthropic(payload map[string]any, now time.Time)
 		case "tool_use", "server_tool_use":
 			a.signals.SemanticOutput = true
 			a.markFirstToken(now)
+			a.noteProgress()
 		}
 	case "content_block_delta":
 		delta, _ := payload["delta"].(map[string]any)
@@ -575,6 +597,7 @@ func (a *StreamAnalyzer) observeAnthropic(payload map[string]any, now time.Time)
 			if strings.TrimSpace(asString(delta["partial_json"])) != "" {
 				a.signals.SemanticOutput = true
 				a.markFirstToken(now)
+				a.noteProgress()
 			}
 		}
 	}
@@ -604,6 +627,7 @@ func (a *StreamAnalyzer) observeAnthropicContent(value any, now time.Time) {
 		case "tool_use", "server_tool_use":
 			a.signals.SemanticOutput = true
 			a.markFirstToken(now)
+			a.noteProgress()
 		}
 	}
 }
@@ -627,6 +651,7 @@ func (a *StreamAnalyzer) addContentParts(value any, now time.Time) {
 			case "tool_call", "function_call":
 				a.signals.SemanticOutput = true
 				a.markFirstToken(now)
+				a.noteProgress()
 			case "refusal":
 				a.addVisibleText(asString(part["text"]), now)
 				a.signals.SemanticOutput = true
@@ -644,6 +669,7 @@ func (a *StreamAnalyzer) addReasoningText(text string) {
 	a.signals.HasReasoningDelta = true
 	a.signals.ReasoningStarted = true
 	a.markFirstToken(time.Now())
+	a.noteProgress()
 }
 
 func (a *StreamAnalyzer) addVisibleText(text string, now time.Time) {
@@ -664,6 +690,7 @@ func (a *StreamAnalyzer) addVisibleText(text string, now time.Time) {
 	a.signals.VisibleRunes = maxInt64(a.signals.VisibleRunes, a.visibleRunes)
 	a.signals.VisibleTokens = (a.signals.VisibleRunes + 3) / 4
 	a.markFirstToken(now)
+	a.noteProgress()
 }
 
 func (a *StreamAnalyzer) addEncrypted(value string) {
@@ -676,6 +703,11 @@ func (a *StreamAnalyzer) addEncrypted(value string) {
 		a.encryptedBytes = size
 	}
 	a.signals.EncryptedBytes = a.encryptedBytes
+	a.noteProgress()
+}
+
+func (a *StreamAnalyzer) noteProgress() {
+	a.signals.ProgressEvents++
 }
 
 func (a *StreamAnalyzer) markFirstToken(now time.Time) {

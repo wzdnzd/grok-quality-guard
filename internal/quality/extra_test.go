@@ -111,3 +111,58 @@ func TestPassiveTPSSkipsSamplesBelowMinimumOutput(t *testing.T) {
 		t.Fatalf("large sample class = %q, want hard_tps", large.Class)
 	}
 }
+
+func TestReasoningStubSettlesMissingThinkingOnceVisibleOutputStreams(t *testing.T) {
+	streaming := Signals{
+		ReasoningStarted: true,
+		FirstVisible:     true,
+		VisibleTokens:    64,
+		VisibleSpanMS:    600,
+		VisibleChunks:    8,
+	}
+	if verdict := ClassifyQualityHold(streaming, 8); verdict.Action != QualityActionWithhold || verdict.Class != ClassMissingThinking {
+		t.Fatalf("stub stream with settled visible output = %#v, want missing_thinking withhold", verdict)
+	}
+	stubOnly := streaming
+	stubOnly.VisibleTokens = 0
+	stubOnly.VisibleSpanMS = 0
+	stubOnly.VisibleChunks = 0
+	if verdict := ClassifyQualityHold(stubOnly, 8); verdict.Action != QualityActionWait {
+		t.Fatalf("stub-only stream = %#v, want wait", verdict)
+	}
+	pending := streaming
+	pending.VisibleTokens = 3
+	pending.VisibleSpanMS = 40
+	pending.VisibleChunks = 1
+	if verdict := ClassifyQualityHold(pending, 8); verdict.Action != QualityActionWait {
+		t.Fatalf("visible output below the hold floor = %#v, want wait", verdict)
+	}
+	starting := streaming
+	starting.VisibleSpanMS = 20
+	starting.VisibleChunks = 12
+	if verdict := ClassifyQualityHold(starting, 8); verdict.Action != QualityActionWait {
+		t.Fatalf("first visible burst without a settled window = %#v, want wait", verdict)
+	}
+	withThinking := streaming
+	withThinking.HasThinking = true
+	withThinking.HasReasoningDelta = true
+	if verdict := ClassifyQualityHold(withThinking, 8); verdict.Action != QualityActionDeliver {
+		t.Fatalf("reasoning delta stream = %#v, want deliver", verdict)
+	}
+}
+
+func TestStreamProgressEventsTrackGeneratedOutputOnly(t *testing.T) {
+	analyzer := NewStreamAnalyzerWithProtocol(qualityProtocolResponses)
+	analyzer.ObserveChunk([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n"))
+	analyzer.ObserveChunk([]byte(": grok2api-reasoning-start\n\n"))
+	analyzer.ObserveChunk([]byte("data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"reasoning\",\"summary\":[]}}\n\n"))
+	if got := analyzer.Preview().ProgressEvents; got != 0 {
+		t.Fatalf("control frames advanced progress: %d", got)
+	}
+	analyzer.ObserveChunk([]byte("data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"plan\"}\n\n"))
+	analyzer.ObserveChunk([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"answer\"}\n\n"))
+	analyzer.ObserveChunk([]byte("data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"output_tokens\":10}}}\n\n"))
+	if got := analyzer.Preview().ProgressEvents; got != 2 {
+		t.Fatalf("generated output progress = %d, want 2", got)
+	}
+}

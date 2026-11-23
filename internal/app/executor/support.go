@@ -12,12 +12,21 @@ import (
 	"grok-quality-guard/internal/app/i18n"
 )
 
+const defaultTransparentStreamIdleTimeout = 90 * time.Second
+
 func transparentMaxAttempts(policy Policy) int {
 	maxAttempts := policy.Quality.MaxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = 6
 	}
 	return maxAttempts
+}
+
+func transparentStreamIdleTimeout(cfg QualityConfig) time.Duration {
+	if cfg.StreamIdleTimeout.Duration > 0 {
+		return cfg.StreamIdleTimeout.Duration
+	}
+	return defaultTransparentStreamIdleTimeout
 }
 
 func transparentFailureCanFailover(replayable, emitted, preResponse bool, class string) bool {

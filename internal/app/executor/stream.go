@@ -61,9 +61,21 @@ func (reader *modelStreamReader) Next() (pluginapi.HostModelStreamReadResponse, 
 	if reader == nil {
 		return pluginapi.HostModelStreamReadResponse{}, context.Canceled
 	}
+	return reader.NextContext(reader.ctx)
+}
+
+func (reader *modelStreamReader) NextContext(ctx context.Context) (pluginapi.HostModelStreamReadResponse, error) {
+	if reader == nil {
+		return pluginapi.HostModelStreamReadResponse{}, context.Canceled
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	select {
 	case <-reader.ctx.Done():
 		return pluginapi.HostModelStreamReadResponse{}, reader.ctx.Err()
+	case <-ctx.Done():
+		return pluginapi.HostModelStreamReadResponse{}, ctx.Err()
 	case result, ok := <-reader.events:
 		if !ok {
 			return pluginapi.HostModelStreamReadResponse{}, context.Canceled

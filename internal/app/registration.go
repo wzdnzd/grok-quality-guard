@@ -94,6 +94,7 @@ func pluginRegistrationForLocale(locale string) registration {
 				{Name: "quality.min_passive_output_tokens", Type: pluginapi.ConfigFieldTypeInteger, Default: 32, Description: configDescription(locale, "quality.min_passive_output_tokens")},
 				{Name: "quality.min_hold_output_tokens", Type: pluginapi.ConfigFieldTypeInteger, Default: 8, Description: configDescription(locale, "quality.min_hold_output_tokens")},
 				{Name: "quality.hold_timeout", Type: pluginapi.ConfigFieldTypeString, Default: "30s", Description: configDescription(locale, "quality.hold_timeout")},
+				{Name: "quality.stream_idle_timeout", Type: pluginapi.ConfigFieldTypeString, Default: "90s", Description: configDescription(locale, "quality.stream_idle_timeout")},
 				{Name: "quality.hold_max_buffer_bytes", Type: pluginapi.ConfigFieldTypeInteger, Default: 4194304, Description: configDescription(locale, "quality.hold_max_buffer_bytes")},
 				{Name: "quality.min_encrypted_bytes", Type: pluginapi.ConfigFieldTypeInteger, Default: 256, Description: configDescription(locale, "quality.min_encrypted_bytes")},
 				{Name: "quality.encrypted_bytes_per_reasoning_token", Type: pluginapi.ConfigFieldTypeInteger, Default: 4, Description: configDescription(locale, "quality.encrypted_bytes_per_reasoning_token")},

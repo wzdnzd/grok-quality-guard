@@ -107,6 +107,19 @@ func qualityFastFlush(sig Signals, limitMS int64) bool {
 	return sig.VisibleSpanMS >= 0 && sig.VisibleSpanMS < limitMS
 }
 
+// qualityReasoningWaitSettled reports that waiting for reasoning evidence can
+// no longer change the verdict. A healthy reasoning stream emits its evidence
+// before the visible answer, so a visible window that has already streamed
+// without any evidence is a missing-thinking stream. Waiting past that point
+// only blocks the client for the remaining hold timeout and reaches the same
+// verdict, so the attempt can fail over early instead.
+func qualityReasoningWaitSettled(sig Signals, minOutput int64) bool {
+	if sig.HasThinking || !sig.FirstVisible {
+		return false
+	}
+	return sig.VisibleTokens >= minOutput && sig.VisibleSpanMS >= 100
+}
+
 func qualityIsBurstDump(sig Signals, minOutput int64) bool {
 	if sig.HasReasoningDelta {
 		return false
@@ -203,7 +216,7 @@ func ClassifyQualityHold(sig Signals, minOutput int64) QualityVerdict {
 	}
 	output := qualityThinkingOutput(sig)
 	enough := output >= minOutput
-	if sig.ReasoningStarted && !sig.Terminal && !sig.HoldExpired {
+	if sig.ReasoningStarted && !sig.Terminal && !sig.HoldExpired && !qualityReasoningWaitSettled(sig, minOutput) {
 		return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.waiting_for_reasoning_evidence", Signals: sig}
 	}
 	if sig.Terminal {

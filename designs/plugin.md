@@ -119,6 +119,7 @@ TPS = outputTokens * 1000 / generationWindow
 | `min_passive_output_tokens` | 32 | 被动速度审计最小输出 |
 | `min_hold_output_tokens` | 8 | 透明流式 hold 最小可见输出 |
 | `hold_timeout` | 30s | 流式扣留最长时间 |
+| `stream_idle_timeout` | 90s | 单次上游请求等待首块或流式读取期间无新增生成输出的终止时间 |
 | `hold_max_buffer_bytes` | 4 MiB | 扣留的最大缓冲 |
 | `max_attempts` | 6 | 透明模式总上游尝试次数 |
 | `on_exhausted` | `fail_closed` | 所有候选异常后的行为 |
@@ -363,6 +364,8 @@ probe scheduler
 - 只有不足下限的 encrypted stub
 
 `usage` 中的输出或 reasoning 账单不能替代真实思考证据，但短可见文本不能借输出下限绕过 `missing_thinking`
+
+`ReasoningStarted`（reasoning item 或 timing stub）只延迟判定到可见输出出现之前。一旦可见输出已经真实流式到达（可见跨度至少 100ms 且达到 `min_hold_output_tokens`）而仍无思考证据，`missing_thinking` 立即成立，不再等满 `hold_timeout`：等待并不会让证据出现得更早，只会让客户端在每次换号前空等一个完整 hold 窗口。尚未出现可见输出时仍保持 `wait`，因为模型可能还在思考。
 
 推理能力判断以内置已知能力表和 Grok 4+ 版本回退为主，避免模型更新后质量门失效；`quality.non_reasoning_models` 优先于内置判断并可声明额外非推理模型；未知非 Grok 模型不进入思考闸门
 
@@ -2092,6 +2095,7 @@ plugins:
         min_passive_output_tokens: 32
         min_hold_output_tokens: 8
         hold_timeout: "30s"
+        stream_idle_timeout: "90s"
         hold_max_buffer_bytes: 4194304
         min_encrypted_bytes: 256
         encrypted_bytes_per_reasoning_token: 4

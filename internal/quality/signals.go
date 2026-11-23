@@ -56,6 +56,7 @@ type Signals struct {
 	VisibleFlushMS    int64
 	VisibleSpanMS     int64
 	VisibleChunks     int
+	ProgressEvents    int
 	Terminal          bool
 	HoldExpired       bool
 	SemanticOutput    bool

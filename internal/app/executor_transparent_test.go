@@ -10,6 +10,7 @@ import (
 	sse "grok-quality-guard/internal/sse"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1427,5 +1428,542 @@ func TestTransparentThinkingGuardDisabledEmitsAfterUnblockedHold(t *testing.T) {
 	}
 	if detail := host.closes[streamID]; detail != nil {
 		t.Fatalf("thinking_guard=false stream closed with error: %#v", detail)
+	}
+}
+
+func TestTransparentSilentAfterResponseCreatedFailsOver(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1", streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_silent\",\"model\":\"grok-4.6\"}}\n\n"))
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.Quality.HoldTimeout = appconfig.NewDuration(20 * time.Millisecond)
+		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(80 * time.Millisecond)
+	})
+
+	innerHostCall := hostCall
+	releaseRead := make(chan struct{})
+	var readCount atomic.Int32
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostModelStreamRead && readCount.Add(1) == 2 {
+			<-releaseRead
+		}
+		return innerHostCall(method, payload)
+	}
+
+	streamID := "plugin-stream-silent-response-created"
+	done := make(chan struct{})
+	go func() {
+		plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.6", true), streamID)
+		close(done)
+	}()
+	defer func() {
+		close(releaseRead)
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+		hostCall = innerHostCall
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("silent stream after response.created did not reach the stream idle timeout")
+	}
+
+	var joined strings.Builder
+	for _, payload := range host.emitted[streamID] {
+		joined.Write(payload)
+	}
+	if !strings.Contains(joined.String(), "good answer") {
+		t.Fatalf("healthy account response was not delivered after idle failover: %s", joined.String())
+	}
+	if detail := host.closes[streamID]; detail != nil {
+		t.Fatalf("idle failover closed the client stream with error: %#v", detail)
+	}
+	if len(host.modelCalls) != 2 {
+		t.Fatalf("silent stream used %d attempts, want 2", len(host.modelCalls))
+	}
+	if host.modelCalls[0].AuthID == host.modelCalls[1].AuthID {
+		t.Fatalf("silent stream did not switch accounts: %#v", host.modelCalls)
+	}
+}
+
+func TestTransparentStubOnlyIdleTimeoutDoesNotFailOpen(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1", streamData(": grok2api-reasoning-start\n\n"))
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.Quality.HoldTimeout = appconfig.NewDuration(20 * time.Millisecond)
+		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(80 * time.Millisecond)
+		cfg.Quality.OnExhausted = "fail_open"
+	})
+
+	innerHostCall := hostCall
+	releaseRead := make(chan struct{})
+	var readCount atomic.Int32
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostModelStreamRead && readCount.Add(1) == 2 {
+			<-releaseRead
+		}
+		return innerHostCall(method, payload)
+	}
+
+	streamID := "plugin-stream-stub-only-idle"
+	done := make(chan struct{})
+	go func() {
+		plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.6", true), streamID)
+		close(done)
+	}()
+	defer func() {
+		close(releaseRead)
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+		hostCall = innerHostCall
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stub-only stream did not reach the stream idle timeout")
+	}
+
+	if len(host.emitted[streamID]) != 0 {
+		t.Fatalf("stub-only idle stream was emitted: %#v", host.emitted[streamID])
+	}
+	detail := host.closes[streamID]
+	if detail == nil || detail.Code != "quality_degraded" || detail.HTTPStatus != http.StatusServiceUnavailable {
+		t.Fatalf("stub-only idle stream did not fail closed: %#v", detail)
+	}
+}
+
+func TestTransparentStreamIdleTimeoutResetsOnProgress(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(100 * time.Millisecond)
+	})
+
+	innerHostCall := hostCall
+	var readCount atomic.Int32
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostModelStreamRead && readCount.Add(1) > 1 {
+			time.Sleep(30 * time.Millisecond)
+		}
+		return innerHostCall(method, payload)
+	}
+	defer func() { hostCall = innerHostCall }()
+
+	streamID := "plugin-stream-idle-progress"
+	plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.6", true), streamID)
+
+	var joined strings.Builder
+	for _, payload := range host.emitted[streamID] {
+		joined.Write(payload)
+	}
+	if !strings.Contains(joined.String(), "good answer") {
+		t.Fatalf("steady stream was not delivered before idle timeout: %s", joined.String())
+	}
+	if detail := host.closes[streamID]; detail != nil {
+		t.Fatalf("steady stream was closed as idle: %#v", detail)
+	}
+}
+
+func executeBufferedStreamForTest(t *testing.T, plugin *Plugin, req execapp.Request) (bool, execapp.StreamResponse, string) {
+	t.Helper()
+	encoded, errMarshal := json.Marshal(req)
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	raw, errExecute := plugin.ExecuteStream(encoded)
+	if errExecute != nil {
+		t.Fatal(errExecute)
+	}
+	var envelope struct {
+		OK     bool                   `json:"ok"`
+		Result execapp.StreamResponse `json:"result"`
+	}
+	if errUnmarshal := json.Unmarshal(raw, &envelope); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	return envelope.OK, envelope.Result, string(raw)
+}
+
+func modelCallAuthIDs(host *mockHostCall) []string {
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	ids := make([]string, len(host.modelCalls))
+	for index, call := range host.modelCalls {
+		ids[index] = call.AuthID
+	}
+	return ids
+}
+
+func waitForModelCalls(t *testing.T, host *mockHostCall, count int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		host.mu.Lock()
+		got := len(host.modelCalls)
+		host.mu.Unlock()
+		if got >= count {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d model calls: %#v", count, modelCallAuthIDs(host))
+}
+
+func TestTransparentStreamOpenIdleTimeoutFailsOverBeforeFirstChunk(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(60 * time.Millisecond)
+	})
+
+	innerHostCall := hostCall
+	releaseOpen := make(chan struct{})
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostModelExecuteStream {
+			if req, ok := payload.(hostModelExecutionRequest); ok && req.AuthID == "auth-1" {
+				<-releaseOpen
+			}
+		}
+		return innerHostCall(method, payload)
+	}
+	defer func() {
+		close(releaseOpen)
+		waitForModelCalls(t, host, 2)
+		hostCall = innerHostCall
+	}()
+
+	streamID := "plugin-stream-open-idle-failover"
+	done := make(chan struct{})
+	go func() {
+		plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.6", true), streamID)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stream open silence was not bounded by stream_idle_timeout")
+	}
+
+	host.mu.Lock()
+	emitted := append([][]byte(nil), host.emitted[streamID]...)
+	closeDetail := host.closes[streamID]
+	host.mu.Unlock()
+	var joined strings.Builder
+	for _, payload := range emitted {
+		joined.Write(payload)
+	}
+	if !strings.Contains(joined.String(), "good answer") {
+		t.Fatalf("healthy account was not delivered after stream-open timeout: %s", joined.String())
+	}
+	if closeDetail != nil {
+		t.Fatalf("stream-open timeout closed the client stream: %#v", closeDetail)
+	}
+
+	account, ok := plugin.stateAccount("auth-1")
+	if !ok || account.LastAttempt == nil || account.LastAttempt.Class != "probe_error" || account.LastAttempt.Reason != "reason.detail.upstream_stream_idle_timeout" {
+		t.Fatalf("stream-open timeout was not recorded as a provider transport failure: %#v", account.LastAttempt)
+	}
+}
+
+func TestTransparentStreamOpenIdleTimeoutDoesNotFailOpen(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(60 * time.Millisecond)
+		cfg.Quality.OnExhausted = "fail_open"
+	})
+
+	innerHostCall := hostCall
+	releaseOpen := make(chan struct{})
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostModelExecuteStream {
+			<-releaseOpen
+		}
+		return innerHostCall(method, payload)
+	}
+	defer func() {
+		close(releaseOpen)
+		waitForModelCalls(t, host, 1)
+		hostCall = innerHostCall
+	}()
+
+	streamID := "plugin-stream-open-idle-fail-closed"
+	done := make(chan struct{})
+	go func() {
+		plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.6", true), streamID)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("single silent stream did not end within stream_idle_timeout")
+	}
+
+	host.mu.Lock()
+	emitted := len(host.emitted[streamID])
+	closeDetail := host.closes[streamID]
+	host.mu.Unlock()
+	if emitted != 0 {
+		t.Fatalf("fail_open emitted empty content after stream-open timeout: %d chunks", emitted)
+	}
+	if closeDetail == nil || closeDetail.Code != "quality_degraded" || closeDetail.HTTPStatus != http.StatusServiceUnavailable {
+		t.Fatalf("stream-open timeout did not fail closed: %#v", closeDetail)
+	}
+}
+
+func TestTransparentBufferedStreamOpenIdleTimeoutFailsOver(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(60 * time.Millisecond)
+	})
+
+	innerHostCall := hostCall
+	releaseOpen := make(chan struct{})
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostModelExecuteStream {
+			if req, ok := payload.(hostModelExecutionRequest); ok && req.AuthID == "auth-1" {
+				<-releaseOpen
+			}
+		}
+		return innerHostCall(method, payload)
+	}
+	defer func() {
+		close(releaseOpen)
+		waitForModelCalls(t, host, 2)
+		hostCall = innerHostCall
+	}()
+
+	req := responsesRequestForTest("grok-4.6", true)
+	req.StreamID = ""
+	ok, result, raw := executeBufferedStreamForTest(t, plugin, req)
+	if !ok {
+		t.Fatalf("buffered stream-open timeout did not fail over: %s", raw)
+	}
+	var joined strings.Builder
+	for _, chunk := range result.Chunks {
+		joined.Write(chunk.Payload)
+	}
+	if !strings.Contains(joined.String(), "good answer") {
+		t.Fatalf("buffered stream-open timeout did not deliver the healthy account response: %s", joined.String())
+	}
+}
+
+func TestTransparentBufferedStreamReadIdleTimeoutFailsOver(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1", streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_idle\",\"model\":\"grok-4.6\"}}\n\n"))
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(60 * time.Millisecond)
+	})
+
+	innerHostCall := hostCall
+	releaseRead := make(chan struct{})
+	var readCount atomic.Int32
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostModelStreamRead && readCount.Add(1) == 2 {
+			<-releaseRead
+		}
+		return innerHostCall(method, payload)
+	}
+	defer func() {
+		close(releaseRead)
+		hostCall = innerHostCall
+	}()
+
+	req := responsesRequestForTest("grok-4.6", true)
+	req.StreamID = ""
+	ok, result, raw := executeBufferedStreamForTest(t, plugin, req)
+	if !ok {
+		t.Fatalf("buffered read idle timeout did not fail over: %s", raw)
+	}
+	var joined strings.Builder
+	for _, chunk := range result.Chunks {
+		joined.Write(chunk.Payload)
+	}
+	if !strings.Contains(joined.String(), "good answer") {
+		t.Fatalf("buffered read idle timeout did not deliver the healthy account response: %s", joined.String())
+	}
+}
+
+func TestTransparentStreamReasoningStubsDoNotResetIdleTimeout(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	stubs := make([]pluginapi.HostModelStreamReadResponse, 0, 100)
+	for index := 0; index < 100; index++ {
+		stubs = append(stubs, streamData(": grok2api-reasoning-start\n\n"))
+	}
+	host.scriptStream("auth-1", stubs...)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(60 * time.Millisecond)
+		cfg.Quality.HoldTimeout = appconfig.NewDuration(10 * time.Millisecond)
+		cfg.Quality.OnExhausted = "fail_open"
+	})
+
+	innerHostCall := hostCall
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostModelStreamRead {
+			time.Sleep(10 * time.Millisecond)
+		}
+		return innerHostCall(method, payload)
+	}
+	defer func() { hostCall = innerHostCall }()
+
+	streamID := "plugin-stream-stub-keepalive"
+	done := make(chan struct{})
+	go func() {
+		plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.6", true), streamID)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reasoning stubs kept a stalled stream alive past stream_idle_timeout")
+	}
+
+	host.mu.Lock()
+	emitted := len(host.emitted[streamID])
+	closeDetail := host.closes[streamID]
+	host.mu.Unlock()
+	if emitted != 0 {
+		t.Fatalf("reasoning stubs were emitted after idle timeout: %d chunks", emitted)
+	}
+	if closeDetail == nil || closeDetail.Code != "quality_degraded" || closeDetail.HTTPStatus != http.StatusServiceUnavailable {
+		t.Fatalf("reasoning-stub idle stream did not fail closed: %#v", closeDetail)
+	}
+}
+
+func TestTransparentBufferedUnsafeReadIdleTimeoutFailsClosed(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1", streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_idle\",\"model\":\"grok-4.6\"}}\n\n"))
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(60 * time.Millisecond)
+	})
+
+	innerHostCall := hostCall
+	releaseRead := make(chan struct{})
+	var readCount atomic.Int32
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostModelStreamRead && readCount.Add(1) == 2 {
+			<-releaseRead
+		}
+		return innerHostCall(method, payload)
+	}
+	defer func() {
+		close(releaseRead)
+		hostCall = innerHostCall
+	}()
+
+	req := responsesRequestForTest("grok-4.6", true)
+	req.StreamID = ""
+	req.OriginalRequest = []byte(`{"model":"grok-4.6","stream":true,"input":"hi","previous_response_id":"resp_1","reasoning":{"effort":"medium"}}`)
+	ok, _, raw := executeBufferedStreamForTest(t, plugin, req)
+	if ok {
+		t.Fatalf("unsafe buffered stream unexpectedly failed over after idle timeout: %s", raw)
+	}
+	if calls := modelCallAuthIDs(host); len(calls) != 1 || calls[0] != "auth-1" {
+		t.Fatalf("unsafe buffered idle timeout used %d attempts: %#v", len(calls), calls)
+	}
+}
+
+func TestTransparentDegradedVisibleStreamFailsOverBeforeHoldTimeout(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	degraded := []pluginapi.HostModelStreamReadResponse{
+		streamData(": grok2api-reasoning-start\n\n"),
+		streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_degraded\",\"model\":\"grok-4.6\"}}\n\n"),
+		streamData("data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"rs_degraded\",\"type\":\"reasoning\",\"summary\":[]}}\n\n"),
+	}
+	for index := 0; index < 8; index++ {
+		degraded = append(degraded, streamData("data: {\"type\":\"response.output_text.delta\",\"delta\":\"word \"}\n\n"))
+	}
+	// A stalled degraded account keeps sending reasoning stubs: the stream never
+	// terminates and never produces thinking evidence.
+	for index := 0; index < 2000; index++ {
+		degraded = append(degraded, streamData(": grok2api-reasoning-start\n\n"))
+	}
+	host.scriptStream("auth-1", degraded...)
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		// Both windows stay far beyond the assertion deadline: only an early
+		// missing-thinking judgment can release the client this quickly.
+		cfg.Quality.HoldTimeout = appconfig.NewDuration(30 * time.Second)
+		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(30 * time.Second)
+	})
+
+	innerHostCall := hostCall
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostModelStreamRead {
+			time.Sleep(20 * time.Millisecond)
+		}
+		return innerHostCall(method, payload)
+	}
+	defer func() { hostCall = innerHostCall }()
+
+	streamID := "plugin-stream-degraded-visible"
+	done := make(chan struct{})
+	go func() {
+		plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.6", true), streamID)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		host.mu.Lock()
+		calls := len(host.modelCalls)
+		emitted := len(host.emitted[streamID])
+		closeDetail := host.closes[streamID]
+		host.mu.Unlock()
+		t.Fatalf("degraded visible stream kept the client waiting for the hold timeout (calls=%d emitted=%d close=%#v auths=%v)", calls, emitted, closeDetail, modelCallAuthIDs(host))
+	}
+
+	host.mu.Lock()
+	emitted := append([][]byte(nil), host.emitted[streamID]...)
+	closeDetail := host.closes[streamID]
+	host.mu.Unlock()
+	var joined strings.Builder
+	for _, payload := range emitted {
+		joined.Write(payload)
+	}
+	if !strings.Contains(joined.String(), "good answer") {
+		t.Fatalf("degraded failover did not deliver the healthy account response: %s", joined.String())
+	}
+	if strings.Contains(joined.String(), "word word word") {
+		t.Fatalf("degraded content leaked to the client: %s", joined.String())
+	}
+	if closeDetail != nil {
+		t.Fatalf("degraded failover closed the client stream with error: %#v", closeDetail)
+	}
+	account, ok := plugin.stateAccount("auth-1")
+	if !ok || account.LastAttempt == nil || account.LastAttempt.Class != "missing_thinking" {
+		t.Fatalf("degraded attempt was not recorded as missing_thinking: %#v", account.LastAttempt)
 	}
 }
