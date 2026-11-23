@@ -239,9 +239,10 @@ func TestLocalizeEventPreservesSanitizedInternalErrorDiagnostic(t *testing.T) {
 	for locale, want := range tests {
 		t.Run(locale, func(t *testing.T) {
 			event := localizeEvent(locale, Event{
-				Action: "internal_error",
-				Result: "error",
-				Detail: diagnostic,
+				Action:    "internal_error",
+				Result:    "error",
+				Detail:    diagnostic,
+				DetailKey: "event.detail.internal_error",
 			})
 			if event.Detail != want {
 				t.Fatalf("detail = %q, want %q", event.Detail, want)
@@ -258,9 +259,10 @@ func TestLocalizeEventDoesNotExposeInternalErrorMarkerAsDiagnostic(t *testing.T)
 		t.Run(locale, func(t *testing.T) {
 			for _, marker := range []string{"internal_error", "event.detail.internal_error"} {
 				event := localizeEvent(locale, Event{
-					Action: "internal_error",
-					Result: "error",
-					Detail: marker,
+					Action:    "internal_error",
+					Result:    "error",
+					Detail:    marker,
+					DetailKey: "event.detail.internal_error",
 				})
 				if event.DetailRaw != "" {
 					t.Fatalf("detail_raw for marker %q = %q, want empty", marker, event.DetailRaw)
@@ -276,9 +278,10 @@ func TestLocalizeEventDoesNotExposeInternalErrorMarkerAsDiagnostic(t *testing.T)
 func TestLocalizeEventPreservesStructuredInternalErrorDiagnostic(t *testing.T) {
 	diagnostic := "error=context deadline exceeded"
 	event := localizeEvent("en", Event{
-		Action: "internal_error",
-		Result: "error",
-		Detail: diagnostic,
+		Action:    "internal_error",
+		Result:    "error",
+		Detail:    diagnostic,
+		DetailKey: "event.detail.internal_error",
 	})
 	if event.DetailRaw != diagnostic {
 		t.Fatalf("detail_raw = %q, want %q", event.DetailRaw, diagnostic)

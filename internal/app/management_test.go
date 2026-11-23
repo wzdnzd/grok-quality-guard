@@ -1087,3 +1087,54 @@ func TestManagementTaskCancelAction(t *testing.T) {
 		t.Fatalf("missing cancel status = %d body=%s", missing.StatusCode, missing.Body)
 	}
 }
+func TestEventsListReturnsSanitizedInternalErrorDiagnostic(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	diagnostic := "read tcp [IP]:443: i/o timeout Authorization: Bearer bearer-secret"
+	if errRecord := plugin.RecordInternalError("auth-1", errors.New(diagnostic)); errRecord != nil {
+		t.Fatal(errRecord)
+	}
+	stored := plugin.stateStore().EventsSnapshot()
+	if len(stored) != 1 || !strings.Contains(stored[0].Detail, "i/o timeout") {
+		t.Fatalf("stored internal error count=%d", len(stored))
+	}
+	if stored[0].DetailKey != "event.detail.internal_error" {
+		t.Fatalf("stored detail key = %q", stored[0].DetailKey)
+	}
+
+	response := actionManagementForTest(t, plugin, "events.list", map[string]any{})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("events.list status = %d body=%s", response.StatusCode, response.Body)
+	}
+	var decoded struct {
+		Data struct {
+			Items []managementapp.Event `json:"items"`
+		} `json:"data"`
+	}
+	if errUnmarshal := json.Unmarshal(response.Body, &decoded); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	var internal *managementapp.Event
+	for index := range decoded.Data.Items {
+		if decoded.Data.Items[index].Action == "internal_error" && strings.Contains(decoded.Data.Items[index].DetailRaw, "i/o timeout") {
+			internal = &decoded.Data.Items[index]
+			break
+		}
+	}
+	if internal == nil {
+		for _, item := range decoded.Data.Items {
+			t.Logf("event action=%q detail_present=%v detail_raw_present=%v detail_raw_len=%d", item.Action, item.Detail != "", item.DetailRaw != "", len(item.DetailRaw))
+		}
+		t.Fatalf("events.list did not return the internal error diagnostic")
+	}
+	if strings.Contains(internal.DetailRaw, "bearer-secret") {
+		t.Fatalf("detail_raw leaked a credential: %q", internal.DetailRaw)
+	}
+	if !strings.Contains(internal.DetailRaw, "read tcp [IP]:443: i/o timeout") {
+		t.Fatalf("detail_raw = %q", internal.DetailRaw)
+	}
+	if internal.Detail == internal.DetailRaw || !strings.Contains(internal.Detail, "请查看日志") {
+		t.Fatalf("detail = %q, detail_raw = %q", internal.Detail, internal.DetailRaw)
+	}
+}

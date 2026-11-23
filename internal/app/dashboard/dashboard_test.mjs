@@ -2353,9 +2353,12 @@ test('Internal error events show the sanitized diagnostic', () => {
   ui.renderEvents();
   const rendered = get('eventRows').innerHTML;
   assert.match(rendered, /内部错误/);
+  assert.match(rendered, /event-log-details/);
+  assert.match(rendered, /event-log-summary/);
   assert.match(rendered, /event-log-link/);
-  assert.match(rendered, /event-log-tooltip/);
+  assert.match(rendered, /event-log-diagnostic/);
   assert.match(rendered, /原始错误日志/);
+  assert.match(rendered, /title="/);
   assert.match(rendered, /i\/o timeout/);
   assert.match(rendered, /read tcp/);
   ui.i18n.applyLocale('en');

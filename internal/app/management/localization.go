@@ -48,15 +48,19 @@ func localizeTaskText(locale, text string, args map[string]any, fallbackKey, cod
 
 func localizeEvent(locale string, event state.Event) state.Event {
 	event.DetailKey = strings.TrimSpace(event.DetailKey)
-	if event.DetailKey != "" {
-		event.Detail = i18n.T(locale, event.DetailKey, localizeEventArgs(locale, event.DetailArgs))
-		return event
-	}
 	rawDetail := strings.TrimSpace(event.Detail)
 	if event.Action == "internal_error" {
-		// Internal error details are sanitized when recorded. Keep free-form
-		// diagnostics out of the localization pass, which drops unknown text.
-		if rawDetail == "" || rawDetail == event.Action {
+		// Internal errors store both the localized fallback key and the
+		// sanitized diagnostic. Preserve the diagnostic before resolving the
+		// fallback so the dashboard can expose the original error.
+		if rawDetail != "" && rawDetail != event.Action && rawDetail != "event.detail.internal_error" {
+			event.DetailRaw = rawDetail
+		}
+		if event.DetailKey != "" {
+			event.Detail = i18n.T(locale, event.DetailKey, localizeEventArgs(locale, event.DetailArgs))
+			return event
+		}
+		if rawDetail == "" {
 			event.Detail = i18n.T(locale, "event.detail.internal_error", nil)
 			return event
 		}
@@ -64,8 +68,11 @@ func localizeEvent(locale string, event state.Event) state.Event {
 			event.Detail = localizeDetailText(locale, rawDetail, "")
 			return event
 		}
-		event.DetailRaw = rawDetail
 		event.Detail = i18n.T(locale, "event.detail.internal_error", nil)
+		return event
+	}
+	if event.DetailKey != "" {
+		event.Detail = i18n.T(locale, event.DetailKey, localizeEventArgs(locale, event.DetailArgs))
 		return event
 	}
 	event.Detail = localizeDetailText(locale, event.Detail, "event.detail.generic_error")

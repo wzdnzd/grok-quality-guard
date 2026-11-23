@@ -846,73 +846,64 @@
       word-break: break-word;
     }
 
-    .event-log-link {
-      padding: 0;
-      border: 0;
-      background: transparent;
-      color: var(--info);
-      font: inherit;
-      text-decoration: underline;
-      text-decoration-thickness: 1px;
-      text-underline-offset: 2px;
+    .event-log-details {
+      display: inline;
+    }
+
+    .event-log-details[open] {
+      display: block;
+      margin-top: 5px;
+    }
+
+    .event-log-summary {
+      display: inline;
+      list-style: none;
       cursor: pointer;
     }
 
-    .event-log-link:hover,
-    .event-log-link:focus-visible {
+    .event-log-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .event-log-summary::marker {
+      content: "";
+    }
+
+    .event-log-link {
+      color: var(--info);
+      text-decoration: underline;
+      text-decoration-thickness: 1px;
+      text-underline-offset: 2px;
+    }
+
+    .event-log-summary:hover .event-log-link,
+    .event-log-summary:focus-visible .event-log-link {
       color: var(--focus);
     }
 
-    .event-log-tooltip {
-      left: 0;
-      right: auto;
-      width: min(520px, calc(100vw - 48px));
-      max-width: min(520px, calc(100vw - 48px));
-      max-height: min(280px, 50vh);
-      overflow-y: auto;
+    .event-log-diagnostic {
+      margin-top: 6px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-muted);
+      color: var(--text);
       white-space: pre-wrap;
       overflow-wrap: anywhere;
-      pointer-events: auto;
     }
 
-    .event-log-tooltip::after {
-      left: 12px;
-      right: auto;
-    }
-
-    .event-log-tooltip-label {
+    .event-log-diagnostic-label {
       display: block;
       margin-bottom: 4px;
+      color: var(--muted);
       font-weight: 600;
     }
 
-    .event-log-tooltip code {
+    .event-log-diagnostic code {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 10px;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
-    }
-
-    @media (max-width: 640px) {
-      .event-log-tooltip {
-        position: fixed;
-        left: 12px;
-        right: 12px;
-        bottom: 12px;
-        width: auto;
-        max-width: none;
-        max-height: 50vh;
-        transform: translateY(3px);
-      }
-
-      .action-tooltip-wrap:hover .event-log-tooltip,
-      .action-tooltip-wrap:focus-within .event-log-tooltip {
-        transform: translateY(0);
-      }
-
-      .event-log-tooltip::after {
-        display: none;
-      }
     }
 
     .toolbar {
@@ -9701,9 +9692,9 @@
       const linkLower = linkLabel.toLocaleLowerCase();
       const linkIndex = detailLower.indexOf(linkLower);
       const linkText = linkIndex < 0 ? linkLabel : detail.slice(linkIndex, linkIndex + linkLabel.length);
-      const link = '<span class="action-tooltip-wrap event-log-anchor"><button type="button" class="event-log-link">' + esc(linkText) + '</button><span class="action-tooltip event-log-tooltip" role="tooltip"><span class="event-log-tooltip-label">' + esc(i18n.t('ui.event_diagnostic')) + '</span><code>' + esc(diagnostic) + '</code></span></span>';
-      if (linkIndex < 0) return esc(detail) + ' ' + link;
-      return esc(detail.slice(0, linkIndex)) + link + esc(detail.slice(linkIndex + linkLabel.length));
+      const before = linkIndex < 0 ? detail + ' ' : detail.slice(0, linkIndex);
+      const after = linkIndex < 0 ? '' : detail.slice(linkIndex + linkLabel.length);
+      return '<details class="event-log-details"><summary class="event-log-summary" title="' + esc(diagnostic) + '">' + esc(before) + '<span class="event-log-link">' + esc(linkText) + '</span>' + esc(after) + '</summary><div class="event-log-diagnostic"><span class="event-log-diagnostic-label">' + esc(i18n.t('ui.event_diagnostic')) + '</span><code>' + esc(diagnostic) + '</code></div></details>';
     }
     function renderEvents() {
       const result = pagedItems('events');
