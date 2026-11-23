@@ -88,8 +88,8 @@ func qualityWindowFinal(sig Signals) bool {
 }
 
 // qualityVisibleStreaming reports evidence that the visible text arrived as a
-// real stream instead of a single buffered dump. This protects sustained
-// streams, but it must not bypass the hard dump windows below.
+// real stream instead of a single buffered dump. Fast-flush detectors must
+// respect this signal so a healthy stream is not mistaken for a dump.
 func qualityVisibleStreaming(sig Signals) bool {
 	if !sig.FirstVisible || sig.VisibleSpanMS < 100 {
 		return false
@@ -100,15 +100,8 @@ func qualityVisibleStreaming(sig Signals) bool {
 	return sig.VisibleChunks >= 4 || sig.VisibleSpanMS >= 200
 }
 
-// qualitySustainedVisibleStream is the mis-kill protection that is stronger
-// than grok2api's fast-flush rule. It only applies after the full two-second
-// dump window, so it cannot hide a buffered or fake-encrypted dump.
-func qualitySustainedVisibleStream(sig Signals) bool {
-	return sig.VisibleSpanMS >= defaultQualityFakeFlushMS && qualityVisibleStreaming(sig)
-}
-
 func qualityFastFlush(sig Signals, limitMS int64) bool {
-	if !sig.FirstVisible || !qualityWindowFinal(sig) {
+	if !sig.FirstVisible || !qualityWindowFinal(sig) || qualityVisibleStreaming(sig) {
 		return false
 	}
 	return sig.VisibleSpanMS >= 0 && sig.VisibleSpanMS < limitMS
@@ -121,9 +114,10 @@ func qualityIsBurstDump(sig Signals, minOutput int64) bool {
 	shortVisible := sig.VisibleTokens > 0 && sig.VisibleTokens < defaultQualityMaxVisible
 	heavyReasoning := sig.ReasoningTokens >= defaultQualityMinReasoning
 	if sig.HoldExpired {
-		// Preserve the plugin's sustained-stream protection, but do not let it
-		// hide a short greeting dumped after a long hold with a heavy bill.
-		if sig.VisibleTokens >= minOutput && qualitySustainedVisibleStream(sig) {
+		// Preserve the plugin's streaming protection once enough visible output
+		// has arrived, but do not let it hide a short greeting dumped after a
+		// long hold with a heavy bill.
+		if sig.VisibleTokens >= minOutput && qualityVisibleStreaming(sig) {
 			return false
 		}
 		return shortVisible && heavyReasoning
@@ -202,7 +196,7 @@ func ClassifyQualityHold(sig Signals, minOutput int64) QualityVerdict {
 		if sig.Terminal {
 			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.encrypted_reasoning_met_the_floor", Signals: sig}
 		}
-		if sig.VisibleTokens >= minOutput && qualitySustainedVisibleStream(sig) {
+		if sig.VisibleTokens >= minOutput && qualityVisibleStreaming(sig) && sig.VisibleSpanMS >= 500 {
 			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.encrypted_reasoning_with_sustained_visible_output", Signals: sig}
 		}
 		return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.waiting_for_encrypted_reasoning_evidence", Signals: sig}

@@ -597,8 +597,14 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 			preview.HoldExpired = true
 			preview.ReasoningRequired = reasoningNeeded
 			verdict := ClassifyQualityHold(preview, cfg.MinHoldOutputTokens)
-			if verdict.Action == QualityActionWithhold && transparentHoldBlocks(cfg, reasoningNeeded, verdict) {
-				return StreamAttempt{Class: verdict.Class, Verdict: verdict, Err: fmt.Errorf("quality gate rejected stream: %s", verdict.Class), Buffered: buffer, Available: true}
+			if verdict.Action == QualityActionWithhold {
+				if transparentHoldBlocks(cfg, reasoningNeeded, verdict) {
+					return StreamAttempt{Class: verdict.Class, Verdict: verdict, Err: fmt.Errorf("quality gate rejected stream: %s", verdict.Class), Buffered: buffer, Available: true}
+				}
+				if errEmit := emitBuffered(); errEmit != nil {
+					return abort(errEmit)
+				}
+				continue
 			}
 			if verdict.Action == QualityActionDeliver {
 				if errEmit := emitBuffered(); errEmit != nil {
@@ -662,8 +668,14 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 			preview.HoldExpired = holdExpired
 			preview.ReasoningRequired = reasoningNeeded
 			holdVerdict := ClassifyQualityHold(preview, cfg.MinHoldOutputTokens)
-			if holdVerdict.Action == QualityActionWithhold && transparentHoldBlocks(cfg, reasoningNeeded, holdVerdict) {
-				return StreamAttempt{Class: holdVerdict.Class, Verdict: holdVerdict, Err: fmt.Errorf("quality gate rejected stream: %s", holdVerdict.Class), Buffered: buffer, Available: true}
+			if holdVerdict.Action == QualityActionWithhold {
+				if transparentHoldBlocks(cfg, reasoningNeeded, holdVerdict) {
+					return StreamAttempt{Class: holdVerdict.Class, Verdict: holdVerdict, Err: fmt.Errorf("quality gate rejected stream: %s", holdVerdict.Class), Buffered: buffer, Available: true}
+				}
+				if errEmit := emitBuffered(); errEmit != nil {
+					return abort(errEmit)
+				}
+				continue
 			}
 			if holdVerdict.Action == QualityActionDeliver {
 				if errEmit := emitBuffered(); errEmit != nil {

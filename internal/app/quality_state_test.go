@@ -793,8 +793,8 @@ func TestDumpVerdictWaitsForFinalVisibleWindowBeforeJudging(t *testing.T) {
 		t.Fatalf("open visible window produced %s/%s, want wait", verdict.Action, verdict.Class)
 	}
 	base.Terminal = true
-	if verdict := ClassifyQualityHold(base, config.MinHoldOutputTokens); !isDumpClass(verdict.Class) {
-		t.Fatalf("terminal fast stream produced %s/%s, want a dump class", verdict.Action, verdict.Class)
+	if verdict := ClassifyQualityHold(base, config.MinHoldOutputTokens); verdict.Action != qualitypkg.QualityActionDeliver || verdict.Class != qualitypkg.ClassNone {
+		t.Fatalf("terminal fast stream produced %s/%s, want deliver", verdict.Action, verdict.Class)
 	}
 	single := base
 	single.VisibleChunks = 1

@@ -106,14 +106,14 @@ func TestReviewClientDisconnectDoesNotPenalize(t *testing.T) {
 	}
 }
 
-func TestReviewEncryptedStreamDumpWindow(t *testing.T) {
+func TestReviewEncryptedStreamNotBurst(t *testing.T) {
 	cases := []struct {
 		span int64
 		want string
 	}{
 		{span: 0, want: qualitypkg.ClassBufferedBurst},
-		{span: 500, want: qualitypkg.ClassBufferedBurst},
-		{span: 1500, want: qualitypkg.ClassFakeEncryptedDump},
+		{span: 500, want: qualitypkg.ClassNone},
+		{span: 1500, want: qualitypkg.ClassNone},
 		{span: 3000, want: qualitypkg.ClassNone},
 	}
 	for _, test := range cases {
@@ -144,7 +144,7 @@ func TestReviewEncryptedStreamDumpWindow(t *testing.T) {
 	}
 }
 
-func TestReviewHoldExpiryRequiresSustainedEncryptedStream(t *testing.T) {
+func TestReviewHoldExpiryKeepsVisibleEncryptedStream(t *testing.T) {
 	sig := qualitypkg.Signals{
 		Terminal:        false,
 		HoldExpired:     true,
@@ -163,8 +163,8 @@ func TestReviewHoldExpiryRequiresSustainedEncryptedStream(t *testing.T) {
 	}
 	early := sig
 	early.VisibleSpanMS = 1000
-	if verdict := ClassifyQualityHold(early, 8); verdict.Class != qualitypkg.ClassBufferedBurst {
-		t.Fatalf("fast hold-expiry stream = %#v, want buffered burst", verdict)
+	if verdict := ClassifyQualityHold(early, 8); verdict.Action != qualitypkg.QualityActionDeliver || verdict.Class != qualitypkg.ClassNone {
+		t.Fatalf("visible stream at hold expiry = %#v, want deliver", verdict)
 	}
 	dump := sig
 	dump.VisibleChunks = 1
@@ -448,7 +448,7 @@ func TestReviewNonReasoningProbeSkipsDumpClasses(t *testing.T) {
 	}
 }
 
-func TestReviewEncryptedFastDeltasWithinDumpWindowWithheld(t *testing.T) {
+func TestReviewEncryptedFastDeltasNotDump(t *testing.T) {
 	config := appconfig.DefaultQualityConfig()
 	analyzer := NewStreamAnalyzerWithProtocolAt("openai-response", time.Now())
 	analyzer.SetRetainText(false)
@@ -468,8 +468,8 @@ func TestReviewEncryptedFastDeltasWithinDumpWindowWithheld(t *testing.T) {
 	if sig.VisibleChunks != 12 || sig.VisibleSpanMS < 100 {
 		t.Fatalf("unexpected visible stream signals: %#v", sig)
 	}
-	if verdict := classifyFinal(sig, config, true, config.MinHoldOutputTokens, true); verdict.Action != qualitypkg.QualityActionWithhold || verdict.Class != qualitypkg.ClassBufferedBurst {
-		t.Fatalf("fast encrypted stream final verdict = %#v, want buffered burst withhold", verdict)
+	if verdict := classifyFinal(sig, config, true, config.MinHoldOutputTokens, true); verdict.Action != qualitypkg.QualityActionDeliver || verdict.Class != qualitypkg.ClassNone {
+		t.Fatalf("healthy fast encrypted stream final verdict = %#v, want deliver", verdict)
 	}
 }
 

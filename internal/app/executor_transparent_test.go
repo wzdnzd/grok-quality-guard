@@ -1270,3 +1270,162 @@ func TestTransparentUnsafeBufferedStreamDoesNotFailoverAfterStreamOpened(t *test
 		t.Fatalf("post-open read error used %d attempts, want 1: %#v", len(host.modelCalls), host.modelCalls)
 	}
 }
+
+func TestTransparentEncryptedFastVisibleStreamDelivered(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	script := []pluginapi.HostModelStreamReadResponse{
+		streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fast\",\"model\":\"grok-4.6\"}}\n\n"),
+		streamData("data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_fast\",\"type\":\"reasoning\",\"encrypted_content\":\"" + strings.Repeat("A", 2048) + "\"}}\n\n"),
+	}
+	for index := 0; index < 12; index++ {
+		script = append(script, streamData("data: {\"type\":\"response.output_text.delta\",\"delta\":\"word \"}\n\n"))
+	}
+	script = append(script,
+		streamData("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_fast\",\"usage\":{\"output_tokens\":420,\"output_tokens_details\":{\"reasoning_tokens\":400}}}}\n\n"),
+		pluginapi.HostModelStreamReadResponse{Done: true},
+	)
+	host.scriptStream("auth-1", script...)
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+
+	innerHostCall := hostCall
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostModelStreamRead {
+			time.Sleep(20 * time.Millisecond)
+		}
+		return innerHostCall(method, payload)
+	}
+	defer func() { hostCall = innerHostCall }()
+
+	streamID := "plugin-stream-encrypted-fast-deltas"
+	plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.6", true), streamID)
+
+	var joined strings.Builder
+	for _, payload := range host.emitted[streamID] {
+		joined.Write(payload)
+	}
+	if strings.Count(joined.String(), "word ") != 12 {
+		t.Fatalf("healthy encrypted fast stream was not delivered: %s", joined.String())
+	}
+	if detail := host.closes[streamID]; detail != nil {
+		t.Fatalf("healthy encrypted fast stream closed with error: %#v", detail)
+	}
+	if len(host.modelCalls) != 1 {
+		t.Fatalf("healthy encrypted fast stream used %d attempts, want 1", len(host.modelCalls))
+	}
+}
+
+func runBlockedTransparentStream(t *testing.T, host *mockHostCall, plugin *Plugin, req execapp.Request, streamID string, blockRead int) string {
+	t.Helper()
+	innerHostCall := hostCall
+	releaseRead := make(chan struct{})
+	released := false
+	readCount := 0
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostModelStreamRead {
+			readCount++
+			if readCount == blockRead {
+				<-releaseRead
+			}
+		}
+		return innerHostCall(method, payload)
+	}
+	defer func() { hostCall = innerHostCall }()
+
+	done := make(chan struct{})
+	go func() {
+		plugin.runTransparentStreamBridge(context.Background(), req, streamID)
+		close(done)
+	}()
+	defer func() {
+		if !released {
+			close(releaseRead)
+			released = true
+		}
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+	}()
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		host.mu.Lock()
+		emitted := len(host.emitted[streamID])
+		host.mu.Unlock()
+		if emitted > 0 {
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf("stream %s was not emitted before terminal", streamID)
+		case <-ticker.C:
+		}
+	}
+
+	close(releaseRead)
+	released = true
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("stream %s did not finish after release", streamID)
+	}
+
+	joined := strings.Builder{}
+	for _, payload := range host.emitted[streamID] {
+		joined.Write(payload)
+	}
+	return joined.String()
+}
+
+func TestTransparentThinkingGuardDisabledEmitsBeforeTerminal(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1",
+		streamData("data: {\"choices\":[{\"delta\":{\"content\":\"word word word word word word word word\"}}]}\n\n"),
+		streamData("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"completion_tokens\":12}}\n\n"),
+		pluginapi.HostModelStreamReadResponse{Done: true},
+	)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.Quality.ThinkingGuard = false
+		cfg.Quality.HoldTimeout = appconfig.NewDuration(50 * time.Millisecond)
+	})
+
+	streamID := "plugin-stream-thinking-guard-before-terminal"
+	output := runBlockedTransparentStream(t, host, plugin, streamRequestForTest(), streamID, 2)
+	if !strings.Contains(output, "word word word") {
+		t.Fatalf("thinking_guard=false stream was not delivered: %s", output)
+	}
+	if detail := host.closes[streamID]; detail != nil {
+		t.Fatalf("thinking_guard=false stream closed with error: %#v", detail)
+	}
+}
+
+func TestTransparentThinkingGuardDisabledEmitsAfterUnblockedHold(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1",
+		streamData(": grok2api-reasoning-start\n\n"),
+		streamData("data: {\"choices\":[{\"delta\":{\"content\":\"word word word word word word word word\"}}]}\n\n"),
+		streamData("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"completion_tokens\":12}}\n\n"),
+		pluginapi.HostModelStreamReadResponse{Done: true},
+	)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.Quality.ThinkingGuard = false
+		cfg.Quality.HoldTimeout = appconfig.NewDuration(50 * time.Millisecond)
+	})
+
+	streamID := "plugin-stream-thinking-guard-unblocked-hold"
+	output := runBlockedTransparentStream(t, host, plugin, streamRequestForTest(), streamID, 3)
+	if !strings.Contains(output, "word word word") {
+		t.Fatalf("thinking_guard=false stream was not delivered: %s", output)
+	}
+	if detail := host.closes[streamID]; detail != nil {
+		t.Fatalf("thinking_guard=false stream closed with error: %#v", detail)
+	}
+}
