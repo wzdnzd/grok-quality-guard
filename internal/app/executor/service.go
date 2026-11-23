@@ -102,7 +102,9 @@ type Environment interface {
 	Policy() config.Policy
 	Store() *appstate.Store
 	RequestContext() (context.Context, bool)
-	TaskStarted()
+	// TaskStarted registers a request-lifetime goroutine and reports false once
+	// the plugin is quiescing, so a refused task never races shutdown's wait.
+	TaskStarted() bool
 	TaskDone()
 	PrepareRequest(Request) (Facts, error)
 	NewSelection(Request, Facts) (Selection, error)
@@ -121,9 +123,6 @@ type Environment interface {
 	AutoRotateAfterQualityFailure() bool
 	IsGrokRouteModel(string) bool
 	HasAvailableXAIAuth([]string) bool
-	// RequestProbe schedules a due active probe when a withheld sample needs
-	// cross-verification. It must return immediately.
-	RequestProbe(string)
 }
 
 type Service struct {

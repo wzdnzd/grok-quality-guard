@@ -17,14 +17,13 @@ var errTransparentStreamIdleTimeout = errors.New("upstream stream idle timeout")
 func (s *Service) startTransparentStreamBridge(req Request, streamID string) {
 	locale := executorRequestLocale(req.Headers)
 	ctx, quiescing := s.env.RequestContext()
-	if quiescing {
+	if quiescing || !s.env.TaskStarted() {
 		s.closePluginErrorStream(streamID, locale, "plugin_shutting_down", http.StatusServiceUnavailable)
 		return
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	s.env.TaskStarted()
 	go func() {
 		defer s.env.TaskDone()
 		s.runTransparentStreamBridge(ctx, req, streamID)
@@ -94,17 +93,17 @@ candidateLoop:
 			if result.Available {
 				last = result
 			}
-			_ = s.recordAttemptError(account.ID, class, errAttempt)
 			selection.MarkFailure(account.ID, source, class)
 			failureRetryable := attempts < maxAttempts && transparentFailureCanFailover(replayable, false, result.PreResponse, class)
 			if failureRetryable && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
 				didRotate, errRotate := s.rotateAfterFailure(ctx, account.ID, class)
 				if errRotate == nil && didRotate {
 					rotated = true
+					s.settleTransparentFailure(account.ID, verdict, class, errAttempt, req.HostCallbackID, false)
 					continue
 				}
 			}
-			s.applyTransparentFailureVerdict(ctx, account.ID, verdict, class, errAttempt, req.HostCallbackID)
+			s.settleTransparentFailure(account.ID, verdict, class, errAttempt, req.HostCallbackID, true)
 			attempt.Release()
 			if !failureRetryable {
 				break candidateLoop
@@ -181,17 +180,17 @@ candidateLoop:
 			if result.Available {
 				last = result
 			}
-			_ = s.recordAttemptError(account.ID, class, errAttempt)
 			selection.MarkFailure(account.ID, source, class)
 			failureRetryable := attempts < maxAttempts && transparentFailureCanFailover(replayable, false, result.PreResponse, class)
 			if failureRetryable && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
 				didRotate, errRotate := s.rotateAfterFailure(ctx, account.ID, class)
 				if errRotate == nil && didRotate {
 					rotated = true
+					s.settleTransparentFailure(account.ID, verdict, class, errAttempt, req.HostCallbackID, false)
 					continue
 				}
 			}
-			s.applyTransparentFailureVerdict(ctx, account.ID, verdict, class, errAttempt, req.HostCallbackID)
+			s.settleTransparentFailure(account.ID, verdict, class, errAttempt, req.HostCallbackID, true)
 			attempt.Release()
 			if !failureRetryable {
 				break candidateLoop
@@ -233,14 +232,13 @@ func (s *Service) executeTransparentOnce(ctx context.Context, execution pluginap
 	verdict := classifyNonStreamResult(sig, cfg, info.ReasoningNeeded, cfg.MinHoldOutputTokens)
 	result := Result{Payload: response.Body, Headers: response.Headers, Available: true}
 	if verdict.Class == ClassNone {
-		_ = s.env.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
+		s.settleTransparentVerdict(execution.AuthID, verdict, callbackID)
 		return result, verdict, nil
 	}
 	if cfg.ShadowMode {
 		s.recordShadowVerdict(execution.AuthID, verdict)
 		return result, verdict, nil
 	}
-	s.requestWithheldProbe(execution.AuthID, verdict)
 	return result, verdict, fmt.Errorf("quality gate rejected response: %s", verdict.Class)
 }
 
@@ -366,14 +364,13 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 		return result, QualityVerdict{}, nil
 	}
 	if verdict.Class == ClassNone {
-		_ = s.env.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
+		s.settleTransparentVerdict(execution.AuthID, verdict, callbackID)
 		return result, verdict, nil
 	}
 	if cfg.ShadowMode {
 		s.recordShadowVerdict(execution.AuthID, verdict)
 		return result, verdict, nil
 	}
-	s.requestWithheldProbe(execution.AuthID, verdict)
 	return result, verdict, fmt.Errorf("quality gate rejected stream: %s", verdict.Class)
 }
 
@@ -477,17 +474,17 @@ candidateLoop:
 			if outcome.Available {
 				last = outcome
 			}
-			_ = s.recordAttemptError(account.ID, class, outcome.Err)
 			selection.MarkFailure(account.ID, source, class)
 			failureRetryable := attempts < maxAttempts && transparentFailureCanFailover(replayable, outcome.Emitted, outcome.PreResponse, class)
 			if failureRetryable && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
 				didRotate, errRotate := s.rotateAfterFailure(ctx, account.ID, class)
 				if errRotate == nil && didRotate {
 					rotated = true
+					s.settleTransparentFailure(account.ID, outcome.Verdict, class, outcome.Err, req.HostCallbackID, false)
 					continue
 				}
 			}
-			s.applyTransparentFailureVerdict(ctx, account.ID, outcome.Verdict, class, outcome.Err, req.HostCallbackID)
+			s.settleTransparentFailure(account.ID, outcome.Verdict, class, outcome.Err, req.HostCallbackID, true)
 			attempt.Release()
 			if !failureRetryable {
 				break candidateLoop
@@ -721,7 +718,6 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 					continue
 				}
 				if transparentHoldBlocks(cfg, reasoningNeeded, verdict) {
-					s.requestWithheldProbe(execution.AuthID, verdict)
 					return StreamAttempt{Class: verdict.Class, Verdict: verdict, Err: fmt.Errorf("quality gate rejected stream: %s", verdict.Class), Buffered: buffer, Available: true}
 				}
 				if errEmit := emitBuffered(); errEmit != nil {
@@ -807,7 +803,6 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 					continue
 				}
 				if transparentHoldBlocks(cfg, reasoningNeeded, holdVerdict) {
-					s.requestWithheldProbe(execution.AuthID, holdVerdict)
 					return StreamAttempt{Class: holdVerdict.Class, Verdict: holdVerdict, Err: fmt.Errorf("quality gate rejected stream: %s", holdVerdict.Class), Buffered: buffer, Available: true}
 				}
 				if errEmit := emitBuffered(); errEmit != nil {
@@ -860,16 +855,15 @@ func (s *Service) finishTransparentStreamAttempt(
 		return StreamAttempt{Class: verdict.Class, Verdict: verdict, Emitted: true}
 	}
 	if emitted {
-		_ = s.env.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
+		s.settleTransparentVerdict(execution.AuthID, verdict, callbackID)
 		return StreamAttempt{Class: verdict.Class, Verdict: verdict, Emitted: true}
 	}
 	if verdict.Class == ClassNone {
 		if errEmit := s.emitPluginChunks(streamID, buffer); errEmit != nil {
 			return StreamAttempt{Err: errEmit, Aborted: true, Available: true}
 		}
-		_ = s.env.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
+		s.settleTransparentVerdict(execution.AuthID, verdict, callbackID)
 		return StreamAttempt{Emitted: true}
 	}
-	s.requestWithheldProbe(execution.AuthID, verdict)
 	return StreamAttempt{Class: verdict.Class, Verdict: verdict, Err: fmt.Errorf("quality gate rejected stream: %s", verdict.Class), Buffered: buffer, Available: true}
 }

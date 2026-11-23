@@ -239,7 +239,7 @@ func (s *Service) recordTransparentOverflow(authID string, limit int64) {
 	if s == nil || s.env == nil || s.env.Store() == nil {
 		return
 	}
-	_ = s.env.Store().AppendEvent(Event{
+	event := Event{
 		Time:       time.Now().UTC(),
 		AuthID:     authID,
 		Action:     "transparent_overflow",
@@ -247,6 +247,11 @@ func (s *Service) recordTransparentOverflow(authID string, limit int64) {
 		Detail:     fmt.Sprintf("hold buffer exceeded %d bytes; quality gate bypassed", limit),
 		DetailKey:  "event.detail.hold_buffer_exceeded",
 		DetailArgs: map[string]any{"limit": limit},
+	}
+	// The overflow is recorded from inside the stream loop, so a full state
+	// write must not stall the chunks that follow.
+	s.runSettlement(func(context.Context) {
+		_ = s.env.Store().AppendEvent(event)
 	})
 }
 
@@ -323,7 +328,7 @@ func (s *Service) recordShadowVerdict(authID string, verdict QualityVerdict) {
 	if class == ClassNone {
 		class = "none"
 	}
-	_ = s.env.Store().AppendEvent(Event{
+	event := Event{
 		Time:       time.Now().UTC(),
 		AuthID:     authID,
 		Action:     "quality_shadow",
@@ -331,17 +336,59 @@ func (s *Service) recordShadowVerdict(authID string, verdict QualityVerdict) {
 		Detail:     "shadow quality verdict delivered without action: " + class,
 		DetailKey:  "reason.detail.shadow_quality_verdict",
 		DetailArgs: map[string]any{"class": class},
+	}
+	s.runSettlement(func(context.Context) {
+		_ = s.env.Store().AppendEvent(event)
 	})
 }
 
-// requestWithheldProbe asks for a due active probe when a sample was withheld
-// for missing thinking, so the account is cross-verified without waiting for
-// the cooldown schedule. It is a no-op unless cross-verification is enabled.
-func (s *Service) requestWithheldProbe(authID string, verdict QualityVerdict) {
-	if s == nil || s.env == nil || verdict.Class != ClassMissingThinking {
+// transparentSettleTimeout bounds background verdict bookkeeping. Applying a
+// verdict may save the auth file through the host, so it needs more room than
+// a single state write.
+const transparentSettleTimeout = 2 * time.Minute
+
+// runSettlement moves bookkeeping off the request path. Every verdict persists
+// the full state file and takes the account lock, which a running probe holds
+// for its whole duration. Doing that inline kept the client stream open after
+// the answer and delayed every failover by seconds while the client saw
+// nothing. While the plugin is quiescing the work runs inline, so shutdown
+// still flushes it.
+func (s *Service) runSettlement(settle func(context.Context)) {
+	if s == nil || s.env == nil || settle == nil {
 		return
 	}
-	s.env.RequestProbe(authID)
+	run := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), transparentSettleTimeout)
+		defer cancel()
+		settle(ctx)
+	}
+	if !s.env.TaskStarted() {
+		run()
+		return
+	}
+	go func() {
+		defer s.env.TaskDone()
+		run()
+	}()
+}
+
+// settleTransparentVerdict records the verdict of an attempt whose response
+// was already delivered.
+func (s *Service) settleTransparentVerdict(authID string, verdict QualityVerdict, callbackID string) {
+	s.runSettlement(func(ctx context.Context) {
+		_ = s.env.ApplyVerdict(ctx, authID, verdict, "transparent", callbackID)
+	})
+}
+
+// settleTransparentFailure records a failed attempt and, unless the attempt is
+// being retried on a rotated proxy, applies its verdict to the account.
+func (s *Service) settleTransparentFailure(authID string, verdict QualityVerdict, class string, errValue error, callbackID string, apply bool) {
+	s.runSettlement(func(ctx context.Context) {
+		_ = s.recordAttemptError(authID, class, errValue)
+		if apply {
+			s.applyTransparentFailureVerdict(ctx, authID, verdict, class, errValue, callbackID)
+		}
+	})
 }
 
 // transparentHoldLimit bounds one visible hold by the per-request withhold

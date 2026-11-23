@@ -76,6 +76,10 @@ type Signals struct {
 	Terminal          bool
 	HoldExpired       bool
 	SemanticOutput    bool
+	// HasToolCall marks a turn that emits a tool call. Its visible text is a
+	// preamble rather than the answer, and healthy accounts deliver tool
+	// arguments in one burst, so visible-window dump timing does not apply.
+	HasToolCall       bool
 	Streaming         bool
 	ReasoningRequired bool
 	// ReasoningExplicit is true when the client itself asked for reasoning

@@ -181,7 +181,7 @@ func qualityMissingThinkingReason(sig Signals) string {
 }
 
 func qualityIsBurstDump(sig Signals, minOutput int64) bool {
-	if sig.HasReasoningDelta {
+	if sig.HasReasoningDelta || sig.HasToolCall {
 		return false
 	}
 	shortVisible := sig.VisibleTokens > 0 && sig.VisibleTokens < defaultQualityMaxVisible
@@ -217,7 +217,7 @@ func qualityIsCipherDrool(sig Signals, minOutput int64) bool {
 
 func qualityIsFakeEncryptedDump(sig Signals, minOutput int64) bool {
 	_ = minOutput
-	if sig.HasReasoningDelta {
+	if sig.HasReasoningDelta || sig.HasToolCall {
 		return false
 	}
 	if !qualityFastFlush(sig, defaultQualityFakeFlushMS) {
@@ -227,7 +227,7 @@ func qualityIsFakeEncryptedDump(sig Signals, minOutput int64) bool {
 }
 
 func qualityIsFastReasoningRatioDump(sig Signals) bool {
-	if !sig.HasReasoningDelta {
+	if !sig.HasReasoningDelta || sig.HasToolCall {
 		return false
 	}
 	if !qualityFastFlush(sig, defaultQualityFakeFlushMS) {
@@ -275,6 +275,16 @@ func ClassifyQualityHold(sig Signals, minOutput int64) QualityVerdict {
 		}
 		if sig.VisibleTokens >= minOutput && qualityVisibleStreaming(sig) {
 			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.encrypted_reasoning_with_sustained_visible_output", Signals: sig}
+		}
+		if sig.HasToolCall {
+			// The dump checks above skip tool-call turns, so the evidence gate is
+			// the only remaining check and it already passed.
+			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.encrypted_reasoning_preceded_a_tool_call", Signals: sig}
+		}
+		if sig.HoldExpired {
+			// The hold window is over and no dump was found. Waiting for the
+			// terminal event cannot add evidence and only delays the client.
+			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.encrypted_reasoning_held_until_timeout", Signals: sig}
 		}
 		return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.waiting_for_encrypted_reasoning_evidence", Signals: sig}
 	}

@@ -365,7 +365,9 @@ probe scheduler
 
 `usage` 中的输出或 reasoning 账单不能替代真实思考证据，但短可见文本不能借输出下限绕过 `missing_thinking`
 
-`ReasoningStarted`（reasoning item 或 timing stub）只延迟判定到可见输出出现之前。一旦可见输出已经真实流式到达（可见跨度至少 100ms 且达到 `min_hold_output_tokens`）而仍无思考证据，`missing_thinking` 立即成立，不再等满 `hold_timeout`：等待并不会让证据出现得更早，只会让客户端在每次换号前空等一个完整 hold 窗口。尚未出现可见输出时仍保持 `wait`，因为模型可能还在思考。
+`ReasoningStarted`（reasoning item 或 timing stub）只延迟判定到可见输出出现之前。一旦可见输出已经真实流式到达（达到 `min_hold_output_tokens`，且可见跨度至少 40ms 或至少 2 个可见块）而仍无思考证据，`missing_thinking` 立即成立，不再等满 `hold_timeout`：等待并不会让证据出现得更早，只会让客户端在每次换号前空等一个完整 hold 窗口。尚未出现可见输出时仍保持 `wait`，因为模型可能还在思考。
+
+已有达到下限的密文证据（无明文 reasoning delta）时，以下任一情况立即放行，不再等待上游终止事件：可见文本持续流式且达到最小输出；客户端工具调用开始；扣留窗口到期且未命中任何 dump 判定。
 
 推理能力判断以内置已知能力表和 Grok 4+ 版本回退为主，避免模型更新后质量门失效；`quality.non_reasoning_models` 优先于内置判断并可声明额外非推理模型；未知非 Grok 模型不进入思考闸门
 
@@ -474,6 +476,8 @@ usage.output_tokens - usage.reasoning_tokens
 - reasoning tokens * 5 >= output tokens * 4
 
 `qualityVisibleStreaming` 成立时，时间型 dump 直接跳过；单块、可见跨度不足 100ms 或可见速率异常高的样本仍按上述规则拦截。
+
+含客户端工具调用的轮次（Responses 的 `function_call`、`custom_tool_call`、`local_shell_call`、`shell_call`、`apply_patch_call`、`computer_call`，Chat 的 `tool_calls` / `function_call`，Anthropic 的 `tool_use`）跳过 `buffered_burst`、`fake_encrypted_dump`、`fast_reasoning_ratio_dump`：这类轮次的可见文本只是工具调用前的简短说明，健康账号也会在推理结束后一次性下发说明和工具参数，可见窗口时序无法区分 dump。`cipher_drool` 与思考证据要求不受影响，缺少证据的工具调用仍判 `missing_thinking`。宿主侧执行的 `web_search_call`、hosted MCP 和 Anthropic `server_tool_use` 之后的文本仍是答案，照常检测。
 
 ### 4.6 速度分类
 
@@ -896,6 +900,8 @@ if terminal and no verdict:
 - emit 失败或请求 context 结束时，整个请求按客户端中止处理：关闭上游流、不换号、不记 strike、不写失败事件
 - 缓冲超过 4 MiB 时放行已缓冲内容并记录 `transparent_overflow` 事件，不对该样本应用健康/异常判定，也不清零 strike
 - 非推理请求在首个可见块后约 200ms 提前放行；空流仍会拦截，TPS 速度和缓冲上限在终态继续记录
+- 判定记账在后台执行：失败尝试的 `transparent_attempt` 事件、账号判定（含交叉验证调度）以及成功样本的健康判定都不阻塞请求路径。每次判定都会完整落盘状态文件并获取账号锁，而正在运行的探测会在整个探测期间持有该锁，同步执行会让每次换号额外等待数秒到一次完整探测的时长，客户端在此期间收不到任何内容。成功响应先关闭客户端流再记账；插件停机时记账改为同步执行，保证在最终落盘前完成
+- 判定只决定当前请求是否换号；同一请求内已失败的账号由选择器的 `MarkFailure` 立即排除，因此不依赖记账完成
 
 ### 6.6 非流式请求
 

@@ -48,7 +48,12 @@ func ensureTransparentReasoningEvidence(body []byte, sourceFormat string, reason
 
 func (p *Plugin) runTransparentStreamBridge(ctx context.Context, req execapp.Request, streamID string) {
 	p.executorSvc.RunTransparentStreamBridge(ctx, req, streamID)
+	// Verdict bookkeeping settles off the request path, and tests assert on it.
+	p.waitSettled()
 }
+
+// waitSettled blocks until background verdict bookkeeping has finished.
+func (p *Plugin) waitSettled() { p.taskWG.Wait() }
 
 func (p *Plugin) startTransparentStreamBridge(req execapp.Request, streamID string) {
 	p.executorSvc.StartTransparentStreamBridge(req, streamID)

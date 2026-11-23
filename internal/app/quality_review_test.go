@@ -73,6 +73,7 @@ func TestReviewNonStreamNeverSpeedClassified(t *testing.T) {
 	if !envelope.OK {
 		t.Fatalf("non-stream response rejected: %s", response)
 	}
+	plugin.waitSettled()
 	account, _ := plugin.stateAccount("auth-1")
 	if account.State == appstate.StateCooling || account.State == appstate.StateDegraded || account.DisableKind != "" {
 		t.Fatalf("non-stream success was penalized: %#v", account)

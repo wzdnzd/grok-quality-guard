@@ -1196,6 +1196,7 @@ func TestTransparentUnsafeNonStreamFailsOverOnPreResponseTransportError(t *testi
 	if len(host.modelCalls) != 2 || host.modelCalls[0].AuthID != "auth-1" || host.modelCalls[1].AuthID != "auth-2" {
 		t.Fatalf("pre-response transport error did not switch accounts: %#v", host.modelCalls)
 	}
+	plugin.waitSettled()
 	account, _ := plugin.stateAccount("auth-1")
 	if account.LastAttempt == nil || account.LastAttempt.Reason != "reason.detail.upstream_network_error" {
 		t.Fatalf("transparent transport reason was not recorded with the i18n key: %#v", account.LastAttempt)
@@ -1965,5 +1966,104 @@ func TestTransparentDegradedVisibleStreamFailsOverBeforeHoldTimeout(t *testing.T
 	account, ok := plugin.stateAccount("auth-1")
 	if !ok || account.LastAttempt == nil || account.LastAttempt.Class != "missing_thinking" {
 		t.Fatalf("degraded attempt was not recorded as missing_thinking: %#v", account.LastAttempt)
+	}
+}
+
+func TestTransparentFailoverDoesNotWaitForAccountLock(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1", badResponsesStreamScript()...)
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+	if plugin.accountLock("auth-1") == plugin.accountLock("auth-2") {
+		t.Fatal("test accounts share a lock stripe")
+	}
+
+	// A probe holds the account lock for its whole run. Verdict bookkeeping for
+	// the failed attempt needs the same lock, so it must not run on the request
+	// path or the client waits for the probe before the next account starts.
+	lock := plugin.accountLock("auth-1")
+	lock.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			lock.Unlock()
+		}
+	}()
+
+	streamID := "plugin-stream-locked-failover"
+	done := make(chan struct{})
+	go func() {
+		plugin.executorSvc.RunTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.6", true), streamID)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("failover waited for the account lock of the failed attempt (auths=%v)", modelCallAuthIDs(host))
+	}
+
+	host.mu.Lock()
+	emitted := append([][]byte(nil), host.emitted[streamID]...)
+	closeDetail := host.closes[streamID]
+	host.mu.Unlock()
+	var joined strings.Builder
+	for _, payload := range emitted {
+		joined.Write(payload)
+	}
+	if !strings.Contains(joined.String(), "good answer") || closeDetail != nil {
+		t.Fatalf("failover did not deliver the healthy response: close=%#v output=%s", closeDetail, joined.String())
+	}
+
+	lock.Unlock()
+	locked = false
+	plugin.waitSettled()
+	account, ok := plugin.stateAccount("auth-1")
+	if !ok || account.LastAttempt == nil || account.LastAttempt.Class != "missing_thinking" {
+		t.Fatalf("settled verdict was not recorded for the failed attempt: %#v", account.LastAttempt)
+	}
+}
+
+func TestTransparentToolCallPreambleWithEncryptedReasoningIsDelivered(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	encrypted := strings.Repeat("A", 3000)
+	// A Codex agent turn: hidden reasoning, a short preamble, then a tool call,
+	// all flushed in one burst once the reasoning finishes.
+	host.scriptStream("auth-1",
+		streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_tool\",\"model\":\"grok-4.6\"}}\n\n"),
+		streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[]}}\n\n"),
+		streamData("data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\""+encrypted+"\"}}\n\n"),
+		streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n"),
+		streamData("data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"delta\":\"先看一下\"}\n\n"),
+		streamData("data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"delta\":\"目录结构\"}\n\n"),
+		streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":2,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"exec_command\",\"arguments\":\"\"}}\n\n"),
+		streamData("data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":2,\"delta\":\"{\\\"cmd\\\":\\\"ls\\\"}\"}\n\n"),
+		streamData("data: {\"type\":\"response.output_item.done\",\"output_index\":2,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"ls\\\"}\"}}\n\n"),
+		streamData("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tool\",\"usage\":{\"output_tokens\":204,\"output_tokens_details\":{\"reasoning_tokens\":190}}}}\n\n"),
+		pluginapi.HostModelStreamReadResponse{Done: true},
+	)
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+	streamID := "plugin-stream-tool-call"
+	plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.6", true), streamID)
+
+	host.mu.Lock()
+	emitted := append([][]byte(nil), host.emitted[streamID]...)
+	closeDetail := host.closes[streamID]
+	host.mu.Unlock()
+	var joined strings.Builder
+	for _, payload := range emitted {
+		joined.Write(payload)
+	}
+	if !strings.Contains(joined.String(), "exec_command") || !strings.Contains(joined.String(), "response.completed") || closeDetail != nil {
+		t.Fatalf("tool call turn was not delivered: close=%#v output=%s", closeDetail, joined.String())
+	}
+	if calls := modelCallAuthIDs(host); len(calls) != 1 || calls[0] != "auth-1" {
+		t.Fatalf("healthy tool call turn failed over: %v", calls)
+	}
+	account, ok := plugin.stateAccount("auth-1")
+	if !ok || account.LastAttempt == nil || account.LastAttempt.Class != "" || account.State == appstate.StateCooling {
+		t.Fatalf("healthy tool call turn was penalized: state=%s attempt=%#v", account.State, account.LastAttempt)
 	}
 }

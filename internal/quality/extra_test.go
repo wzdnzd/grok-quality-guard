@@ -337,3 +337,164 @@ func TestVisibleGapsReported(t *testing.T) {
 		t.Fatalf("visible gap stats = max %d median %d", sig.VisibleGapMaxMS, sig.VisibleGapMedMS)
 	}
 }
+
+func TestToolCallSignalTracksClientExecutedCallsOnly(t *testing.T) {
+	cases := []struct {
+		name     string
+		protocol string
+		payload  string
+		want     bool
+	}{
+		{name: "responses function call item", protocol: qualityProtocolResponses, payload: "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"exec_command\",\"arguments\":\"\"}}\n\n", want: true},
+		{name: "responses custom tool input", protocol: qualityProtocolResponses, payload: "data: {\"type\":\"response.custom_tool_call_input.delta\",\"delta\":\"*** Begin Patch\"}\n\n", want: true},
+		{name: "responses hosted web search", protocol: qualityProtocolResponses, payload: "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"ws_1\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n", want: false},
+		{name: "responses hosted mcp arguments", protocol: qualityProtocolResponses, payload: "data: {\"type\":\"response.mcp_call_arguments.delta\",\"delta\":\"{}\"}\n\n", want: false},
+		{name: "chat tool call delta", protocol: qualityProtocolChat, payload: "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"exec\",\"arguments\":\"\"}}]}}]}\n\n", want: true},
+		{name: "anthropic tool use", protocol: qualityProtocolAnthropic, payload: "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"bash\",\"input\":{}}}\n\n", want: true},
+		{name: "anthropic hosted tool", protocol: qualityProtocolAnthropic, payload: "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_1\",\"name\":\"web_search\",\"input\":{}}}\n\n", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			analyzer := NewStreamAnalyzerWithProtocol(tc.protocol)
+			analyzer.ObserveChunk([]byte(tc.payload))
+			sig := analyzer.Preview()
+			if sig.HasToolCall != tc.want {
+				t.Fatalf("HasToolCall = %v, want %v: %#v", sig.HasToolCall, tc.want, sig)
+			}
+			if !sig.SemanticOutput {
+				t.Fatalf("tool output was not recorded as semantic output: %#v", sig)
+			}
+		})
+	}
+}
+
+// toolCallTurnSignals models a Codex agent turn: real reasoning, a short
+// preamble, then a tool call. Healthy xAI accounts deliver this tail in one
+// burst right after the reasoning finishes.
+func toolCallTurnSignals() Signals {
+	return Signals{
+		Terminal:          true,
+		Streaming:         true,
+		ReasoningRequired: true,
+		ReasoningExplicit: true,
+		CapabilityKnown:   true,
+		EvidenceCapable:   true,
+		ReasoningStarted:  true,
+		FirstVisible:      true,
+		VisibleTokens:     10,
+		VisibleSpanMS:     0,
+		VisibleChunks:     2,
+		UsageReported:     true,
+		OutputTokens:      204,
+		ReasoningTokens:   190,
+		EncryptedBytes:    3000,
+		EncryptedFloor:    760,
+		SemanticOutput:    true,
+		HasToolCall:       true,
+	}
+}
+
+func TestToolCallTurnSkipsVisibleWindowDumpChecks(t *testing.T) {
+	burst := toolCallTurnSignals()
+	if verdict := ClassifyQualityHold(burst, 8); verdict.Action != QualityActionDeliver || verdict.Class != ClassNone {
+		t.Fatalf("tool call with a short preamble = %#v, want deliver", verdict)
+	}
+	textOnly := burst
+	textOnly.HasToolCall = false
+	if verdict := ClassifyQualityHold(textOnly, 8); verdict.Class != ClassBufferedBurst {
+		t.Fatalf("text-only short dump class = %q, want buffered_burst", verdict.Class)
+	}
+
+	longPreamble := burst
+	longPreamble.VisibleTokens = 40
+	longPreamble.VisibleSpanMS = 150
+	longPreamble.VisibleChunks = 3
+	if verdict := ClassifyQualityHold(longPreamble, 8); verdict.Action != QualityActionDeliver {
+		t.Fatalf("tool call with a fast preamble = %#v, want deliver", verdict)
+	}
+	longPreamble.HasToolCall = false
+	if verdict := ClassifyQualityHold(longPreamble, 8); verdict.Class != ClassFakeEncryptedDump {
+		t.Fatalf("text-only fast dump class = %q, want fake_encrypted_dump", verdict.Class)
+	}
+
+	summarized := burst
+	summarized.HasReasoningDelta = true
+	summarized.HasThinking = true
+	if verdict := ClassifyQualityHold(summarized, 8); verdict.Action != QualityActionDeliver {
+		t.Fatalf("summarized tool call = %#v, want deliver", verdict)
+	}
+	summarized.HasToolCall = false
+	if verdict := ClassifyQualityHold(summarized, 8); verdict.Class != ClassFastReasoningRatio {
+		t.Fatalf("summarized text dump class = %q, want fast_reasoning_ratio_dump", verdict.Class)
+	}
+
+	cfg := config.DefaultQualityConfig()
+	cfg.SoftTPS = 1e9
+	cfg.HardTPS = 2e9
+	if verdict := classifyFinal(toolCallTurnSignals(), cfg, true, 8, true); verdict.Class != ClassNone {
+		t.Fatalf("final tool call verdict = %#v, want none", verdict)
+	}
+}
+
+func TestToolCallWithoutEvidenceIsStillMissingThinking(t *testing.T) {
+	cfg := config.DefaultQualityConfig()
+	cfg.SoftTPS = 1e9
+	cfg.HardTPS = 2e9
+	sig := toolCallTurnSignals()
+	sig.EncryptedBytes = 0
+	sig.ReasoningStarted = false
+	if verdict := classifyFinal(sig, cfg, true, 8, true); verdict.Class != ClassMissingThinking {
+		t.Fatalf("tool call without reasoning evidence = %#v, want missing_thinking", verdict)
+	}
+	sig.EncryptedBytes = 300
+	if verdict := classifyFinal(sig, cfg, true, 8, true); verdict.Class != ClassMissingThinking {
+		t.Fatalf("tool call with an encrypted stub below the floor = %#v, want missing_thinking", verdict)
+	}
+}
+
+func TestEncryptedEvidenceReleasesToolCallBeforeTerminal(t *testing.T) {
+	sig := toolCallTurnSignals()
+	sig.Terminal = false
+	sig.UsageReported = false
+	sig.OutputTokens = 0
+	sig.ReasoningTokens = 0
+	sig.EncryptedFloor = 0
+	sig.FirstVisible = false
+	sig.VisibleTokens = 0
+	sig.VisibleChunks = 0
+	verdict := ClassifyQualityHold(sig, 8)
+	if verdict.Action != QualityActionDeliver || verdict.Reason != "reason.detail.encrypted_reasoning_preceded_a_tool_call" {
+		t.Fatalf("tool call after encrypted reasoning = %#v, want deliver", verdict)
+	}
+	sig.HasToolCall = false
+	if verdict := ClassifyQualityHold(sig, 8); verdict.Action != QualityActionWait {
+		t.Fatalf("encrypted reasoning before any output = %#v, want wait", verdict)
+	}
+}
+
+func TestEncryptedEvidenceReleasesAtHoldExpiry(t *testing.T) {
+	// The visible text really streams but stays below the hold floor. Without
+	// this release the attempt waited for the terminal event after the hold.
+	sig := Signals{
+		ReasoningStarted: true,
+		FirstVisible:     true,
+		VisibleTokens:    6,
+		VisibleSpanMS:    400,
+		VisibleChunks:    5,
+		EncryptedBytes:   2048,
+	}
+	if verdict := ClassifyQualityHold(sig, 8); verdict.Action != QualityActionWait {
+		t.Fatalf("short visible text inside the hold = %#v, want wait", verdict)
+	}
+	sig.HoldExpired = true
+	verdict := ClassifyQualityHold(sig, 8)
+	if verdict.Action != QualityActionDeliver || verdict.Reason != "reason.detail.encrypted_reasoning_held_until_timeout" {
+		t.Fatalf("expired hold with encrypted reasoning = %#v, want deliver", verdict)
+	}
+	dumped := sig
+	dumped.VisibleSpanMS = 0
+	dumped.VisibleChunks = 1
+	if verdict := ClassifyQualityHold(dumped, 8); verdict.Class != ClassFakeEncryptedDump {
+		t.Fatalf("single burst at hold expiry class = %q, want fake_encrypted_dump", verdict.Class)
+	}
+}

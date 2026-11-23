@@ -331,14 +331,10 @@ func (a *StreamAnalyzer) observeChatDelta(delta map[string]any, now time.Time) {
 		a.addContentParts(content, now)
 	}
 	if toolCalls, ok := delta["tool_calls"].([]any); ok && len(toolCalls) > 0 {
-		a.signals.SemanticOutput = true
-		a.markFirstToken(now)
-		a.noteProgress()
+		a.noteToolCall(now)
 	}
 	if functionCall := delta["function_call"]; functionCall != nil {
-		a.signals.SemanticOutput = true
-		a.markFirstToken(now)
-		a.noteProgress()
+		a.noteToolCall(now)
 	}
 }
 
@@ -354,9 +350,7 @@ func (a *StreamAnalyzer) observeChatMessage(message map[string]any, now time.Tim
 		}
 	}
 	if toolCalls, ok := message["tool_calls"].([]any); ok && len(toolCalls) > 0 {
-		a.signals.SemanticOutput = true
-		a.markFirstToken(now)
-		a.noteProgress()
+		a.noteToolCall(now)
 	}
 }
 
@@ -391,7 +385,12 @@ func (a *StreamAnalyzer) observeResponses(payload map[string]any, now time.Time)
 			runes := a.noteAggregateVisibleText(asString(payload["text"]), now, "")
 			a.aggregateRunes = maxInt64(a.aggregateRunes, runes)
 		}
-	case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta", "response.mcp_call_arguments.delta":
+	case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
+		if strings.TrimSpace(asString(payload["delta"])) != "" {
+			a.noteToolCall(now)
+		}
+	case "response.mcp_call_arguments.delta":
+		// Hosted MCP calls run server-side, so the answer still follows them.
 		if strings.TrimSpace(asString(payload["delta"])) != "" {
 			a.signals.SemanticOutput = true
 			a.markFirstToken(now)
@@ -463,10 +462,25 @@ func (a *StreamAnalyzer) observeResponsesItemMap(item map[string]any, now time.T
 	default:
 		a.signals.SemanticOutput = true
 		a.markFirstToken(now)
+		if responsesClientToolCall(itemType) {
+			a.signals.HasToolCall = true
+		}
 		if responsesItemHasIdentity(item) {
 			a.noteProgress()
 		}
 		return 0
+	}
+}
+
+// responsesClientToolCall reports output items that hand control back to the
+// client. Hosted tools such as web search run server-side, and the visible
+// text that follows them is still the answer.
+func responsesClientToolCall(itemType string) bool {
+	switch itemType {
+	case "function_call", "custom_tool_call", "local_shell_call", "shell_call", "apply_patch_call", "computer_call":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -505,9 +519,7 @@ func (a *StreamAnalyzer) observeResponsesMessageContent(value any, now time.Time
 		case "reasoning_text", "summary_text":
 			a.addReasoningText(asString(part["text"]))
 		case "tool_call", "function_call":
-			a.signals.SemanticOutput = true
-			a.markFirstToken(now)
-			a.noteProgress()
+			a.noteToolCall(now)
 		default:
 			if kind != "" {
 				a.signals.SemanticOutput = true
@@ -575,7 +587,9 @@ func (a *StreamAnalyzer) observeAnthropic(payload map[string]any, now time.Time)
 		case "text":
 			a.addVisibleText(asString(block["text"]), now)
 			a.signals.SemanticOutput = true
-		case "tool_use", "server_tool_use":
+		case "tool_use":
+			a.noteToolCall(now)
+		case "server_tool_use":
 			a.signals.SemanticOutput = true
 			a.markFirstToken(now)
 			a.noteProgress()
@@ -622,7 +636,9 @@ func (a *StreamAnalyzer) observeAnthropicContent(value any, now time.Time) {
 		case "text":
 			a.addVisibleText(asString(part["text"]), now)
 			a.signals.SemanticOutput = true
-		case "tool_use", "server_tool_use":
+		case "tool_use":
+			a.noteToolCall(now)
+		case "server_tool_use":
 			a.signals.SemanticOutput = true
 			a.markFirstToken(now)
 			a.noteProgress()
@@ -647,9 +663,7 @@ func (a *StreamAnalyzer) addContentParts(value any, now time.Time) {
 			case "reasoning_text", "summary_text":
 				a.addReasoningText(asString(part["text"]))
 			case "tool_call", "function_call":
-				a.signals.SemanticOutput = true
-				a.markFirstToken(now)
-				a.noteProgress()
+				a.noteToolCall(now)
 			case "refusal":
 				a.addVisibleText(asString(part["text"]), now)
 				a.signals.SemanticOutput = true
@@ -762,6 +776,15 @@ func (a *StreamAnalyzer) addEncrypted(value string) {
 
 func (a *StreamAnalyzer) noteProgress() {
 	a.signals.ProgressEvents++
+}
+
+// noteToolCall records a tool call the client must execute. The turn hands
+// control back to the client, so its visible text is only a preamble.
+func (a *StreamAnalyzer) noteToolCall(now time.Time) {
+	a.signals.SemanticOutput = true
+	a.signals.HasToolCall = true
+	a.markFirstToken(now)
+	a.noteProgress()
 }
 
 // markReasoningStart records the first reasoning signal so the classifier can
