@@ -385,7 +385,7 @@ plugins:
 - 同一评分来源与模型类别使用时间衰减 EWMA；半衰期由 `probe.healthy_interval_hours` 推导，并限制在 `12h..168h`（未启用周期探测时按 `168h`）
 - 层内先尝试当前评分桶；当前桶没有空闲候选后再进入下一桶，所有桶都忙时才进入当前层的 busy fallback
 - `round_robin`、`random`、`fill_first` 只在当前评分桶内生效
-- `routing.strategy.prefer_last_success=true` 时，上次透明请求成功的 auth 只在仍健康、仍属于最高评分桶且当前空闲时优先使用
+- `routing.strategy.prefer_last_success=true` 时，上次透明请求成功的 auth 只要仍健康、仍属于最高质量层且当前空闲就优先使用；EWMA 评分换桶不会丢弃该偏好
 - `routing.affinity.enabled=true` 时，同一稳定 session 尽量固定到同一 auth；绑定只存在内存中，默认 TTL `1h`，最多 `10000` 条
 
 评分权重与证据权重均限制在 `0..1`，两组分别归一化，不需要总和为 `1`。默认更重视实际成功率和主动探测证据，避免把最近被透明请求使用过的账号误判为“更新鲜”。每个账号只持久化紧凑的 EWMA 状态，不保存原始采样列表。

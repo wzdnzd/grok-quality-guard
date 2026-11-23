@@ -158,6 +158,34 @@ func healthyRoutingStats(success float32, ttftMS, tps float64) appstate.RoutingS
 	return appstate.RoutingStats{Probe: appstate.RoutingSourceStats{Reasoning: window}}
 }
 
+func setSelectionBucketedRoutingStats(t *testing.T, plugin *Plugin, preferredLow bool) {
+	t.Helper()
+	if errUpdate := plugin.stateStore().UpdateIfChanged(func(state *appstate.State) (bool, error) {
+		for index := 1; index <= 17; index++ {
+			authID := fmt.Sprintf("auth-%02d", index)
+			account := plugin.ensureStateAccount(state, authID)
+			account.State = appstate.StateHealthy
+			account.RoutingStats = healthyRoutingStats(
+				0.60-float32(index)*0.01,
+				float64(1200+index*20),
+				float64(400-index*5),
+			)
+		}
+		if preferredLow {
+			state.Accounts["auth-02"].RoutingStats = healthyRoutingStats(0.10, 9000, 20)
+			state.Accounts["auth-03"].RoutingStats = healthyRoutingStats(0.95, 250, 900)
+		} else {
+			state.Accounts["auth-02"].RoutingStats = healthyRoutingStats(0.95, 250, 900)
+		}
+		return true, nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	if errRebuild := plugin.rebuildSelectionIndex(); errRebuild != nil {
+		t.Fatal(errRebuild)
+	}
+}
+
 func TestTransparentSelectionUsesHighestScoreBucketAndFallsBackByScore(t *testing.T) {
 	entries := manyGrokAuths(t, 17)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
@@ -260,6 +288,66 @@ func TestTransparentSelectionPreferredBusyFallsBackToIdleAuth(t *testing.T) {
 	}
 	fourthSelection.MarkSuccess(fourthAttempt.Account.ID, fourthAttempt.Source)
 	fourthAttempt.Release()
+}
+
+func TestTransparentSelectionKeepsPreferredAcrossScoreBuckets(t *testing.T) {
+	entries := manyGrokAuths(t, 17)
+	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.TransparentGuard = true
+		cfg.Routing.Strategy.Selection = "fill_first"
+		cfg.Routing.Strategy.PreferLastSuccess = true
+		cfg.Routing.Affinity.Enabled = false
+		cfg.Routing.Scoring.MaxAccountsPerBucket = 16
+	})
+	setSelectionBucketedRoutingStats(t, plugin, false)
+
+	firstSelection, firstAttempt := nextSelectionAttempt(t, plugin, "")
+	if firstAttempt.Account.ID != "auth-02" {
+		t.Fatalf("first auth = %s, want highest-score auth-02", firstAttempt.Account.ID)
+	}
+	firstSelection.MarkSuccess(firstAttempt.Account.ID, firstAttempt.Source)
+	firstAttempt.Release()
+	if preferred, _ := plugin.routingSvc.Runtime().Preferred(); preferred != "auth-02" {
+		t.Fatalf("preferred auth = %q, want auth-02", preferred)
+	}
+
+	setSelectionBucketedRoutingStats(t, plugin, true)
+	secondSelection, secondAttempt := nextSelectionAttempt(t, plugin, "")
+	if secondAttempt.Account.ID != "auth-02" || secondAttempt.Source != transparentSourcePreferred {
+		t.Fatalf("healthy preferred changed buckets and was abandoned: %#v", secondAttempt)
+	}
+	secondSelection.MarkSuccess(secondAttempt.Account.ID, secondAttempt.Source)
+	secondAttempt.Release()
+}
+
+func TestTransparentSelectionSessionBindingSurvivesScoreBucketChange(t *testing.T) {
+	entries := manyGrokAuths(t, 17)
+	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.TransparentGuard = true
+		cfg.Routing.Strategy.Selection = "fill_first"
+		cfg.Routing.Strategy.PreferLastSuccess = false
+		cfg.Routing.Affinity.Enabled = true
+		cfg.Routing.Scoring.MaxAccountsPerBucket = 16
+	})
+	setSelectionBucketedRoutingStats(t, plugin, false)
+
+	const sessionID = "session-score-bucket"
+	firstSelection, firstAttempt := nextSelectionAttempt(t, plugin, sessionID)
+	if firstAttempt.Account.ID != "auth-02" {
+		t.Fatalf("first auth = %s, want highest-score auth-02", firstAttempt.Account.ID)
+	}
+	firstSelection.MarkSuccess(firstAttempt.Account.ID, firstAttempt.Source)
+	firstAttempt.Release()
+
+	setSelectionBucketedRoutingStats(t, plugin, true)
+	secondSelection, secondAttempt := nextSelectionAttempt(t, plugin, sessionID)
+	if secondAttempt.Account.ID != "auth-02" || secondAttempt.Source != routingapp.TransparentSourceSession {
+		t.Fatalf("bound session auth changed score buckets and was abandoned: %#v", secondAttempt)
+	}
+	secondSelection.MarkSuccess(secondAttempt.Account.ID, secondAttempt.Source)
+	secondAttempt.Release()
 }
 
 func TestTransparentSelectionConcurrentFirstSessionRequestsShareAuth(t *testing.T) {
@@ -453,5 +541,182 @@ func TestSelectionSessionKeySeparatesCallerScopeAndSession(t *testing.T) {
 	}
 	if firstKey == thirdKey {
 		t.Fatal("different sessions reused the same session key")
+	}
+}
+func TestRoutingPolicyUpdateDisablesPreferredSelection(t *testing.T) {
+	entries := manyGrokAuths(t, 2)
+	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.TransparentGuard = true
+		cfg.Routing.Strategy.Selection = "round_robin"
+		cfg.Routing.Strategy.PreferLastSuccess = true
+		cfg.Routing.Affinity.Enabled = false
+	})
+	setSelectionStates(t, plugin, map[string]string{"auth-01": appstate.StateHealthy, "auth-02": appstate.StateHealthy})
+
+	firstSelection, firstAttempt := nextSelectionAttempt(t, plugin, "")
+	if firstAttempt.Account.ID != "auth-01" || firstAttempt.Source != routingapp.TransparentSourceStrategy {
+		t.Fatalf("first attempt = %#v, want strategy auth-01", firstAttempt)
+	}
+	firstSelection.MarkSuccess(firstAttempt.Account.ID, firstAttempt.Source)
+	firstAttempt.Release()
+
+	policy := plugin.Policy()
+	policy.Routing.Strategy.PreferLastSuccess = false
+	if _, status, errUpdate := plugin.actionPolicyUpdate(map[string]any{"policy": policy}); errUpdate != nil || status != http.StatusOK {
+		t.Fatalf("policy update status=%d err=%v", status, errUpdate)
+	}
+
+	_, secondAttempt := nextSelectionAttempt(t, plugin, "")
+	if secondAttempt.Account.ID != "auth-02" {
+		t.Fatalf("disabled preferred selection used %#v, want auth-02", secondAttempt)
+	}
+	if secondAttempt.Source == routingapp.TransparentSourcePreferred {
+		t.Fatal("preferred selection was used after prefer_last_success was disabled")
+	}
+	secondAttempt.Release()
+}
+
+func TestRoutingPolicyUpdateDisablesSessionAffinity(t *testing.T) {
+	entries := manyGrokAuths(t, 2)
+	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.TransparentGuard = true
+		cfg.Routing.Strategy.Selection = "round_robin"
+		cfg.Routing.Strategy.PreferLastSuccess = false
+		cfg.Routing.Affinity.Enabled = true
+	})
+	setSelectionStates(t, plugin, map[string]string{"auth-01": appstate.StateHealthy, "auth-02": appstate.StateHealthy})
+
+	const sessionID = "session-affinity-toggle"
+	firstSelection, firstAttempt := nextSelectionAttempt(t, plugin, sessionID)
+	firstSelection.MarkSuccess(firstAttempt.Account.ID, firstAttempt.Source)
+	firstAttempt.Release()
+
+	policy := plugin.Policy()
+	policy.Routing.Affinity.Enabled = false
+	if _, status, errUpdate := plugin.actionPolicyUpdate(map[string]any{"policy": policy}); errUpdate != nil || status != http.StatusOK {
+		t.Fatalf("policy update status=%d err=%v", status, errUpdate)
+	}
+
+	_, secondAttempt := nextSelectionAttempt(t, plugin, sessionID)
+	if secondAttempt.Account.ID != "auth-02" || secondAttempt.Source != routingapp.TransparentSourceStrategy {
+		t.Fatalf("disabled affinity still used the old binding: %#v", secondAttempt)
+	}
+	secondAttempt.Release()
+}
+
+func TestRoutingPolicyUpdateDisablesScoringBuckets(t *testing.T) {
+	entries := manyGrokAuths(t, 17)
+	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.TransparentGuard = true
+		cfg.Routing.Strategy.Selection = "fill_first"
+		cfg.Routing.Strategy.PreferLastSuccess = false
+		cfg.Routing.Affinity.Enabled = false
+		cfg.Routing.Scoring.Enabled = true
+		cfg.Routing.Scoring.MaxAccountsPerBucket = 16
+	})
+	setSelectionBucketedRoutingStats(t, plugin, false)
+
+	firstAttempt := func() routingapp.CandidateAttempt {
+		_, attempt := nextSelectionAttempt(t, plugin, "")
+		return attempt
+	}()
+	if firstAttempt.Account.ID != "auth-02" {
+		t.Fatalf("scored first auth = %s, want auth-02", firstAttempt.Account.ID)
+	}
+	firstAttempt.Release()
+
+	policy := plugin.Policy()
+	policy.Routing.Scoring.Enabled = false
+	if _, status, errUpdate := plugin.actionPolicyUpdate(map[string]any{"policy": policy}); errUpdate != nil || status != http.StatusOK {
+		t.Fatalf("policy update status=%d err=%v", status, errUpdate)
+	}
+
+	_, secondAttempt := nextSelectionAttempt(t, plugin, "")
+	if secondAttempt.Account.ID != "auth-01" {
+		t.Fatalf("scoring-disabled first auth = %s, want ID-ordered auth-01", secondAttempt.Account.ID)
+	}
+	secondAttempt.Release()
+}
+
+func TestRoutingPolicyUpdateChangesScoreBucketCapacity(t *testing.T) {
+	entries := manyGrokAuths(t, 17)
+	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.TransparentGuard = true
+		cfg.Routing.Strategy.Selection = "fill_first"
+		cfg.Routing.Strategy.PreferLastSuccess = false
+		cfg.Routing.Affinity.Enabled = false
+		cfg.Routing.Scoring.Enabled = true
+		cfg.Routing.Scoring.MaxAccountsPerBucket = 16
+	})
+	setSelectionBucketedRoutingStats(t, plugin, false)
+	before := plugin.routingSvc.Index().Load()
+	if before == nil || len(before.Buckets("0:1")) != 2 {
+		t.Fatalf("initial score buckets = %#v, want 2", before)
+	}
+
+	policy := plugin.Policy()
+	policy.Routing.Scoring.MaxAccountsPerBucket = 32
+	if _, status, errUpdate := plugin.actionPolicyUpdate(map[string]any{"policy": policy}); errUpdate != nil || status != http.StatusOK {
+		t.Fatalf("policy update status=%d err=%v", status, errUpdate)
+	}
+	_, attempt := nextSelectionAttempt(t, plugin, "")
+	attempt.Release()
+
+	after := plugin.routingSvc.Index().Load()
+	if after == nil || len(after.Buckets("0:1")) != 1 {
+		t.Fatalf("updated score buckets = %#v, want 1", after)
+	}
+}
+
+func TestConfigureInvalidatesRoutingSnapshot(t *testing.T) {
+	entries := manyGrokAuths(t, 1)
+	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.TransparentGuard = true
+		cfg.Routing.Strategy.PreferLastSuccess = false
+		cfg.Routing.Affinity.Enabled = false
+	})
+	setSelectionStates(t, plugin, map[string]string{"auth-01": appstate.StateHealthy})
+	_, attempt := nextSelectionAttempt(t, plugin, "")
+	attempt.Release()
+	beforeGeneration := plugin.routingSvc.BuildGeneration()
+
+	raw, errMarshal := json.Marshal(plugin.cfg)
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	if errConfigure := plugin.Configure(raw); errConfigure != nil {
+		t.Fatal(errConfigure)
+	}
+	if generation := plugin.routingSvc.BuildGeneration(); generation != beforeGeneration {
+		t.Fatalf("configure rebuilt synchronously: before=%d after=%d", beforeGeneration, generation)
+	}
+	_, nextAttempt := nextSelectionAttempt(t, plugin, "")
+	nextAttempt.Release()
+	if generation := plugin.routingSvc.BuildGeneration(); generation == beforeGeneration {
+		t.Fatalf("configure did not invalidate the routing snapshot: generation=%d", generation)
+	}
+}
+func TestHardFailureClearsPreferredEvenWhenSelectionSnapshotIsStale(t *testing.T) {
+	entries := manyGrokAuths(t, 2)
+	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.TransparentGuard = true
+		cfg.Routing.Strategy.Selection = "fill_first"
+		cfg.Routing.Strategy.PreferLastSuccess = true
+		cfg.Routing.Affinity.Enabled = false
+	})
+	setSelectionStates(t, plugin, map[string]string{"auth-01": appstate.StateHealthy, "auth-02": appstate.StateHealthy})
+
+	selection, attempt := nextSelectionAttempt(t, plugin, "")
+	attempt.Release()
+	plugin.routingSvc.Runtime().SetPreferred("auth-02", time.Now().UTC())
+	selection.MarkFailure("auth-02", routingapp.TransparentSourceStrategy, qualitypkg.ClassProxyError)
+	if preferred, _ := plugin.routingSvc.Runtime().Preferred(); preferred != "" {
+		t.Fatalf("hard failure retained stale global preferred %q", preferred)
 	}
 }

@@ -78,6 +78,16 @@ func (runtime *routingSelectionRuntime) PruneBindings(now time.Time) {
 	defer runtime.mu.Unlock()
 	runtime.pruneBindingsLocked(now)
 }
+func (s *Service) TrimBindings(maxEntries int, now time.Time) {
+	s.selectionRuntime.TrimBindings(maxEntries, now)
+}
+
+func (runtime *routingSelectionRuntime) TrimBindings(maxEntries int, now time.Time) {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	runtime.pruneBindingsLocked(now)
+	runtime.trimBindingsLocked(maxEntries, false)
+}
 func (runtime *routingSelectionRuntime) BindingCount() int {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()

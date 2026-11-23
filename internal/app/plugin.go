@@ -161,6 +161,11 @@ func (p *Plugin) Configure(raw []byte) error {
 		p.mu.Unlock()
 		return errApply
 	}
+	// A reconfigure can load a different state file or a different runtime
+	// policy. Invalidate the routing snapshot so the next request does not keep
+	// using score buckets built from the previous configuration.
+	p.routingSvc.InvalidatePolicy()
+	p.routingSvc.TrimBindings(p.policy.Routing.Affinity.MaxEntries, time.Now().UTC())
 	_ = p.taskMgr.ConfigureHistory(filepath.Dir(activePath), tasks.HistoryConfig{Enabled: p.cfg.TaskHistory.Enabled, RetentionDays: p.cfg.TaskHistory.RetentionDays, MaxRecords: p.cfg.TaskHistory.MaxRecords, MaxBytes: p.cfg.TaskHistory.MaxBytes, MaxItemsPerTask: p.cfg.TaskHistory.MaxItemsPerTask})
 	if p.requestCtx == nil || p.requestCtx.Err() != nil {
 		p.requestCtx, p.requestCancel = context.WithCancel(context.Background())

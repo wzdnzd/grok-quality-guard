@@ -95,3 +95,34 @@ func TestSelectionRuntimeRoundRobinCursorAdvancesExactlyOnce(t *testing.T) {
 		}
 	}
 }
+func TestSelectionRuntimeShrinksBindingsWhenLimitChanges(t *testing.T) {
+	runtime := NewSelectionRuntime()
+	now := time.Now().UTC()
+	for index := 0; index < 10; index++ {
+		sessionKey := fmt.Sprintf("session-%d", index)
+		authID := fmt.Sprintf("auth-%d", index)
+		runtime.GetOrBind(sessionKey, authID, now.Add(time.Duration(index)*time.Second), time.Hour, 10)
+	}
+	runtime.TrimBindings(3, now.Add(time.Minute))
+	if count := runtime.BindingCount(); count != 3 {
+		t.Fatalf("binding count after shrinking limit = %d, want 3", count)
+	}
+	if bound := runtime.GetOrBind("session-new", "auth-new", now.Add(2*time.Minute), time.Hour, 2); bound != "auth-new" {
+		t.Fatalf("new binding = %q", bound)
+	}
+	if count := runtime.BindingCount(); count != 2 {
+		t.Fatalf("binding count after adding at the new limit = %d, want 2", count)
+	}
+	runtime.RefreshBinding("session-new", "auth-new", now.Add(3*time.Minute), time.Hour, 1)
+	if count := runtime.BindingCount(); count != 1 {
+		t.Fatalf("binding count after refresh with lower limit = %d, want 1", count)
+	}
+
+	runtime = NewSelectionRuntime()
+	runtime.GetOrBind("session-a", "auth-a", now, time.Hour, 2)
+	runtime.GetOrBind("session-b", "auth-b", now.Add(time.Second), time.Hour, 2)
+	runtime.RefreshBinding("session-a", "auth-a", now.Add(2*time.Second), time.Hour, 2)
+	if bound, ok := runtime.LookupBinding("session-b", now.Add(3*time.Second)); !ok || bound != "auth-b" {
+		t.Fatalf("refreshing one binding evicted another: %q, %v", bound, ok)
+	}
+}

@@ -889,9 +889,7 @@ func (runtime *routingSelectionRuntime) GetOrBind(sessionKey, proposedAuthID str
 	if binding, ok := runtime.bindings[sessionKey]; ok && now.Before(binding.ExpiresAt) {
 		return binding.AuthID
 	}
-	if maxEntries > 0 && len(runtime.bindings) >= maxEntries {
-		runtime.evictOldestBindingLocked()
-	}
+	runtime.trimBindingsLocked(maxEntries, true)
 	runtime.setBindingLocked(sessionKey, routingSessionBinding{
 		AuthID:    proposedAuthID,
 		ExpiresAt: now.Add(ttl),
@@ -900,12 +898,16 @@ func (runtime *routingSelectionRuntime) GetOrBind(sessionKey, proposedAuthID str
 	return proposedAuthID
 }
 
-func (runtime *routingSelectionRuntime) RefreshBinding(sessionKey, authID string, now time.Time, ttl time.Duration) {
+func (runtime *routingSelectionRuntime) RefreshBinding(sessionKey, authID string, now time.Time, ttl time.Duration, maxEntries int) {
 	if sessionKey == "" || authID == "" {
 		return
 	}
 	runtime.mu.Lock()
 	runtime.pruneBindingsLocked(now)
+	// Remove the old entry before enforcing the cap so refreshing an existing
+	// binding at capacity cannot evict an unrelated session.
+	delete(runtime.bindings, sessionKey)
+	runtime.trimBindingsLocked(maxEntries, true)
 	runtime.setBindingLocked(sessionKey, routingSessionBinding{
 		AuthID:    authID,
 		ExpiresAt: now.Add(ttl),
@@ -957,26 +959,45 @@ func (runtime *routingSelectionRuntime) compactBindingHeapsLocked() {
 	}
 }
 
-func (runtime *routingSelectionRuntime) evictOldestBindingLocked() {
+func (runtime *routingSelectionRuntime) trimBindingsLocked(maxEntries int, reserveSlot bool) {
+	if maxEntries <= 0 {
+		return
+	}
+	limit := maxEntries
+	if reserveSlot {
+		limit--
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	for len(runtime.bindings) > limit {
+		if !runtime.evictOldestBindingLocked() {
+			break
+		}
+	}
+}
+
+func (runtime *routingSelectionRuntime) evictOldestBindingLocked() bool {
 	for runtime.bindingAge.Len() > 0 {
 		entry := heap.Pop(&runtime.bindingAge).(bindingTimeEntry)
 		binding, ok := runtime.bindings[entry.sessionKey]
 		if ok && binding.BoundAt.Equal(entry.at) {
 			delete(runtime.bindings, entry.sessionKey)
-			return
+			return true
 		}
 	}
 	// The heaps can only lag the map after lazy deletions. Rebuild once if a
 	// caller still needs to enforce the size limit.
 	if len(runtime.bindings) == 0 {
-		return
+		return false
 	}
 	runtime.compactBindingHeapsLocked()
 	for runtime.bindingAge.Len() > 0 {
 		entry := heap.Pop(&runtime.bindingAge).(bindingTimeEntry)
 		if _, ok := runtime.bindings[entry.sessionKey]; ok {
 			delete(runtime.bindings, entry.sessionKey)
-			return
+			return true
 		}
 	}
+	return false
 }

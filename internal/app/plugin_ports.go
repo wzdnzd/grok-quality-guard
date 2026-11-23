@@ -409,6 +409,7 @@ func (p *Plugin) SetPolicy(policy appconfig.Policy) {
 		_ = p.taskMgr.ConfigureHistory(filepath.Dir(p.store.Path()), tasks.HistoryConfig{Enabled: policy.TaskHistory.Enabled, RetentionDays: policy.TaskHistory.RetentionDays, MaxRecords: policy.TaskHistory.MaxRecords, MaxBytes: policy.TaskHistory.MaxBytes, MaxItemsPerTask: policy.TaskHistory.MaxItemsPerTask})
 	}
 	p.routingSvc.InvalidatePolicy()
+	p.routingSvc.TrimBindings(policy.Routing.Affinity.MaxEntries, time.Now().UTC())
 	p.mu.Unlock()
 }
 

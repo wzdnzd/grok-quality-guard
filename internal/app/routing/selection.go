@@ -22,7 +22,6 @@ type transparentSelection struct {
 	preferredID        string
 	snapshot           *routingSelectionSnapshot
 	topLayerKey        string
-	topBucketKey       string
 	layerOrder         []string
 	layerIndex         int
 	currentLayerKey    string
@@ -76,7 +75,7 @@ func (s *Service) newTransparentSelectionWithSession(sessionKey string) (*transp
 		return nil, errEnsure
 	}
 	s.maybeRefreshSelectionIndex(time.Now().UTC())
-	policy := s.env.Policy()
+	policy := normalizeRoutingPolicy(s.env.Policy())
 	snapshot := s.selectionIndex.Load()
 	if snapshot == nil {
 		return nil, fmt.Errorf("selection index is not ready")
@@ -94,9 +93,6 @@ func (s *Service) newTransparentSelectionWithSession(sessionKey string) (*transp
 	for _, key := range selection.layerOrder {
 		if len(snapshot.Layer(key)) > 0 {
 			selection.topLayerKey = key
-			if buckets := snapshot.Buckets(key); len(buckets) > 0 {
-				selection.topBucketKey = buckets[0].Key
-			}
 			break
 		}
 	}
@@ -111,8 +107,7 @@ func (s *Service) newTransparentSelectionWithSession(sessionKey string) (*transp
 	if selection.routing.Strategy.PreferLastSuccess {
 		if authID, _ := s.selectionRuntime.Preferred(); authID != "" {
 			layerKey, ok := snapshot.LayerForAuth(authID)
-			bucketKey, bucketOK := snapshot.BucketForAuth(authID)
-			if !ok || layerKey != selection.topLayerKey || !bucketOK || bucketKey != selection.topBucketKey {
+			if !ok || layerKey != selection.topLayerKey {
 				s.selectionRuntime.ClearPreferred(authID)
 			} else {
 				selection.preferredID = authID
@@ -338,13 +333,12 @@ func (selection *transparentSelection) tryPreferredSpecial(ctx context.Context) 
 	if selection.preferredID == "" || !selection.routing.Strategy.PreferLastSuccess {
 		return transparentCandidateAttempt{}, false
 	}
-	if selection.currentLayerKey != selection.topLayerKey || selection.currentBucketKey != selection.topBucketKey {
+	if selection.currentLayerKey != selection.topLayerKey {
 		return transparentCandidateAttempt{}, false
 	}
 	authID := selection.preferredID
 	layerKey, ok := selection.snapshot.LayerForAuth(authID)
-	bucketKey, bucketOK := selection.snapshot.BucketForAuth(authID)
-	if !ok || layerKey != selection.topLayerKey || !bucketOK || bucketKey != selection.topBucketKey {
+	if !ok || layerKey != selection.topLayerKey {
 		selection.plugin.selectionRuntime.ClearPreferred(authID)
 		selection.preferredID = ""
 		return transparentCandidateAttempt{}, false
@@ -352,8 +346,7 @@ func (selection *transparentSelection) tryPreferredSpecial(ctx context.Context) 
 	if _, tried := selection.tried[authID]; tried {
 		return transparentCandidateAttempt{}, false
 	}
-	state, okState := selection.plugin.env.StateAccount(authID)
-	if !okState || state.State != StateHealthy {
+	if !selection.preferredEligible(authID) {
 		selection.plugin.selectionRuntime.ClearPreferred(authID)
 		selection.preferredID = ""
 		return transparentCandidateAttempt{}, false
@@ -392,8 +385,7 @@ func (selection *transparentSelection) candidateEligible(authID string) bool {
 
 func (selection *transparentSelection) preferredEligible(authID string) bool {
 	layerKey, ok := selection.snapshot.LayerForAuth(authID)
-	bucketKey, bucketOK := selection.snapshot.BucketForAuth(authID)
-	if !ok || layerKey != selection.topLayerKey || !bucketOK || bucketKey != selection.topBucketKey {
+	if !ok || layerKey != selection.topLayerKey {
 		return false
 	}
 	state, ok := selection.plugin.env.StateAccount(authID)
@@ -411,6 +403,7 @@ func (selection *transparentSelection) MarkSuccess(authID, source string) {
 			authID,
 			now,
 			selection.routing.Affinity.TTL.Duration,
+			selection.routing.Affinity.MaxEntries,
 		)
 	}
 	switch source {
@@ -438,8 +431,10 @@ func (selection *transparentSelection) MarkFailure(authID, _ string, class strin
 			selection.sessionAuthID = ""
 		}
 	}
+	// A hard failure is authoritative even when another request has already
+	// replaced this selection's local preferred snapshot.
+	selection.plugin.selectionRuntime.ClearPreferred(authID)
 	if selection.preferredID == authID {
-		selection.plugin.selectionRuntime.ClearPreferred(authID)
 		selection.preferredID = ""
 	}
 }

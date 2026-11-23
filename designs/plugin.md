@@ -1131,7 +1131,7 @@ preferredSuccessAt
 1. 没有 preferred 时按当前层策略选号
 2. 选中 auth A 且质量门通过后，A 成为 preferred
 3. 后续请求优先使用 A
-4. 只要 A 仍为 `healthy`、属于当前最高层且当前没有进行中的请求，就继续使用 A
+4. 只要 A 仍为 `healthy`、属于当前最高层且当前没有进行中的请求，就继续使用 A；EWMA 评分导致桶变化不影响该判断
 5. A 额度耗尽、进入冷却、变成非候选状态、被删除或不可执行后清除 preferred
 6. fallback 成功后，如果当前 preferred 已失效，则新 auth 成为 preferred
 
@@ -1321,17 +1321,17 @@ for each layer in snapshot.Order:
       if hard account failure: delete binding
       continue with scored buckets in this layer
 
-  for each bucket in layer.Buckets (score descending):
-    if preferred auth exists and belongs to the top bucket:
-      if preferred is healthy and TryReservePreferred succeeds:
-        try preferred
-        if success: refresh preferred, return
-        if hard account failure: clear preferred
-        continue to next candidate in this bucket
-      else if preferred is healthy but busy:
-        keep preferred
-        skip it in idle pass
+  if preferred auth exists and this is the current top layer:
+    if preferred is healthy and TryReservePreferred succeeds:
+      try preferred even when it is in a lower score bucket
+      if success: refresh preferred, return
+      if hard account failure: clear preferred
+      continue to next candidate in this layer
+    else if preferred is healthy but busy:
+      keep preferred
+      skip it in idle pass
 
+  for each bucket in layer.Buckets (score descending):
     start := strategyStart(bucket)
     for idle candidate in bucket:
       if excluded, tried, ineligible or busy: continue
@@ -1375,19 +1375,17 @@ return quality_degraded
 - 继续当前层剩余 auth
 - 当前层结束后再进入下一层
 
-临时容量或传输失败包括：
+非账号质量失败包括：
 
-- host 暂时无容量
-- 临时 proxy 错误
-- 网络超时
-- 可重试临时执行错误
+- host 暂时无容量或 `model_cooldown`（`ignored`）
+- `rate_limited`
+- `probe_error` / `proxy_error`（网络超时、TLS handshake timeout、SOCKS 代理失败等）
 
 处理：
 
-- 当前请求可以切换到当前层其他 auth
-- 不因为一次临时失败就替换全局 preferred
-- auth 仍为 healthy 时保留 preferred 和 session 绑定
-- 后续 state machine 若将其转为非候选状态，再按账号级失败处理
+- `ignored` / `rate_limited` 可以触发当前请求换号，但不替换全局 preferred，也不在 `MarkFailure` 阶段主动删除 session 绑定
+- `probe_error` / `proxy_error` 视为传输级硬失败：即使请求体不可安全重放，只要尚未向客户端 emit，也换到下一账号；同时清除该 auth 的当前 session 绑定和匹配的全局 preferred，避免后续请求继续命中不可达连接
+- 这些传输失败不是账号质量 strike；账号是否转为 `suspect` 仍由状态机独立决定
 
 Resin 轮换语义保持不变：
 

@@ -69,16 +69,20 @@ func TestTransparentFailureCanFailoverByStage(t *testing.T) {
 }
 
 func TestTransparentTransportFailureUsesNetworkReason(t *testing.T) {
-	for _, message := range []string{
-		"net/http: TLS handshake timeout",
-		"proxyconnect tcp: dial tcp 127.0.0.1:2260: connect: connection refused",
+	for _, test := range []struct {
+		message string
+		class   string
+	}{
+		{message: "net/http: TLS handshake timeout", class: ClassProbeError},
+		{message: "proxyconnect tcp: dial tcp 127.0.0.1:2260: connect: connection refused", class: ClassProxyError},
+		{message: "unknown error general SOCKS server failure", class: ClassProxyError},
 	} {
-		class, reason := classifyTransparentTransportFailure(errors.New(message))
-		if class != ClassProbeError && class != ClassProxyError {
-			t.Fatalf("%q classified as %q", message, class)
+		class, reason := classifyTransparentTransportFailure(errors.New(test.message))
+		if class != test.class {
+			t.Fatalf("%q classified as %q, want %q", test.message, class, test.class)
 		}
 		if reason != "reason.detail.upstream_network_error" {
-			t.Fatalf("%q reason = %q, want upstream_network_error", message, reason)
+			t.Fatalf("%q reason = %q, want upstream_network_error", test.message, reason)
 		}
 	}
 }
