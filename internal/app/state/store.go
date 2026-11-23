@@ -102,6 +102,8 @@ type AccountState struct {
 	SoftStrikes                  int                        `json:"soft_strikes,omitempty"`
 	ErrorStrikes                 int                        `json:"error_strikes,omitempty"`
 	ThinkingStrikes              int                        `json:"thinking_strikes,omitempty"`
+	EvidenceSamples              int                        `json:"evidence_samples,omitempty"`
+	EvidenceHits                 int                        `json:"evidence_hits,omitempty"`
 	ProbeBackoffUntil            time.Time                  `json:"probe_backoff_until,omitzero"`
 	DisableKind                  string                     `json:"disable_kind,omitempty"`
 	DisableReason                string                     `json:"disable_reason,omitempty"`

@@ -701,6 +701,11 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 	sig.DurationMS = time.Since(probeStartedAt).Milliseconds()
 	markerOK := matchProbeMarker(sig.VisibleText, probeMarker)
 	probeReasoningRequired := reasoningRequiredForModelWithNonReasoning(probeCfg.Model, body, qualityCfg.NonReasoningModels)
+	// An active probe asks for reasoning on a protocol that can expose it, so
+	// its missing-thinking verdict is always a hard one.
+	sig.ReasoningExplicit = probeReasoningRequired
+	sig.CapabilityKnown = true
+	sig.EvidenceCapable = true
 	verdict := classifyProbeResult(sig, qualityCfg, markerOK, probeReasoningRequired)
 	if verdict.Class == ClassNone {
 		if errSuccess := s.markProbeSuccess(authID, verdict.Signals); errSuccess != nil {

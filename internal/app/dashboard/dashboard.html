@@ -4995,6 +4995,8 @@
                         class="check-desc">ui.after_consecutive_missing_reasoning_hits_run_an_asynchronous_probe</span></span></label>
                   <label class="check-card"><input id="p_fail_closed" type="checkbox"><span class="check-copy"><span
                         class="check-title">ui.strict_short_window_detection</span><span class="check-desc">ui.when_enabled_a_very_short_generation_window_with_tps</span></span></label>
+                  <label class="check-card"><input id="p_shadow_mode" type="checkbox"><span class="check-copy"><span
+                        class="check-title">ui.shadow_mode</span><span class="check-desc">ui.shadow_mode_quality_observations_only</span></span></label>
                   <div class="field"><label for="p_min_passive_output">ui.minimum_output_tokens_for_passive_audit</label><input
                       id="p_min_passive_output" type="number" min="1"></div>
                   <div class="field"><label for="p_min_encrypted_bytes">ui.minimum_encrypted_reasoning_bytes</label><input
@@ -5018,6 +5020,10 @@
                       placeholder="30s"></div>
                   <div class="field"><label for="p_stream_idle_timeout">ui.stream_idle_timeout</label><input id="p_stream_idle_timeout"
                       type="text" placeholder="90s"></div>
+                  <div class="field"><label for="p_max_hold_total">ui.maximum_withhold_time_across_attempts</label><input
+                      id="p_max_hold_total" type="text" placeholder="90s"></div>
+                  <div class="field"><label for="p_hold_keepalive">ui.hold_keepalive_interval</label><input id="p_hold_keepalive"
+                      type="text" placeholder="5s"></div>
                   <div class="field"><label for="p_hold_max_bytes">ui.maximum_buffer_bytes</label><input id="p_hold_max_bytes"
                       type="number" min="1"></div>
                   <div class="field"><label for="p_max_attempts">ui.maximum_attempts_in_transparent_mode</label><input id="p_max_attempts"
@@ -9725,6 +9731,8 @@
       'p_empty_cooldown',
       'p_hold_timeout',
       'p_stream_idle_timeout',
+      'p_max_hold_total',
+      'p_hold_keepalive',
       'p_probe_timeout',
       'p_probe_scan_interval',
       'p_probe_unknown_delay',
@@ -9966,6 +9974,9 @@
       setValue('p_min_hold_output', quality.min_hold_output_tokens || 8);
       setValue('p_hold_timeout', quality.hold_timeout || '30s');
       setValue('p_stream_idle_timeout', quality.stream_idle_timeout || '90s');
+      setValue('p_max_hold_total', quality.max_hold_total || '90s');
+      setValue('p_hold_keepalive', quality.hold_keepalive || '5s');
+      setChecked('p_shadow_mode', quality.shadow_mode === true);
       setValue('p_hold_max_bytes', quality.hold_max_buffer_bytes || 4194304);
       setValue('p_min_encrypted_bytes', quality.min_encrypted_bytes || 256);
       setValue('p_encrypted_per_token', quality.encrypted_bytes_per_reasoning_token || 4);
@@ -10040,6 +10051,9 @@
       policy.quality.min_hold_output_tokens = numberValue('p_min_hold_output', 8);
       policy.quality.hold_timeout = valueOf('p_hold_timeout');
       policy.quality.stream_idle_timeout = valueOf('p_stream_idle_timeout');
+      policy.quality.max_hold_total = valueOf('p_max_hold_total');
+      policy.quality.hold_keepalive = valueOf('p_hold_keepalive');
+      policy.quality.shadow_mode = document.getElementById('p_shadow_mode').checked;
       policy.quality.hold_max_buffer_bytes = numberValue('p_hold_max_bytes', 4194304);
       policy.quality.min_encrypted_bytes = numberValue('p_min_encrypted_bytes', 256);
       policy.quality.encrypted_bytes_per_reasoning_token = numberValue('p_encrypted_per_token', 4);

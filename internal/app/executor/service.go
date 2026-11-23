@@ -72,8 +72,14 @@ type Facts struct {
 	SourceFormat      string
 	Model             string
 	ReasoningRequired bool
-	Replayable        bool
-	SessionSeed       string
+	// ReasoningExplicit separates a client request for reasoning from a
+	// capability table inference.
+	ReasoningExplicit bool
+	// EvidenceCapable reports whether the request path can expose reasoning
+	// evidence at all.
+	EvidenceCapable bool
+	Replayable      bool
+	SessionSeed     string
 }
 
 type Attempt struct {
@@ -115,6 +121,9 @@ type Environment interface {
 	AutoRotateAfterQualityFailure() bool
 	IsGrokRouteModel(string) bool
 	HasAvailableXAIAuth([]string) bool
+	// RequestProbe schedules a due active probe when a withheld sample needs
+	// cross-verification. It must return immediately.
+	RequestProbe(string)
 }
 
 type Service struct {

@@ -11,6 +11,7 @@ import (
 
 	"grok-quality-guard/internal/abi"
 	"grok-quality-guard/internal/app/auth"
+	appstate "grok-quality-guard/internal/app/state"
 	"grok-quality-guard/internal/config"
 	"grok-quality-guard/internal/quality"
 )
@@ -21,6 +22,7 @@ type Environment interface {
 	IsProbeAuth(string) bool
 	ApplyVerdict(context.Context, string, quality.QualityVerdict, string, string) error
 	RecordInternalError(string, error) error
+	StateAccount(string) (appstate.AccountState, bool)
 }
 
 type Observation struct {
@@ -214,6 +216,19 @@ func (s *Service) HandleUsage(request []byte) {
 		sig.TPS = quality.TPS(sig.OutputTokens, sig.GenerationMS)
 	}
 	sig.ReasoningRequired = reasoningNeeded
+	sig.ReasoningExplicit = quality.ReasoningExplicit(reasoningBody)
+	sig.CapabilityKnown = true
+	sig.EvidenceCapable = passiveEvidenceCapable(sig.Protocol)
+	if account, ok := s.env.StateAccount(record.AuthID); ok {
+		sig.AccountEvidenceSamples = int64(account.EvidenceSamples)
+		sig.AccountThinkingStrikes = account.ThinkingStrikes
+		if account.EvidenceSamples > 0 {
+			sig.AccountEvidenceRate = float64(account.EvidenceHits) / float64(account.EvidenceSamples)
+		}
+		if account.EvidenceHits > 0 {
+			sig.EvidenceCapable = true
+		}
+	}
 	verdict := quality.ClassifyPassiveAudit(sig, policy.Quality)
 
 	if errApply := s.env.ApplyVerdict(context.Background(), record.AuthID, verdict, "passive", ""); errApply != nil {
@@ -223,6 +238,13 @@ func (s *Service) HandleUsage(request []byte) {
 
 func UsageReasoningRequired(record pluginapi.UsageRecord, body []byte) bool {
 	return UsageReasoningRequiredWithNonReasoning(record, body, nil)
+}
+
+// passiveEvidenceCapable reports whether the observed protocol can carry
+// reasoning evidence. Chat completions cannot, so a missing signal there says
+// nothing about the account. Unknown protocols stay strict.
+func passiveEvidenceCapable(protocol string) bool {
+	return strings.ToLower(strings.TrimSpace(protocol)) != quality.ProtocolChat
 }
 
 func UsageReasoningRequiredWithNonReasoning(record pluginapi.UsageRecord, body []byte, nonReasoning []string) bool {

@@ -776,7 +776,7 @@ func TestBufferOverflowDoesNotRecordHealthyVerdict(t *testing.T) {
 	}
 }
 
-func TestDumpVerdictWaitsForFinalVisibleWindowBeforeJudging(t *testing.T) {
+func TestDumpVerdictReleasesSustainedVisibleStream(t *testing.T) {
 	config := appconfig.DefaultQualityConfig()
 	base := qualitypkg.Signals{
 		HasThinking:     true,
@@ -789,8 +789,14 @@ func TestDumpVerdictWaitsForFinalVisibleWindowBeforeJudging(t *testing.T) {
 		VisibleChunks:   12,
 		VisibleSpanMS:   224,
 	}
-	if verdict := ClassifyQualityHold(base, config.MinHoldOutputTokens); verdict.Action != qualitypkg.QualityActionWait {
-		t.Fatalf("open visible window produced %s/%s, want wait", verdict.Action, verdict.Class)
+	if verdict := ClassifyQualityHold(base, config.MinHoldOutputTokens); verdict.Action != qualitypkg.QualityActionDeliver || verdict.Class != qualitypkg.ClassNone {
+		t.Fatalf("sustained visible stream with encrypted evidence produced %s/%s, want deliver", verdict.Action, verdict.Class)
+	}
+	starting := base
+	starting.VisibleChunks = 1
+	starting.VisibleSpanMS = 100
+	if verdict := ClassifyQualityHold(starting, config.MinHoldOutputTokens); verdict.Action != qualitypkg.QualityActionWait {
+		t.Fatalf("first visible chunk produced %s/%s, want wait", verdict.Action, verdict.Class)
 	}
 	base.Terminal = true
 	if verdict := ClassifyQualityHold(base, config.MinHoldOutputTokens); verdict.Action != qualitypkg.QualityActionDeliver || verdict.Class != qualitypkg.ClassNone {

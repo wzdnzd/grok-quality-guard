@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -169,6 +170,44 @@ func (p *Plugin) Reconcile(ctx context.Context) error { return p.qualitySvc.Reco
 
 func (p *Plugin) ProbeAccount(ctx context.Context, authID string, force bool, callbackID string) error {
 	return p.probeSvc.ProbeAccount(ctx, authID, force, callbackID)
+}
+
+// RequestProbe schedules a due active probe for an account whose request was
+// withheld. It never blocks the request path and only runs when thinking
+// cross-verification is enabled.
+func (p *Plugin) RequestProbe(authID string) {
+	if p == nil || p.probeSvc == nil {
+		return
+	}
+	authID = strings.TrimSpace(authID)
+	if authID == "" {
+		return
+	}
+	p.mu.RLock()
+	enabled := p.policy.Quality.ThinkingCrossVerify
+	p.mu.RUnlock()
+	if !enabled {
+		return
+	}
+	now := time.Now()
+	p.probeRequestMu.Lock()
+	if last, seen := p.probeRequests[authID]; seen && now.Sub(last) < time.Minute {
+		p.probeRequestMu.Unlock()
+		return
+	}
+	p.probeRequests[authID] = now
+	// Bound the dedupe map without a background sweeper.
+	for key, at := range p.probeRequests {
+		if now.Sub(at) > time.Hour {
+			delete(p.probeRequests, key)
+		}
+	}
+	p.probeRequestMu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		_ = p.probeSvc.ProbeAccount(ctx, authID, false, "")
+	}()
 }
 
 func (p *Plugin) AccountView(ctx context.Context, account model.Account) (any, error) {

@@ -113,6 +113,9 @@ type QualityConfig struct {
 	MinHoldOutputTokens             int64    `yaml:"min_hold_output_tokens" json:"min_hold_output_tokens"`
 	HoldTimeout                     Duration `yaml:"hold_timeout" json:"hold_timeout"`
 	StreamIdleTimeout               Duration `yaml:"stream_idle_timeout" json:"stream_idle_timeout"`
+	MaxHoldTotal                    Duration `yaml:"max_hold_total" json:"max_hold_total"`
+	HoldKeepalive                   Duration `yaml:"hold_keepalive" json:"hold_keepalive"`
+	ShadowMode                      bool     `yaml:"shadow_mode" json:"shadow_mode"`
 	HoldMaxBufferBytes              int64    `yaml:"hold_max_buffer_bytes" json:"hold_max_buffer_bytes"`
 	MinEncryptedBytes               int64    `yaml:"min_encrypted_bytes" json:"min_encrypted_bytes"`
 	EncryptedBytesPerReasoningToken int64    `yaml:"encrypted_bytes_per_reasoning_token" json:"encrypted_bytes_per_reasoning_token"`
@@ -287,6 +290,9 @@ func DefaultQualityConfig() QualityConfig {
 		MinHoldOutputTokens:             8,
 		HoldTimeout:                     NewDuration(30 * time.Second),
 		StreamIdleTimeout:               NewDuration(90 * time.Second),
+		MaxHoldTotal:                    NewDuration(90 * time.Second),
+		HoldKeepalive:                   NewDuration(5 * time.Second),
+		ShadowMode:                      false,
 		HoldMaxBufferBytes:              4 * 1024 * 1024,
 		MinEncryptedBytes:               256,
 		EncryptedBytesPerReasoningToken: 4,
@@ -569,6 +575,12 @@ func normalizeQuality(q *QualityConfig) error {
 	}
 	if q.StreamIdleTimeout.Duration <= 0 {
 		q.StreamIdleTimeout = defaults.StreamIdleTimeout
+	}
+	if q.MaxHoldTotal.Duration <= 0 {
+		q.MaxHoldTotal = defaults.MaxHoldTotal
+	}
+	if q.HoldKeepalive.Duration <= 0 {
+		q.HoldKeepalive = defaults.HoldKeepalive
 	}
 	if q.HoldMaxBufferBytes <= 0 {
 		q.HoldMaxBufferBytes = defaults.HoldMaxBufferBytes

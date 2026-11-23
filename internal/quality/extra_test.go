@@ -3,6 +3,7 @@ package quality
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"grok-quality-guard/internal/config"
 )
@@ -139,9 +140,21 @@ func TestReasoningStubSettlesMissingThinkingOnceVisibleOutputStreams(t *testing.
 	}
 	starting := streaming
 	starting.VisibleSpanMS = 20
-	starting.VisibleChunks = 12
+	starting.VisibleChunks = 1
 	if verdict := ClassifyQualityHold(starting, 8); verdict.Action != QualityActionWait {
 		t.Fatalf("first visible burst without a settled window = %#v, want wait", verdict)
+	}
+	twoChunks := streaming
+	twoChunks.VisibleSpanMS = 20
+	twoChunks.VisibleChunks = 2
+	if verdict := ClassifyQualityHold(twoChunks, 8); verdict.Class != ClassMissingThinking {
+		t.Fatalf("two visible chunks did not settle = %#v, want missing_thinking", verdict)
+	}
+	spanOnly := streaming
+	spanOnly.VisibleSpanMS = 40
+	spanOnly.VisibleChunks = 1
+	if verdict := ClassifyQualityHold(spanOnly, 8); verdict.Class != ClassMissingThinking {
+		t.Fatalf("visible span did not settle = %#v, want missing_thinking", verdict)
 	}
 	withThinking := streaming
 	withThinking.HasThinking = true
@@ -164,5 +177,163 @@ func TestStreamProgressEventsTrackGeneratedOutputOnly(t *testing.T) {
 	analyzer.ObserveChunk([]byte("data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"output_tokens\":10}}}\n\n"))
 	if got := analyzer.Preview().ProgressEvents; got != 2 {
 		t.Fatalf("generated output progress = %d, want 2", got)
+	}
+}
+
+func TestMissingThinkingRespectsExplicitCapabilityAndAccountPrior(t *testing.T) {
+	base := Signals{
+		Terminal:         true,
+		FirstVisible:     true,
+		VisibleTokens:    64,
+		VisibleSpanMS:    1200,
+		VisibleChunks:    12,
+		ReasoningStarted: true,
+	}
+	explicit := base
+	explicit.ReasoningExplicit = true
+	explicit.CapabilityKnown = true
+	explicit.EvidenceCapable = true
+	if verdict := ClassifyQualityHold(explicit, 8); verdict.Action != QualityActionWithhold || verdict.Class != ClassMissingThinking {
+		t.Fatalf("explicit reasoning without evidence = %#v, want missing_thinking", verdict)
+	}
+
+	inferred := base
+	inferred.CapabilityKnown = true
+	inferred.EvidenceCapable = true
+	if verdict := ClassifyQualityHold(inferred, 8); verdict.Action != QualityActionWithhold {
+		t.Fatalf("inferred reasoning without history = %#v, want missing_thinking", verdict)
+	}
+	history := inferred
+	history.AccountEvidenceSamples = 5
+	history.AccountEvidenceRate = 1
+	if verdict := ClassifyQualityHold(history, 8); verdict.Action != QualityActionDeliver || verdict.Class != ClassNone {
+		t.Fatalf("first inferred miss on an evidence account = %#v, want deliver", verdict)
+	}
+	if verdict := ClassifyQualityHold(history, 8); verdict.Reason != "reason.detail.inferred_reasoning_unconfirmed_by_account_history" {
+		t.Fatalf("inferred release reason = %q", verdict.Reason)
+	}
+	weak := history
+	weak.AccountEvidenceRate = 0.2
+	if verdict := ClassifyQualityHold(weak, 8); verdict.Action != QualityActionWithhold {
+		t.Fatalf("inferred miss on a weak account = %#v, want missing_thinking", verdict)
+	}
+	struck := history
+	struck.AccountThinkingStrikes = 1
+	if verdict := ClassifyQualityHold(struck, 8); verdict.Action != QualityActionWithhold {
+		t.Fatalf("inferred miss on a struck account = %#v, want missing_thinking", verdict)
+	}
+
+	captiveChat := inferred
+	captiveChat.EvidenceCapable = false
+	if verdict := ClassifyQualityHold(captiveChat, 8); verdict.Action != QualityActionDeliver {
+		t.Fatalf("chat path without evidence support = %#v, want deliver", verdict)
+	}
+	if verdict := ClassifyQualityHold(captiveChat, 8); verdict.Reason != "reason.detail.reasoning_evidence_not_exposed_by_protocol" {
+		t.Fatalf("capability release reason = %q", verdict.Reason)
+	}
+}
+
+func TestClassifyPassiveAuditRespectsInferredHistory(t *testing.T) {
+	cfg := config.DefaultQualityConfig()
+	sig := Signals{
+		Streaming:         true,
+		Terminal:          true,
+		ReasoningRequired: true,
+		FirstTokenKnown:   true,
+		FirstTokenMS:      100,
+		DurationMS:        3000,
+		VisibleTokens:     64,
+		OutputTokens:      80,
+	}
+	sig.CapabilityKnown = true
+	sig.EvidenceCapable = true
+	if verdict := ClassifyPassiveAudit(sig, cfg); verdict.Class != ClassMissingThinking {
+		t.Fatalf("passive inferred miss without history = %q, want missing_thinking", verdict.Class)
+	}
+	sig.AccountEvidenceSamples = 4
+	sig.AccountEvidenceRate = 0.75
+	if verdict := ClassifyPassiveAudit(sig, cfg); verdict.Class == ClassMissingThinking {
+		t.Fatalf("passive inferred miss on an evidence account was withheld: %#v", verdict)
+	}
+	sig.ReasoningExplicit = true
+	if verdict := ClassifyPassiveAudit(sig, cfg); verdict.Class != ClassMissingThinking {
+		t.Fatalf("passive explicit miss = %q, want missing_thinking", verdict.Class)
+	}
+}
+
+func TestEvidenceOrderedStreamIsNotCipherDrool(t *testing.T) {
+	sig := Signals{
+		FirstVisible:     true,
+		VisibleTokens:    2048,
+		VisibleSpanMS:    3000,
+		VisibleChunks:    200,
+		EncryptedBytes:   2048,
+		EncryptedFloor:   256,
+		EvidenceAtMS:     120,
+		FirstVisibleMS:   900,
+		ReasoningStartMS: 100,
+	}
+	if verdict := ClassifyQualityHold(sig, 8); verdict.Class == ClassCipherDrool {
+		t.Fatalf("ordered evidence was judged cipher drool: %#v", verdict)
+	}
+	late := sig
+	late.EvidenceAtMS = 0
+	if verdict := ClassifyQualityHold(late, 8); verdict.Class != ClassCipherDrool {
+		t.Fatalf("evidence-free cipher stream class = %q, want cipher_drool", verdict.Class)
+	}
+}
+
+func TestSilenceThenBurstIsBufferedBurst(t *testing.T) {
+	sig := Signals{
+		Terminal:        true,
+		FirstVisible:    true,
+		VisibleTokens:   120,
+		VisibleSpanMS:   3000,
+		VisibleChunks:   12,
+		VisibleGapMaxMS: 2600,
+		ReasoningTokens: 200,
+		EncryptedBytes:  2048,
+		EncryptedFloor:  256,
+	}
+	if verdict := ClassifyQualityHold(sig, 8); verdict.Class != ClassBufferedBurst {
+		t.Fatalf("silence-then-burst class = %q, want buffered_burst", verdict.Class)
+	}
+	steady := sig
+	steady.VisibleGapMaxMS = 40
+	if verdict := ClassifyQualityHold(steady, 8); verdict.Class == ClassBufferedBurst {
+		t.Fatalf("steady stream was judged a burst: %#v", verdict)
+	}
+	cheap := sig
+	cheap.ReasoningTokens = 0
+	cheap.EncryptedBytes = 0
+	cheap.EncryptedFloor = 0
+	if verdict := ClassifyQualityHold(cheap, 8); verdict.Class == ClassBufferedBurst {
+		t.Fatalf("bill-free burst was judged a burst: %#v", verdict)
+	}
+}
+
+func TestVisibleTokensWeightCJKText(t *testing.T) {
+	cjk := NewStreamAnalyzerWithProtocol(qualityProtocolResponses)
+	cjk.ObserveChunk([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"你好世界\"}\n\n"))
+	if got := cjk.Preview().VisibleTokens; got != 4 {
+		t.Fatalf("CJK visible tokens = %d, want 4", got)
+	}
+	ascii := NewStreamAnalyzerWithProtocol(qualityProtocolResponses)
+	ascii.ObserveChunk([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"abcdefgh\"}\n\n"))
+	if got := ascii.Preview().VisibleTokens; got != 2 {
+		t.Fatalf("ASCII visible tokens = %d, want 2", got)
+	}
+}
+
+func TestVisibleGapsReported(t *testing.T) {
+	analyzer := NewStreamAnalyzerWithProtocol(qualityProtocolResponses)
+	analyzer.ObserveChunk([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"a\"}\n\n"))
+	time.Sleep(30 * time.Millisecond)
+	analyzer.ObserveChunk([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"b\"}\n\n"))
+	time.Sleep(10 * time.Millisecond)
+	analyzer.ObserveChunk([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"c\"}\n\n"))
+	sig := analyzer.Preview()
+	if sig.VisibleGapMaxMS < 20 || sig.VisibleGapMedMS < 5 {
+		t.Fatalf("visible gap stats = max %d median %d", sig.VisibleGapMaxMS, sig.VisibleGapMedMS)
 	}
 }

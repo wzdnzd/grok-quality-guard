@@ -5,6 +5,8 @@ import (
 	execapp "grok-quality-guard/internal/app/executor"
 	"net/http"
 	"strings"
+
+	domain "grok-quality-guard/internal/quality"
 )
 
 func (s *Service) prepareTransparentRequest(req Request) (Facts, error) {
@@ -25,9 +27,32 @@ func (s *Service) prepareTransparentRequest(req Request) (Facts, error) {
 		SourceFormat:      sourceFormat,
 		Model:             model,
 		ReasoningRequired: reasoningNeeded,
+		ReasoningExplicit: domain.ReasoningExplicitPayload(payload),
+		EvidenceCapable:   reasoningEvidenceCapableFormat(sourceFormat, req.Format),
 		Replayable:        safeReplayPayload(payload, sourceFormat),
 		SessionSeed:       extractSelectionSessionSeedPayload(req.Headers, payload),
 	}, nil
+}
+
+// reasoningEvidenceCapableFormat reports whether the protocol can expose
+// reasoning evidence. Chat completions carry no encrypted reasoning or
+// thinking blocks, so a missing evidence signal there says nothing about the
+// account.
+func reasoningEvidenceCapableFormat(formats ...string) bool {
+	for _, format := range formats {
+		normalized := strings.ToLower(strings.TrimSpace(format))
+		switch {
+		case normalized == "":
+			continue
+		case strings.Contains(normalized, "response"),
+			strings.Contains(normalized, "codex"),
+			strings.Contains(normalized, "message"),
+			strings.Contains(normalized, "anthropic"),
+			strings.Contains(normalized, "claude"):
+			return true
+		}
+	}
+	return false
 }
 
 func executionModelFromPayload(req Request, payload map[string]any) string {

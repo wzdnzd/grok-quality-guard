@@ -40,6 +40,10 @@ func ClassifyNonStreamResult(sig Signals, cfg config.QualityConfig, reasoningReq
 }
 
 func ReasoningRequired(body []byte) bool { return reasoningRequired(body) }
+func ReasoningExplicit(body []byte) bool {
+	return reasoningExplicit(decodeRequestPayload(body))
+}
+func reasoningExplicit(payload map[string]any) bool { return ReasoningExplicitPayload(payload) }
 func ReasoningRequiredForModel(modelName string, body []byte) bool {
 	return reasoningRequiredForModel(modelName, body)
 }

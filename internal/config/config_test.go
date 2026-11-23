@@ -28,8 +28,11 @@ func TestDecodeConfigPartialKeepsDefaults(t *testing.T) {
 	if cfg.Quality.SoftTPS != 500 || cfg.Quality.HardTPS != 1000 || cfg.Quality.MinGenerationMS != 1000 {
 		t.Fatalf("unexpected quality defaults: %#v", cfg.Quality)
 	}
-	if cfg.Quality.HoldTimeout.Duration != 30*time.Second || cfg.Quality.StreamIdleTimeout.Duration != 90*time.Second || cfg.Quality.MissingThinkingCooldown.Duration != 12*time.Hour {
+	if cfg.Quality.HoldTimeout.Duration != 30*time.Second || cfg.Quality.StreamIdleTimeout.Duration != 90*time.Second || cfg.Quality.MaxHoldTotal.Duration != 90*time.Second || cfg.Quality.HoldKeepalive.Duration != 5*time.Second || cfg.Quality.MissingThinkingCooldown.Duration != 12*time.Hour {
 		t.Fatalf("unexpected durations: %#v", cfg.Quality)
+	}
+	if cfg.Quality.ShadowMode {
+		t.Fatalf("shadow mode defaulted to enabled: %#v", cfg.Quality)
 	}
 }
 

@@ -43,7 +43,6 @@ func (s *Service) transparentExecute(ctx context.Context, req Request) (Result, 
 	body := facts.Body
 	sourceFormat := facts.SourceFormat
 	requestModel := facts.Model
-	reasoningNeeded := facts.ReasoningRequired
 	replayable := facts.Replayable
 	selection, errSelection := s.env.NewSelection(req, facts)
 	if errSelection != nil {
@@ -80,7 +79,8 @@ candidateLoop:
 			attempts++
 			execution := buildHostExecutionWithModel(req, body, sourceFormat, requestModel, account.ID, authRawString(raw, "proxy_url"), false)
 			raw = nil
-			result, verdict, errAttempt := s.executeTransparentOnce(ctx, execution, req.HostCallbackID, policy.Quality, reasoningNeeded)
+			info := s.transparentAttemptInfo(facts, account.ID)
+			result, verdict, errAttempt := s.executeTransparentOnce(ctx, execution, req.HostCallbackID, policy.Quality, info)
 			if errAttempt == errTransparentAttemptAborted {
 				attempt.Release()
 				return Result{}, errAttempt
@@ -130,7 +130,6 @@ func (s *Service) transparentExecuteBufferedStream(ctx context.Context, req Requ
 	body := facts.Body
 	sourceFormat := facts.SourceFormat
 	requestModel := facts.Model
-	reasoningNeeded := facts.ReasoningRequired
 	replayable := facts.Replayable
 	selection, errSelection := s.env.NewSelection(req, facts)
 	if errSelection != nil {
@@ -167,7 +166,8 @@ candidateLoop:
 			attempts++
 			execution := buildHostExecutionWithModel(req, body, sourceFormat, requestModel, account.ID, authRawString(raw, "proxy_url"), true)
 			raw = nil
-			result, verdict, errAttempt := s.executeTransparentBufferedAttempt(ctx, execution, req.HostCallbackID, policy.Quality, reasoningNeeded)
+			info := s.transparentAttemptInfo(facts, account.ID)
+			result, verdict, errAttempt := s.executeTransparentBufferedAttempt(ctx, execution, req.HostCallbackID, policy.Quality, info)
 			if errAttempt == errTransparentAttemptAborted {
 				attempt.Release()
 				return Result{}, errAttempt
@@ -205,7 +205,7 @@ candidateLoop:
 	return Result{}, fmt.Errorf("no healthy Grok account produced a valid response")
 }
 
-func (s *Service) executeTransparentOnce(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig, reasoningNeeded bool) (Result, QualityVerdict, error) {
+func (s *Service) executeTransparentOnce(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig, info attemptInfo) (Result, QualityVerdict, error) {
 	execution.Stream = false
 	if ctx.Err() != nil {
 		return Result{}, QualityVerdict{}, errTransparentAttemptAborted
@@ -228,14 +228,19 @@ func (s *Service) executeTransparentOnce(ctx context.Context, execution pluginap
 	analyzer.SetRetainText(false)
 	analyzer.SetEncryptedConfig(cfg.MinEncryptedBytes, cfg.EncryptedBytesPerReasoningToken)
 	analyzer.ObserveJSON(response.Body)
-	sig := analyzer.Finalize(true)
+	sig := info.decorate(analyzer.Finalize(true))
 	sig.DurationMS = time.Since(startedAt).Milliseconds()
-	verdict := classifyNonStreamResult(sig, cfg, reasoningNeeded, cfg.MinHoldOutputTokens)
+	verdict := classifyNonStreamResult(sig, cfg, info.ReasoningNeeded, cfg.MinHoldOutputTokens)
 	result := Result{Payload: response.Body, Headers: response.Headers, Available: true}
 	if verdict.Class == ClassNone {
 		_ = s.env.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
 		return result, verdict, nil
 	}
+	if cfg.ShadowMode {
+		s.recordShadowVerdict(execution.AuthID, verdict)
+		return result, verdict, nil
+	}
+	s.requestWithheldProbe(execution.AuthID, verdict)
 	return result, verdict, fmt.Errorf("quality gate rejected response: %s", verdict.Class)
 }
 
@@ -264,7 +269,7 @@ func (s *Service) openTransparentModelStream(ctx context.Context, execution plug
 	return stream, nil
 }
 
-func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig, reasoningNeeded bool) (Result, QualityVerdict, error) {
+func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig, info attemptInfo) (Result, QualityVerdict, error) {
 	// The host returns the stream only after the first chunk is readable, so the
 	// stream-open and TPS clocks must start before the call to include upstream TTFT.
 	attemptStartedAt := time.Now()
@@ -352,8 +357,8 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 	for _, payload := range outputNormalizer.Flush() {
 		chunks = append(chunks, pluginapi.ExecutorStreamChunk{Payload: payload})
 	}
-	sig := analyzer.Finalize(true)
-	verdict := classifyFinal(sig, cfg, reasoningNeeded, cfg.MinHoldOutputTokens, true)
+	sig := info.decorate(analyzer.Finalize(true))
+	verdict := classifyFinal(sig, cfg, info.ReasoningNeeded, cfg.MinHoldOutputTokens, true)
 	result := Result{Headers: stream.Headers, Chunks: chunks, Available: true}
 	if holdOverflow {
 		// The buffer limit bypassed the hold gate. Deliver the response but do
@@ -364,6 +369,11 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 		_ = s.env.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
 		return result, verdict, nil
 	}
+	if cfg.ShadowMode {
+		s.recordShadowVerdict(execution.AuthID, verdict)
+		return result, verdict, nil
+	}
+	s.requestWithheldProbe(execution.AuthID, verdict)
 	return result, verdict, fmt.Errorf("quality gate rejected stream: %s", verdict.Class)
 }
 
@@ -390,13 +400,15 @@ func (s *Service) runTransparentStreamBridge(ctx context.Context, req Request, s
 	body := facts.Body
 	sourceFormat := facts.SourceFormat
 	requestModel := facts.Model
-	reasoningNeeded := facts.ReasoningRequired
 	replayable := facts.Replayable
 	selection, errSelection := s.env.NewSelection(req, facts)
 	if errSelection != nil {
 		s.closePluginErrorStream(streamID, locale, "quality_degraded", http.StatusServiceUnavailable)
 		return
 	}
+	// One withhold budget covers every attempt of this request, so a pool of
+	// degraded accounts cannot hold the client past its own timeout.
+	holdDeadline := time.Now().Add(policy.Quality.MaxHoldTotal.Duration)
 	maxAttempts := transparentMaxAttempts(policy)
 	attempts := 0
 	last := StreamAttempt{}
@@ -428,7 +440,8 @@ candidateLoop:
 			attempts++
 			execution := buildHostExecutionWithModel(req, body, sourceFormat, requestModel, account.ID, authRawString(raw, "proxy_url"), true)
 			raw = nil
-			outcome := s.executeTransparentStreamAttempt(ctx, execution, req.HostCallbackID, policy.Quality, streamID, reasoningNeeded)
+			info := s.transparentAttemptInfo(facts, account.ID)
+			outcome := s.executeTransparentStreamAttempt(ctx, execution, req.HostCallbackID, policy.Quality, streamID, info, holdDeadline)
 			if outcome.Aborted {
 				attempt.Release()
 				s.closePluginStream(streamID, "", "", 0)
@@ -501,7 +514,8 @@ func transparentHoldBlocks(cfg QualityConfig, reasoningNeeded bool, verdict Qual
 	return true
 }
 
-func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig, streamID string, reasoningNeeded bool) StreamAttempt {
+func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig, streamID string, info attemptInfo, holdDeadline time.Time) StreamAttempt {
+	reasoningNeeded := info.ReasoningNeeded
 	// The host returns the stream only after the first chunk is readable, so the
 	// stream-open and TPS clocks must start before the call to include upstream TTFT.
 	attemptStartedAt := time.Now()
@@ -562,12 +576,16 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 		}
 	}()
 
-	holdTimeout := cfg.HoldTimeout.Duration
-	if holdTimeout <= 0 {
-		holdTimeout = 30 * time.Second
-	}
-	holdTimer := time.NewTimer(holdTimeout)
-	defer holdTimer.Stop()
+	// The visible hold starts with the first visible chunk, so time spent
+	// thinking cannot consume the window before the answer even begins.
+	holdLimit := transparentHoldLimit(cfg, holdDeadline)
+	var holdTimer *time.Timer
+	var holdC <-chan time.Time
+	defer func() {
+		if holdTimer != nil {
+			holdTimer.Stop()
+		}
+	}()
 	streamIdleTimeout := transparentStreamIdleTimeout(cfg)
 	streamIdleTimer := time.NewTimer(time.Until(attemptStartedAt.Add(streamIdleTimeout)))
 	defer streamIdleTimer.Stop()
@@ -621,7 +639,7 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 			bufferBytes = 0
 		}
 		return s.finishTransparentStreamAttempt(
-			ctx, execution, callbackID, cfg, streamID, analyzer, buffer, emitted, holdExpired, overflowed, reasoningNeeded,
+			ctx, execution, callbackID, cfg, streamID, analyzer, buffer, emitted, holdExpired, overflowed, info,
 		)
 	}
 	var earlyTimer *time.Timer
@@ -644,14 +662,34 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 		earlyArmed = true
 	}
 
-	for {
-		var timerC <-chan time.Time
-		if reasoningNeeded && !emitted && !holdExpired {
-			timerC = holdTimer.C
+	keepaliveEvery := cfg.HoldKeepalive.Duration
+	var keepaliveC <-chan time.Time
+	if keepaliveEvery > 0 {
+		keepaliveTicker := time.NewTicker(keepaliveEvery)
+		defer keepaliveTicker.Stop()
+		keepaliveC = keepaliveTicker.C
+	}
+	armHold := func() {
+		if holdTimer != nil || emitted || holdExpired || !reasoningNeeded {
+			return
 		}
+		holdTimer = time.NewTimer(holdLimit)
+		holdC = holdTimer.C
+	}
+
+	for {
 		select {
 		case <-ctx.Done():
 			return abort(ctx.Err())
+		case <-keepaliveC:
+			// Keep the client connection alive while the answer is held. The
+			// comment frame carries no content and does not end the hold.
+			if emitted {
+				continue
+			}
+			if errEmit := s.emitPluginStreamChunk(streamID, []byte(": quality-hold\n\n")); errEmit != nil {
+				return abort(errEmit)
+			}
 		case <-earlyC:
 			earlyC = nil
 			earlyArmed = false
@@ -668,14 +706,22 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 			closeUpstream()
 			verdict := QualityVerdict{Class: ClassProbeError, Reason: "reason.detail.upstream_stream_idle_timeout"}
 			return StreamAttempt{Class: ClassProbeError, Verdict: verdict, Err: errTransparentStreamIdleTimeout, Emitted: emitted}
-		case <-timerC:
+		case <-holdC:
+			holdC = nil
 			holdExpired = true
-			preview := analyzer.Preview()
+			preview := info.decorate(analyzer.Preview())
 			preview.HoldExpired = true
-			preview.ReasoningRequired = reasoningNeeded
 			verdict := ClassifyQualityHold(preview, cfg.MinHoldOutputTokens)
 			if verdict.Action == QualityActionWithhold {
+				if cfg.ShadowMode {
+					s.recordShadowVerdict(execution.AuthID, verdict)
+					if errEmit := emitBuffered(); errEmit != nil {
+						return abort(errEmit)
+					}
+					continue
+				}
 				if transparentHoldBlocks(cfg, reasoningNeeded, verdict) {
+					s.requestWithheldProbe(execution.AuthID, verdict)
 					return StreamAttempt{Class: verdict.Class, Verdict: verdict, Err: fmt.Errorf("quality gate rejected stream: %s", verdict.Class), Buffered: buffer, Available: true}
 				}
 				if errEmit := emitBuffered(); errEmit != nil {
@@ -719,10 +765,14 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 					}
 				}
 				analyzer.ObserveChunk(payload)
-				if analyzer.Preview().ProgressEvents > progressBefore {
+				previewNow := analyzer.Preview()
+				if previewNow.ProgressEvents > progressBefore {
 					resetStreamIdle()
 				}
-				if analyzer.Preview().Terminal {
+				if previewNow.FirstVisible {
+					armHold()
+				}
+				if previewNow.Terminal {
 					return finish()
 				}
 			}
@@ -745,12 +795,19 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 				armEarly()
 				continue
 			}
-			preview := analyzer.Preview()
+			preview := info.decorate(analyzer.Preview())
 			preview.HoldExpired = holdExpired
-			preview.ReasoningRequired = reasoningNeeded
 			holdVerdict := ClassifyQualityHold(preview, cfg.MinHoldOutputTokens)
 			if holdVerdict.Action == QualityActionWithhold {
+				if cfg.ShadowMode {
+					s.recordShadowVerdict(execution.AuthID, holdVerdict)
+					if errEmit := emitBuffered(); errEmit != nil {
+						return abort(errEmit)
+					}
+					continue
+				}
 				if transparentHoldBlocks(cfg, reasoningNeeded, holdVerdict) {
+					s.requestWithheldProbe(execution.AuthID, holdVerdict)
 					return StreamAttempt{Class: holdVerdict.Class, Verdict: holdVerdict, Err: fmt.Errorf("quality gate rejected stream: %s", holdVerdict.Class), Buffered: buffer, Available: true}
 				}
 				if errEmit := emitBuffered(); errEmit != nil {
@@ -778,9 +835,9 @@ func (s *Service) finishTransparentStreamAttempt(
 	emitted bool,
 	holdExpired bool,
 	holdOverflow bool,
-	reasoningNeeded bool,
+	info attemptInfo,
 ) StreamAttempt {
-	sig := analyzer.Finalize(true)
+	sig := info.decorate(analyzer.Finalize(true))
 	sig.HoldExpired = holdExpired
 	if holdOverflow {
 		if !emitted && len(buffer) > 0 {
@@ -790,7 +847,18 @@ func (s *Service) finishTransparentStreamAttempt(
 		}
 		return StreamAttempt{Class: ClassNone, Emitted: true}
 	}
-	verdict := classifyFinal(sig, cfg, reasoningNeeded, cfg.MinHoldOutputTokens, true)
+	verdict := classifyFinal(sig, cfg, info.ReasoningNeeded, cfg.MinHoldOutputTokens, true)
+	if cfg.ShadowMode && verdict.Class != ClassNone {
+		// Shadow mode never withholds or penalizes: record the verdict, then
+		// release whatever the gate would have held back.
+		s.recordShadowVerdict(execution.AuthID, verdict)
+		if !emitted {
+			if errEmit := s.emitPluginChunks(streamID, buffer); errEmit != nil {
+				return StreamAttempt{Err: errEmit, Aborted: true, Available: true}
+			}
+		}
+		return StreamAttempt{Class: verdict.Class, Verdict: verdict, Emitted: true}
+	}
 	if emitted {
 		_ = s.env.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
 		return StreamAttempt{Class: verdict.Class, Verdict: verdict, Emitted: true}
@@ -802,5 +870,6 @@ func (s *Service) finishTransparentStreamAttempt(
 		_ = s.env.ApplyVerdict(ctx, execution.AuthID, verdict, "transparent", callbackID)
 		return StreamAttempt{Emitted: true}
 	}
+	s.requestWithheldProbe(execution.AuthID, verdict)
 	return StreamAttempt{Class: verdict.Class, Verdict: verdict, Err: fmt.Errorf("quality gate rejected stream: %s", verdict.Class), Buffered: buffer, Available: true}
 }

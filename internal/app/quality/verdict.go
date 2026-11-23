@@ -156,6 +156,7 @@ func (s *Service) applyVerdictLocked(
 			account.QualityStrikeMissingThinking = true
 		}
 		account.LastObservedAt = now
+		noteEvidenceObservation(account, sig)
 		account.LastAttempt = &AttemptEvidence{
 			At: now, Source: source, Class: verdict.Class, Reason: verdict.Reason,
 		}
@@ -457,4 +458,26 @@ func (s *Service) applyVerdictLocked(
 		return outcome, errAction
 	}
 	return outcome, nil
+}
+
+// noteEvidenceObservation keeps a bounded ratio of samples that carried real
+// reasoning evidence. A single inferred miss is then judged against the
+// account's own history instead of assuming the worst.
+func noteEvidenceObservation(account *AccountState, sig Signals) {
+	if account == nil {
+		return
+	}
+	observed := sig.Terminal || sig.VisibleTokens > 0 || sig.OutputTokens > 0 || sig.ReasoningTokens > 0 || sig.HasThinking
+	if !observed {
+		return
+	}
+	const evidenceWindow = 32
+	if account.EvidenceSamples >= evidenceWindow {
+		account.EvidenceSamples /= 2
+		account.EvidenceHits /= 2
+	}
+	account.EvidenceSamples++
+	if sig.HasThinking {
+		account.EvidenceHits++
+	}
 }

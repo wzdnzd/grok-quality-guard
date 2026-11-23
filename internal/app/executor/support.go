@@ -10,7 +10,56 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
 	"grok-quality-guard/internal/app/i18n"
+	domain "grok-quality-guard/internal/quality"
 )
+
+// attemptInfo carries the request-level reasoning context into one transparent
+// attempt: whether the client asked for reasoning, whether the request path
+// can expose evidence at all, and the account's own evidence history.
+type attemptInfo struct {
+	ReasoningNeeded   bool
+	ReasoningExplicit bool
+	EvidenceCapable   bool
+	EvidenceSamples   int
+	EvidenceHits      int
+	ThinkingStrikes   int
+}
+
+func (s *Service) transparentAttemptInfo(facts Facts, authID string) attemptInfo {
+	info := attemptInfo{
+		ReasoningNeeded:   facts.ReasoningRequired,
+		ReasoningExplicit: facts.ReasoningExplicit,
+		EvidenceCapable:   facts.EvidenceCapable,
+	}
+	if s != nil && s.env != nil {
+		if account, ok := s.env.StateAccount(authID); ok {
+			info.EvidenceSamples = account.EvidenceSamples
+			info.EvidenceHits = account.EvidenceHits
+			info.ThinkingStrikes = account.ThinkingStrikes
+		}
+	}
+	if info.EvidenceHits > 0 {
+		// Evidence observed on this account proves the path can expose it even
+		// when the client protocol alone suggests otherwise.
+		info.EvidenceCapable = true
+	}
+	return info
+}
+
+// decorate attaches the reasoning context to a signal snapshot before the
+// classifier runs, so the decision and its evidence stay consistent.
+func (info attemptInfo) decorate(sig domain.Signals) domain.Signals {
+	sig.ReasoningRequired = info.ReasoningNeeded
+	sig.ReasoningExplicit = info.ReasoningExplicit
+	sig.CapabilityKnown = true
+	sig.EvidenceCapable = info.EvidenceCapable
+	sig.AccountEvidenceSamples = int64(info.EvidenceSamples)
+	sig.AccountThinkingStrikes = info.ThinkingStrikes
+	if info.EvidenceSamples > 0 {
+		sig.AccountEvidenceRate = float64(info.EvidenceHits) / float64(info.EvidenceSamples)
+	}
+	return sig
+}
 
 const defaultTransparentStreamIdleTimeout = 90 * time.Second
 
@@ -262,4 +311,53 @@ func (s *Service) rotateAfterFailure(ctx context.Context, authID, class string) 
 		return false, errRotate
 	}
 	return status == "rotated" || status == "succeeded", nil
+}
+
+// recordShadowVerdict stores what the quality gate would have done without
+// withholding content or penalizing the account.
+func (s *Service) recordShadowVerdict(authID string, verdict QualityVerdict) {
+	if s == nil || s.env == nil || s.env.Store() == nil {
+		return
+	}
+	class := verdict.Class
+	if class == ClassNone {
+		class = "none"
+	}
+	_ = s.env.Store().AppendEvent(Event{
+		Time:       time.Now().UTC(),
+		AuthID:     authID,
+		Action:     "quality_shadow",
+		Result:     "observed",
+		Detail:     "shadow quality verdict delivered without action: " + class,
+		DetailKey:  "reason.detail.shadow_quality_verdict",
+		DetailArgs: map[string]any{"class": class},
+	})
+}
+
+// requestWithheldProbe asks for a due active probe when a sample was withheld
+// for missing thinking, so the account is cross-verified without waiting for
+// the cooldown schedule. It is a no-op unless cross-verification is enabled.
+func (s *Service) requestWithheldProbe(authID string, verdict QualityVerdict) {
+	if s == nil || s.env == nil || verdict.Class != ClassMissingThinking {
+		return
+	}
+	s.env.RequestProbe(authID)
+}
+
+// transparentHoldLimit bounds one visible hold by the per-request withhold
+// budget so several degraded attempts cannot exceed the client timeout.
+func transparentHoldLimit(cfg QualityConfig, deadline time.Time) time.Duration {
+	limit := cfg.HoldTimeout.Duration
+	if limit <= 0 {
+		limit = 30 * time.Second
+	}
+	if !deadline.IsZero() {
+		if remaining := time.Until(deadline); remaining < limit {
+			limit = remaining
+		}
+	}
+	if limit <= 0 {
+		limit = time.Millisecond
+	}
+	return limit
 }

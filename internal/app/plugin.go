@@ -57,6 +57,9 @@ type Plugin struct {
 	modelStreamsMu sync.Mutex
 	modelStreams   map[string]time.Time
 
+	probeRequestMu sync.Mutex
+	probeRequests  map[string]time.Time
+
 	taskWG  sync.WaitGroup
 	taskMgr *tasks.Manager
 
@@ -73,11 +76,12 @@ type Plugin struct {
 func NewPlugin() *Plugin {
 	requestCtx, requestCancel := context.WithCancel(context.Background())
 	plugin := &Plugin{
-		cfg:          appconfig.DefaultConfig(),
-		policy:       appconfig.PolicyFromConfig(appconfig.DefaultConfig()),
-		hostCalls:    make(map[string]*hostCallFlight),
-		modelStreams: make(map[string]time.Time),
-		taskMgr:      tasks.NewManager(),
+		cfg:           appconfig.DefaultConfig(),
+		policy:        appconfig.PolicyFromConfig(appconfig.DefaultConfig()),
+		hostCalls:     make(map[string]*hostCallFlight),
+		modelStreams:  make(map[string]time.Time),
+		taskMgr:       tasks.NewManager(),
+		probeRequests: make(map[string]time.Time),
 
 		requestCtx:    requestCtx,
 		requestCancel: requestCancel,

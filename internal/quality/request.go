@@ -41,6 +41,13 @@ func ReasoningRequiredPayload(payload map[string]any) bool {
 	return true
 }
 
+// ReasoningExplicitPayload reports whether the client itself asked for
+// reasoning instead of the model capability table inferring it. An
+// unparseable body has no explicit flag, so it keeps the strict judgment.
+func ReasoningExplicitPayload(payload map[string]any) bool {
+	return ReasoningRequiredPayload(payload)
+}
+
 // ReasoningRequiredForModelPayload combines the request flag with model
 // capability detection.
 func ReasoningRequiredForModelPayload(modelName string, payload map[string]any) bool {

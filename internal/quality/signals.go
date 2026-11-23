@@ -38,6 +38,20 @@ const (
 	defaultEncryptedBytes          = int64(256)
 	defaultEncryptedBytesPerToken  = int64(4)
 	thinkingGuardMinOutputTokens   = int64(64)
+	// A reasoning stream that already delivered at least two visible chunks or
+	// a short visible window has settled: evidence is emitted before the
+	// answer, so waiting longer cannot change a missing-thinking verdict.
+	defaultQualitySettleSpanMS = int64(40)
+	defaultQualitySettleChunks = 2
+	// Silence followed by one short burst is the signature of a buffered dump.
+	defaultQualityBurstGapMS = int64(1500)
+	// Evidence this far ahead of the first visible chunk is ordered thinking.
+	defaultQualityEvidenceLeadMS = int64(50)
+	// Account history is only trusted after a few samples, and a single
+	// inferred miss is excused on accounts that usually carry evidence.
+	defaultQualityPriorMinSamples   = int64(3)
+	defaultQualityPriorEvidenceRate = 0.5
+	maxQualityVisibleGaps           = 128
 )
 
 type Signals struct {
@@ -56,24 +70,44 @@ type Signals struct {
 	VisibleFlushMS    int64
 	VisibleSpanMS     int64
 	VisibleChunks     int
+	VisibleGapMaxMS   int64
+	VisibleGapMedMS   int64
 	ProgressEvents    int
 	Terminal          bool
 	HoldExpired       bool
 	SemanticOutput    bool
 	Streaming         bool
 	ReasoningRequired bool
-	FirstTokenMS      int64
-	FirstTokenKnown   bool
-	DurationMS        int64
-	GenerationMS      int64
-	TPS               float64
-	VisibleText       string
-	ChunkCount        int
-	ByteCount         int64
-	EventCount        int
-	ParsedEvents      int
-	UnknownEvents     int
-	ParseFailures     int
+	// ReasoningExplicit is true when the client itself asked for reasoning
+	// instead of the capability table inferring it from the model name.
+	ReasoningExplicit bool
+	// CapabilityKnown marks EvidenceCapable as an intentional decision.
+	// Unknown capability keeps the historical strict behavior.
+	CapabilityKnown bool
+	// EvidenceCapable reports whether this request path can expose reasoning
+	// evidence at all.
+	EvidenceCapable bool
+	// EvidenceAtMS and FirstVisibleMS are measured from the attempt start and
+	// order thinking against the visible answer.
+	EvidenceAtMS     int64
+	FirstVisibleMS   int64
+	ReasoningStartMS int64
+	// Account history used to excuse a single inferred miss.
+	AccountEvidenceRate    float64
+	AccountEvidenceSamples int64
+	AccountThinkingStrikes int
+	FirstTokenMS           int64
+	FirstTokenKnown        bool
+	DurationMS             int64
+	GenerationMS           int64
+	TPS                    float64
+	VisibleText            string
+	ChunkCount             int
+	ByteCount              int64
+	EventCount             int
+	ParsedEvents           int
+	UnknownEvents          int
+	ParseFailures          int
 }
 
 type QualityVerdict struct {

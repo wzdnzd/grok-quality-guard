@@ -2,6 +2,7 @@ package quality
 
 import (
 	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,10 @@ type StreamAnalyzer struct {
 	firstVisibleAt time.Time
 	lastVisibleAt  time.Time
 	terminalAt     time.Time
+	evidenceAt     time.Time
+	reasoningAt    time.Time
+	visibleWeight  int64
+	visibleGaps    []int64
 	visibleText    strings.Builder
 	visibleRunes   int64
 	visibleChunks  int
@@ -146,16 +151,15 @@ func (a *StreamAnalyzer) observeEvent(ev SSEEvent, now time.Time) {
 		a.signals.EventCount++
 		switch {
 		case strings.HasPrefix(comment, strings.TrimPrefix(qualityReasoningSSEComment, ": ")):
-			a.reasoningStart = true
-			a.signals.ReasoningStarted = true
+			a.markReasoningStart(now)
 			a.markFirstToken(now)
 		case strings.HasPrefix(comment, strings.TrimPrefix(qualityReasoningEvidencePrefix, ": ")):
 			value := strings.TrimSpace(strings.TrimPrefix(ev.Comment, strings.TrimPrefix(qualityReasoningEvidencePrefix, ": ")))
 			if count, err := strconv.ParseInt(value, 10, 64); err == nil && count > a.encryptedBytes {
 				a.encryptedBytes = count
 			}
-			a.reasoningStart = true
-			a.signals.ReasoningStarted = true
+			a.markReasoningStart(now)
+			a.markEvidence(now)
 		}
 	}
 	data := strings.TrimSpace(ev.Data)
@@ -440,8 +444,7 @@ func (a *StreamAnalyzer) observeResponsesItemMap(item map[string]any, now time.T
 	switch itemType {
 	case "reasoning":
 		if strings.TrimSpace(asString(item["id"])) != "" {
-			a.reasoningStart = true
-			a.signals.ReasoningStarted = true
+			a.markReasoningStart(now)
 			a.markFirstToken(now)
 			a.noteProgress()
 		}
@@ -561,15 +564,13 @@ func (a *StreamAnalyzer) observeAnthropic(payload map[string]any, now time.Time)
 		}
 		switch strings.ToLower(asString(block["type"])) {
 		case "thinking":
-			a.reasoningStart = true
-			a.signals.ReasoningStarted = true
+			a.markReasoningStart(now)
 			a.markFirstToken(now)
 			if text := asString(block["thinking"]); strings.TrimSpace(text) != "" {
 				a.addReasoningText(text)
 			}
 		case "redacted_thinking":
-			a.reasoningStart = true
-			a.signals.ReasoningStarted = true
+			a.markReasoningStart(now)
 			a.addEncrypted(asString(block["data"]))
 		case "text":
 			a.addVisibleText(asString(block["text"]), now)
@@ -588,8 +589,7 @@ func (a *StreamAnalyzer) observeAnthropic(payload map[string]any, now time.Time)
 		case "thinking_delta":
 			a.addReasoningText(firstString(delta, "thinking", "text"))
 		case "signature_delta":
-			a.reasoningStart = true
-			a.signals.ReasoningStarted = true
+			a.markReasoningStart(now)
 			a.addEncrypted(asString(delta["signature"]))
 		case "text_delta":
 			a.addVisibleText(asString(delta["text"]), now)
@@ -614,12 +614,10 @@ func (a *StreamAnalyzer) observeAnthropicContent(value any, now time.Time) {
 		}
 		switch strings.ToLower(strings.TrimSpace(asString(part["type"]))) {
 		case "thinking":
-			a.reasoningStart = true
-			a.signals.ReasoningStarted = true
+			a.markReasoningStart(now)
 			a.addReasoningText(firstString(part, "thinking", "text"))
 		case "redacted_thinking":
-			a.reasoningStart = true
-			a.signals.ReasoningStarted = true
+			a.markReasoningStart(now)
 			a.addEncrypted(asString(part["data"]))
 		case "text":
 			a.addVisibleText(asString(part["text"]), now)
@@ -667,7 +665,8 @@ func (a *StreamAnalyzer) addReasoningText(text string) {
 	a.hasThinking = true
 	a.reasoningDelta = true
 	a.signals.HasReasoningDelta = true
-	a.signals.ReasoningStarted = true
+	a.markReasoningStart(time.Now())
+	a.markEvidence(time.Now())
 	a.markFirstToken(time.Now())
 	a.noteProgress()
 }
@@ -680,6 +679,8 @@ func (a *StreamAnalyzer) addVisibleText(text string, now time.Time) {
 	if a.firstVisibleAt.IsZero() {
 		a.firstVisibleAt = now
 		a.signals.FirstVisible = true
+	} else if gap := now.Sub(a.lastVisibleAt).Milliseconds(); gap >= 0 {
+		a.recordVisibleGap(gap)
 	}
 	a.lastVisibleAt = now
 	a.visibleChunks++
@@ -687,10 +688,60 @@ func (a *StreamAnalyzer) addVisibleText(text string, now time.Time) {
 		a.visibleText.WriteString(text)
 	}
 	a.visibleRunes += int64(utf8.RuneCountInString(text))
+	a.visibleWeight += visibleTokenWeight(text)
 	a.signals.VisibleRunes = maxInt64(a.signals.VisibleRunes, a.visibleRunes)
-	a.signals.VisibleTokens = (a.signals.VisibleRunes + 3) / 4
+	a.signals.VisibleTokens = (maxInt64(a.visibleRunes, a.visibleWeight) + 3) / 4
 	a.markFirstToken(now)
 	a.noteProgress()
+}
+
+// recordVisibleGap keeps the arrival gaps bounded so a long stream cannot
+// grow the analyzer without limit.
+func (a *StreamAnalyzer) recordVisibleGap(gap int64) {
+	if len(a.visibleGaps) >= maxQualityVisibleGaps {
+		a.visibleGaps = append(a.visibleGaps[:0], a.visibleGaps[len(a.visibleGaps)/2:]...)
+	}
+	a.visibleGaps = append(a.visibleGaps, gap)
+}
+
+// visibleTokenWeight estimates tokens per rune class. Four ASCII runes were
+// the historical unit; CJK runes are roughly one token each, so a plain
+// runes/4 estimate undercounts them several times over.
+func visibleTokenWeight(text string) int64 {
+	var weight int64
+	for _, r := range text {
+		switch {
+		case r < 0x80:
+			weight++
+		case isCJKRune(r):
+			weight += 4
+		default:
+			weight += 2
+		}
+	}
+	return weight
+}
+
+func isCJKRune(r rune) bool {
+	return (r >= 0x3040 && r <= 0x30FF) || // Hiragana, Katakana
+		(r >= 0x3400 && r <= 0x4DBF) || // CJK Extension A
+		(r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
+		(r >= 0xAC00 && r <= 0xD7AF) || // Hangul syllables
+		(r >= 0xF900 && r <= 0xFAFF) || // CJK Compatibility Ideographs
+		(r >= 0x20000 && r <= 0x2FA1F) // CJK Extensions B-F, Compatibility Supplement
+}
+
+// qualityGapStats returns the largest and median inter-chunk gap.
+func qualityGapStats(gaps []int64) (int64, int64) {
+	var maxGap int64
+	sorted := append([]int64(nil), gaps...)
+	for _, gap := range sorted {
+		if gap > maxGap {
+			maxGap = gap
+		}
+	}
+	sort.Slice(sorted, func(left, right int) bool { return sorted[left] < sorted[right] })
+	return maxGap, sorted[len(sorted)/2]
 }
 
 func (a *StreamAnalyzer) addEncrypted(value string) {
@@ -698,7 +749,10 @@ func (a *StreamAnalyzer) addEncrypted(value string) {
 	if value == "" {
 		return
 	}
-	a.markFirstToken(time.Now())
+	now := time.Now()
+	a.markFirstToken(now)
+	a.markReasoningStart(now)
+	a.markEvidence(now)
 	if size := int64(len([]byte(value))); size > a.encryptedBytes {
 		a.encryptedBytes = size
 	}
@@ -708,6 +762,23 @@ func (a *StreamAnalyzer) addEncrypted(value string) {
 
 func (a *StreamAnalyzer) noteProgress() {
 	a.signals.ProgressEvents++
+}
+
+// markReasoningStart records the first reasoning signal so the classifier can
+// order thinking against the visible answer.
+func (a *StreamAnalyzer) markReasoningStart(now time.Time) {
+	a.reasoningStart = true
+	a.signals.ReasoningStarted = true
+	if a.reasoningAt.IsZero() {
+		a.reasoningAt = now
+	}
+}
+
+// markEvidence records when thinking evidence first arrived.
+func (a *StreamAnalyzer) markEvidence(now time.Time) {
+	if a.evidenceAt.IsZero() {
+		a.evidenceAt = now
+	}
 }
 
 func (a *StreamAnalyzer) markFirstToken(now time.Time) {
@@ -758,7 +829,7 @@ func (a *StreamAnalyzer) snapshot(final bool) Signals {
 	sig.EncryptedFloor = floor
 	sig.HasThinking = a.reasoningDelta || sig.HasReasoningDelta || (sig.EncryptedBytes > 0 && sig.EncryptedBytes >= floor)
 	sig.VisibleRunes = maxInt64(sig.VisibleRunes, a.aggregateRunes)
-	sig.VisibleTokens = (sig.VisibleRunes + 3) / 4
+	sig.VisibleTokens = (maxInt64(sig.VisibleRunes, a.visibleWeight) + 3) / 4
 	if sig.OutputTokens <= 0 && final {
 		sig.OutputTokens = sig.VisibleTokens
 	}
@@ -781,6 +852,16 @@ func (a *StreamAnalyzer) snapshot(final bool) Signals {
 		}
 		sig.VisibleSpanMS = durationMS(a.firstVisibleAt, a.lastVisibleAt)
 		sig.VisibleChunks = a.visibleChunks
+		sig.FirstVisibleMS = durationMS(a.startedAt, a.firstVisibleAt)
+	}
+	if !a.evidenceAt.IsZero() {
+		sig.EvidenceAtMS = durationMS(a.startedAt, a.evidenceAt)
+	}
+	if !a.reasoningAt.IsZero() {
+		sig.ReasoningStartMS = durationMS(a.startedAt, a.reasoningAt)
+	}
+	if len(a.visibleGaps) > 0 {
+		sig.VisibleGapMaxMS, sig.VisibleGapMedMS = qualityGapStats(a.visibleGaps)
 	}
 	sig.DurationMS = durationMS(a.startedAt, end)
 	sig.GenerationMS = generationWindowMS(sig.DurationMS, sig.FirstTokenMS, sig.ReasoningTokens)
