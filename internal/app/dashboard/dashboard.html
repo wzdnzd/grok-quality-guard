@@ -1461,6 +1461,7 @@
 
     .policy-group-quality .check-card {
       grid-column: span 2;
+      align-self: start;
     }
 
     .policy-group .check-card {
@@ -1523,6 +1524,11 @@
       grid-column: 1 / -1;
     }
 
+    .policy-group-quality .quality-non-reasoning-models,
+    .policy-group-quality .quality-thinking-toggle {
+      grid-column: span 2;
+    }
+
     .field label {
       color: var(--text);
       font-size: 11px;
@@ -1536,6 +1542,10 @@
 
     .field>.check-row:first-child {
       margin-top: 20px;
+    }
+
+    .policy-group-quality .quality-thinking-toggle>.check-row:first-child {
+      margin-top: 19px;
     }
 
     .field>.hint {
@@ -3153,6 +3163,11 @@
       }
 
       .policy-group-quality .check-card {
+        grid-column: auto;
+      }
+
+      .policy-group-quality .quality-non-reasoning-models,
+      .policy-group-quality .quality-thinking-toggle {
         grid-column: auto;
       }
 
@@ -4984,10 +4999,13 @@
                       class="hint">ui.consecutive_healthy_observations_probes_required_within_the_window_default</span></div>
                   <div class="field"><label for="p_min_generation_ms">ui.minimum_generation_window</label><input id="p_min_generation_ms"
                       type="number" min="1"><span class="hint">ui.milliseconds</span></div>
-                  <label class="check-card"><input id="p_thinking_guard" type="checkbox"><span class="check-copy"><span
-                        class="check-title">ui.enable_missing_reasoning_detection</span><span class="check-desc">ui.when_disabled_only_tps_empty_stream_and_similar_quality</span></span></label>
-                  <div class="field"><label for="p_non_reasoning_models">ui.non_reasoning_models</label><input id="p_non_reasoning_models"
+                  <div class="field quality-non-reasoning-models"><label for="p_non_reasoning_models">ui.non_reasoning_models</label><input id="p_non_reasoning_models"
                       type="text" autocomplete="off"><span class="hint">ui.non_reasoning_models_help</span></div>
+                  <div class="field quality-thinking-toggle">
+                    <label class="check-row" for="p_thinking_guard"><input id="p_thinking_guard"
+                        type="checkbox"><span>ui.enable_missing_reasoning_detection</span></label>
+                    <span class="hint">ui.when_disabled_only_tps_empty_stream_and_similar_quality</span>
+                  </div>
                   <label class="check-card"><input id="p_soft_cross_verify" type="checkbox"><span
                       class="check-copy"><span class="check-title">ui.soft_threshold_cross_verification</span><span class="check-desc">ui.after_consecutive_soft_tps_hits_run_an_asynchronous_probe</span></span></label>
                   <label class="check-card"><input id="p_thinking_cross_verify" type="checkbox"><span
