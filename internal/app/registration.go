@@ -86,6 +86,7 @@ func pluginRegistrationForLocale(locale string) registration {
 				{Name: "quality.strike_decay_after", Type: pluginapi.ConfigFieldTypeInteger, Default: 48, Description: configDescription(locale, "quality.strike_decay_after")},
 				{Name: "quality.strike_decay_min_healthy", Type: pluginapi.ConfigFieldTypeInteger, Default: 10, Description: configDescription(locale, "quality.strike_decay_min_healthy")},
 				{Name: "quality.thinking_guard", Type: pluginapi.ConfigFieldTypeBoolean, Default: true, Description: configDescription(locale, "quality.thinking_guard")},
+				{Name: "quality.non_reasoning_models", Type: pluginapi.ConfigFieldTypeArray, Default: []string{}, Description: configDescription(locale, "quality.non_reasoning_models")},
 				{Name: "quality.soft_cross_verify", Type: pluginapi.ConfigFieldTypeBoolean, Default: false, Description: configDescription(locale, "quality.soft_cross_verify")},
 				{Name: "quality.thinking_cross_verify", Type: pluginapi.ConfigFieldTypeBoolean, Default: false, Description: configDescription(locale, "quality.thinking_cross_verify")},
 				{Name: "quality.min_generation_ms", Type: pluginapi.ConfigFieldTypeInteger, Default: 1000, Description: configDescription(locale, "quality.min_generation_ms")},

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+
+	"grok-quality-guard/internal/config"
 )
 
 func TestPrepareTransparentRequestReusesBodyFacts(t *testing.T) {
@@ -34,5 +36,29 @@ func TestPrepareTransparentRequestReusesBodyFacts(t *testing.T) {
 	}
 	if !strings.Contains(string(facts.Body), `"input"`) {
 		t.Fatalf("request body was mangled: %s", facts.Body)
+	}
+}
+
+func TestPrepareTransparentRequestHonorsConfiguredNonReasoningModel(t *testing.T) {
+	body := []byte(`{"model":"grok-4.8","input":"hi","reasoning":{"effort":"high"}}`)
+	req := Request{ExecutorRequest: pluginapi.ExecutorRequest{
+		Model:           "grok-4.8",
+		Format:          "codex",
+		SourceFormat:    "codex",
+		Stream:          true,
+		OriginalRequest: body,
+	}}
+	policy := config.PolicyFromConfig(config.DefaultConfig())
+	policy.Quality.NonReasoningModels = []string{"grok-4.8"}
+	service := NewService(&preferredEligibilityTestEnvironment{policy: policy})
+	facts, errPrepare := service.PrepareRequest(req)
+	if errPrepare != nil {
+		t.Fatal(errPrepare)
+	}
+	if facts.ReasoningRequired {
+		t.Fatalf("configured non-reasoning model still required thinking: %#v", facts)
+	}
+	if strings.Contains(string(facts.Body), "reasoning.encrypted_content") {
+		t.Fatalf("non-reasoning request was rewritten for encrypted reasoning: %s", facts.Body)
 	}
 }

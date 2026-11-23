@@ -33,6 +33,22 @@ func TestDecodeConfigPartialKeepsDefaults(t *testing.T) {
 	}
 }
 
+func TestDecodeConfigNormalizesUserNonReasoningModels(t *testing.T) {
+	cfg, errDecode := Decode([]byte("quality:\n  non_reasoning_models:\n    - Build/Grok-4.8\n    - build/grok-4.8\n    - '  grok-9  '\n    - ''\n"))
+	if errDecode != nil {
+		t.Fatalf("Decode() error = %v", errDecode)
+	}
+	want := []string{"build/grok-4.8", "grok-9"}
+	if len(cfg.Quality.NonReasoningModels) != len(want) {
+		t.Fatalf("non_reasoning_models = %#v, want %#v", cfg.Quality.NonReasoningModels, want)
+	}
+	for index := range want {
+		if cfg.Quality.NonReasoningModels[index] != want[index] {
+			t.Fatalf("non_reasoning_models = %#v, want %#v", cfg.Quality.NonReasoningModels, want)
+		}
+	}
+}
+
 func TestDecodeConfigAcceptsHostManagedStoreMetadata(t *testing.T) {
 	raw := []byte(`enabled: true
 priority: 10

@@ -44,13 +44,19 @@ func ReasoningRequiredPayload(payload map[string]any) bool {
 // ReasoningRequiredForModelPayload combines the request flag with model
 // capability detection.
 func ReasoningRequiredForModelPayload(modelName string, payload map[string]any) bool {
+	return ReasoningRequiredForModelPayloadWithNonReasoning(modelName, payload, nil)
+}
+
+// ReasoningRequiredForModelPayloadWithNonReasoning applies user-declared
+// non-reasoning models before falling back to the requested or body model.
+func ReasoningRequiredForModelPayloadWithNonReasoning(modelName string, payload map[string]any, nonReasoning []string) bool {
 	if !ReasoningRequiredPayload(payload) {
 		return false
 	}
-	known, supports := model.ReasoningSupport(modelName)
+	known, supports := model.ReasoningSupportWithExclusions(modelName, nonReasoning)
 	if !known && payload != nil {
 		if bodyModel := strings.TrimSpace(asString(payload["model"])); bodyModel != "" && bodyModel != modelName {
-			known, supports = model.ReasoningSupport(bodyModel)
+			known, supports = model.ReasoningSupportWithExclusions(bodyModel, nonReasoning)
 		}
 	}
 	return known && supports
@@ -62,4 +68,8 @@ func reasoningRequiredPayload(payload map[string]any) bool {
 
 func reasoningRequiredForModelPayload(modelName string, payload map[string]any) bool {
 	return ReasoningRequiredForModelPayload(modelName, payload)
+}
+
+func reasoningRequiredForModelPayloadWithNonReasoning(modelName string, payload map[string]any, nonReasoning []string) bool {
+	return ReasoningRequiredForModelPayloadWithNonReasoning(modelName, payload, nonReasoning)
 }

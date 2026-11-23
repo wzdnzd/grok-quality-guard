@@ -129,6 +129,7 @@ TPS = outputTokens * 1000 / generationWindow
 | `min_encrypted_bytes` | 256 | encrypted thinking 字节下限 |
 | `encrypted_bytes_per_reasoning_token` | 4 | 每 reasoning token 的密文下限 |
 | `fail_closed` | false | 短生成窗口和高 TPS 是否直接判为 burst，以及窗口不足是否单独分类 |
+| `non_reasoning_models` | 空 | 用户额外声明不产生推理的模型标识，提供方前缀会被忽略 |
 
 ### 2.4 异常分类
 
@@ -264,7 +265,7 @@ passive_guard 不改变正常请求的路由和响应。它无法阻止当前请
 - 可安全重放的异常流关闭上游流并换号；不可安全重放的请求只执行一次
 - 所有候选异常时 fail closed
 
-透明模式覆盖全部可识别的 Grok / xAI 路由请求。禁用推理、非推理模型和不可安全重放请求都不得绕过质量门；它们只在 thinking 判定和失败后的重试策略上有所区别。
+透明模式覆盖全部可识别的 Grok / xAI 路由请求。禁用推理、非推理模型和不可安全重放请求都不得绕过质量门；它们只在 thinking 判定、dump 类判定和失败后的重试策略上有所区别。
 
 ### 3.2 组件划分
 
@@ -338,7 +339,7 @@ probe scheduler
 质量判定对象是 xAI / Grok OAuth 请求的响应。
 
 - `transparent_guard=true` 时，所有可识别的 Grok 路由请求都进入透明门，不按 reasoning 能力或重放资格旁路。
-- 非推理模型、显式关闭 reasoning 和未知推理能力的请求跳过 `missing_thinking` 与 dump 类；空流、速度和缓冲上限仍须执行。
+- 内置或配置声明的非推理模型、显式关闭 reasoning 和未命中能力表的未知非 Grok 模型跳过 `missing_thinking` 与 dump 类；空流仍须拦截，速度和缓冲上限在终态继续记录。
 - 可安全重放只决定质量失败后能否换号或换代理，不决定是否接管请求。
 - passive 观测只对具有可解析文本流的样本形成质量结论，不改变 CPA 原生路由。
 - 主动探测请求本身不重复进入普通账号被动样本。
@@ -360,6 +361,10 @@ probe scheduler
 - 只有 `: grok2api-reasoning-start` 注释
 - 只有 `usage.reasoning_tokens`
 - 只有不足下限的 encrypted stub
+
+`usage` 中的输出或 reasoning 账单不能替代真实思考证据，但短可见文本不能借输出下限绕过 `missing_thinking`
+
+推理能力判断以内置已知能力表和 Grok 4+ 版本回退为主，避免模型更新后质量门失效；`quality.non_reasoning_models` 优先于内置判断并可声明额外非推理模型；未知非 Grok 模型不进入思考闸门
 
 ### 4.3 协议解析
 
@@ -537,7 +542,7 @@ type QualityVerdict struct {
 
 ### 4.9 与参考实现对齐的判定路径
 
-本插件的流式分析器按 grok2api 的 `ClassifyQualityHold`、`quality_retry_scan.go` 和 egress-quality-guard 的 `classify_result` / `classify_audit` 对齐，不做额外的“启发式猜测”：
+本插件的流式分析器按 grok2api 的 `ClassifyQualityHold`、`quality_retry_scan.go` 和 egress-quality-guard 的 `classify_result` / `classify_audit` 对齐，并保留持续可见流误杀保护：
 
 1. 先解析协议内容，再按 `buffered_burst`、`cipher_drool`、`fake_encrypted_dump`、`fast_reasoning_ratio_dump` 的顺序执行 dump 判定。
 2. dump 判定必须先于 thinking 放行，避免伪造 reasoning 账单绕过。
@@ -546,12 +551,13 @@ type QualityVerdict struct {
 5. `: grok2api-reasoning-evidence <bytes>` 只提供密文字节长度，仍需经过 `max(min_encrypted_bytes, reasoning_tokens * encrypted_bytes_per_reasoning_token)` 下限校验。
 6. 聚合 message 文本会计入 visible token，但不会伪造流式首个可见块的 flush 时间。
 7. Chat、Responses、Anthropic Messages 的流式与非流式响应共享内容、thinking、密文下限和空流规则；TPS 仅适用于具有可观测生成窗口的流式样本。
+8. 持续可见流保护只在可见文本持续至少 2 秒且达到最小输出后生效，不能绕过 2 秒内的硬 dump 检测。
 
 判定路径存在明确差异：
 
 | 路径 | 判定范围 | 不会推断的内容 |
 | --- | --- | --- |
-| 被动审计 | 仅 streaming、已有 TTFT、输出 >= 32、生成窗口有效的样本；已知要求推理时检查 missing-thinking | 不推断未知模型能力、显式关闭推理或非流式被动样本 |
+| 被动审计 | 仅 streaming、已有 TTFT、有效输出或推理账单 >= 32、生成窗口有效的样本；已知要求推理时检查 missing-thinking | 不推断显式关闭推理、配置声明的非推理模型或未知非 Grok 模型 |
 | 主动探测 | marker、输出下限、thinking 要求、生成窗口、TPS，并复用 `ClassifyQualityHold` 的 dump 判定 | 不把传输错误或上游非 2xx 当成质量降智；成功探测保留 strike |
 | 非流式质量门 | 空响应、缺少真实思考、密文下限、语义输出 | 不计算 TPS，不做流式 burst/dump 推断 |
 
@@ -575,7 +581,7 @@ type QualityVerdict struct {
 - `rate_limited` 是账号调度信号，不是质量失败：状态置 `suspect`，只写探测退避，不写 auth，不清零连续计数。
 - `model_prefixes` 采用严格前缀匹配，不使用 `grok` 子串兜底；不以配置前缀开头的别名只能通过 `host.auth.models` 缓存识别。
 - 被动拦截入口也使用 auth 模型缓存识别别名，不因严格前缀匹配丢失已发现模型。
-- 非流式响应没有可观测生成窗口，速度维度整体跳过；非推理和显式关闭推理请求跳过 missing-thinking 与 dump 类，但仍执行空流、速度和缓冲上限检查。
+- 非流式响应没有可观测生成窗口，速度维度整体跳过；非推理和显式关闭推理请求跳过 missing-thinking 与 dump 类，空流仍须拦截，流式速度和缓冲上限在终态继续记录。
 
 
 
@@ -886,7 +892,7 @@ if terminal and no verdict:
 - 时间型 dump 只在 `terminal` 或 `hold_expired` 后判定；流式进行中不得因前两个 delta 提前拦截
 - emit 失败或请求 context 结束时，整个请求按客户端中止处理：关闭上游流、不换号、不记 strike、不写失败事件
 - 缓冲超过 4 MiB 时放行已缓冲内容并记录 `transparent_overflow` 事件，不对该样本应用健康/异常判定，也不清零 strike
-- 非推理请求在首个可见块后约 200ms 提前放行，但仍执行空流和速度等结构性检查
+- 非推理请求在首个可见块后约 200ms 提前放行；空流仍会拦截，TPS 速度和缓冲上限在终态继续记录
 
 ### 6.6 非流式请求
 
@@ -2078,6 +2084,7 @@ plugins:
         strike_decay_after: 48
         strike_decay_min_healthy: 10
         thinking_guard: true
+        non_reasoning_models: []
         soft_cross_verify: false
         thinking_cross_verify: false
         min_generation_ms: 1000
@@ -2191,6 +2198,7 @@ YAML 决定以下部署级字段：
 - `quality.strike_decay_after=48`
 - `quality.strike_decay_min_healthy=10`
 - `quality.thinking_guard=true`
+- `quality.non_reasoning_models=[]`
 - `quality.soft_cross_verify=false`
 - `quality.thinking_cross_verify=false`
 - `probe.healthy_interval_hours=0`
@@ -2594,7 +2602,7 @@ git diff --check
 - ModelRouter
 - Grok 模型和 xAI auth model alias 识别
 - 不可安全重放请求只执行一次
-- 非推理请求完整缓冲并跳过 missing-thinking
+- 非推理请求在首个可见内容后提前放行并跳过 missing-thinking 与 dump 类判定
 - 插件 Executor
 - 流式 hold / emit
 - 多账号重试

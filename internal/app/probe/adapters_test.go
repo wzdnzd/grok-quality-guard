@@ -5,6 +5,15 @@ import (
 	"testing"
 )
 
+func TestReasoningRequiredForModelWithNonReasoningOverridesFallback(t *testing.T) {
+	if reasoningRequiredForModel("grok-4.8", nil) == false {
+		t.Fatal("grok-4.8 fallback should require thinking without an exclusion")
+	}
+	if reasoningRequiredForModelWithNonReasoning("Build/grok-4.8", nil, []string{"grok-4.8"}) {
+		t.Fatal("configured non-reasoning model still required thinking")
+	}
+}
+
 func TestClassifyProbeTransportFailureCredentialEvidence(t *testing.T) {
 	tests := []struct {
 		name       string

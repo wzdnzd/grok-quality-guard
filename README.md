@@ -65,8 +65,12 @@ TPS 计时从发起上游模型调用前开始，而不是从首个 host stream 
 - `: grok2api-reasoning-evidence <bytes>` 作为密文字节数证据，仍必须满足密文下限
 - Codex / Responses 请求会按 grok2api 的 Build/Console 边界补 `include: ["reasoning.encrypted_content"]`，避免客户端未声明密文时把正常响应误判为 `missing_thinking`
 - Chat、Responses 和 Anthropic Messages 的流式与非流式响应都使用同一套内容、thinking、密文下限、TPS 和空流规则
+- 保留持续可见流误杀保护：只有可见文本持续至少 2 秒且达到最小输出时才可在 dump 窗口后放行，硬 dump 检测始终优先
+- `usage` 中的输出或 reasoning 账单不能替代真实思考证据，但短可见文本不能借输出下限绕过 `missing_thinking`
 
-被动审计对可确定要求推理的流式样本检查 `missing_thinking`：非流式、缺少 TTFT、输出不足 32 token 或生成窗口无效的样本记录为 `ignored`；未知模型能力或显式关闭推理时不推断。速度审计仍只对满足流式、TTFT、输出和生成窗口条件的样本生效。
+被动审计对可确定要求推理的流式样本检查 `missing_thinking`：非流式、缺少 TTFT、生成窗口无效，或有效输出与推理账单均不足 32 token 的样本记录为 `ignored`；显式关闭推理时不推断。速度审计仍只对满足流式、TTFT、输出和生成窗口条件的样本生效。
+
+内置已知 Grok 推理能力表覆盖 Grok 3 Mini、Grok 4.3、Grok 4.5、Grok 4.6、Grok 4.7 与 Grok 4.20 推理族；未命中能力表但符合 Grok 4+ 版本回退的模型默认按推理模型处理，以优先拦截降智；未知非 Grok 模型不进入思考闸门；可通过 `quality.non_reasoning_models` 额外声明不产生推理的模型
 
 ### 非质量错误与证据保留
 
@@ -243,6 +247,7 @@ plugins:
         strike_decay_after: 48
         strike_decay_min_healthy: 10
         thinking_guard: true
+        non_reasoning_models: []
         soft_cross_verify: false
         thinking_cross_verify: false
         min_generation_ms: 1000
@@ -324,6 +329,7 @@ plugins:
 - `strike_decay_after`：missing-thinking strike 自动降级窗口，单位小时，默认 `48`；设置为 `0` 关闭自动降级
 - `strike_decay_min_healthy`：窗口内至少积累的连续健康观测/探测次数，默认 `10`；健康样本包括 passive/transparent 的 `ClassNone` 和成功探测，真实质量失败会重置窗口与计数
 - `thinking_guard=false`：跳过缺少思考判定，只保留 TPS、空流等其他质量检查
+- `non_reasoning_models`：额外声明不产生推理的模型标识，配置项优先于内置能力表和 Grok 4+ 版本回退；支持 YAML 列表或管理页逗号分隔输入，提供方前缀会被忽略，明确 reasoning effort 后缀会归一到基础模型
 - `fail_closed=true`：生成窗口小于 `min_generation_ms` 且速度达到 `soft_tps` 时判定为 `buffered_burst`；窗口不足但速度不高时判定为 `insufficient_generation_window`
 - `ignored`、`probe_error`、`proxy_error` 不覆盖上一次真实质量指标；详情页会分别展示最近尝试和最近质量证据
 - `soft_cross_verify=true` 或 `thinking_cross_verify=true`：被动样本达到阈值后先启动后台主动探测，由探测结果确认后再处置；默认关闭
@@ -369,7 +375,7 @@ plugins:
 
 不可安全重放的请求仍会执行一次质量判定，但不会换号或代理重试；质量门拒绝时返回 `503 quality_degraded`。这类请求包括图片、音频、视频等媒体输入、`previous_response_id` 或 stored response、compaction、可能产生副作用的 hosted tools，以及无法安全重放到其他账号的请求。
 
-禁用推理的请求和非推理 Grok 模型同样会被透明拦截，只是跳过 `missing_thinking` 判定；空流、异常速度、dump 特征和缓冲上限仍然生效。非推理流会完整缓冲到终态后判定，不会因为普通可见文本缺少 reasoning 而误拒。
+禁用推理的请求、内置或配置声明的非推理 Grok 模型同样会进入透明质量门；它们跳过 `missing_thinking` 与 dump 类判定，空流仍会拦截，TPS 速度和缓冲上限在终态继续记录。非推理流在首个可见内容后提前放行，不会因为普通可见文本缺少 reasoning 而误拒。
 
 主动探测只按请求级证据忽略内部 probe usage，不会在探测窗口内按 AuthID 丢弃真实请求的 usage，也不会把该账号从透明候选集中排除。
 

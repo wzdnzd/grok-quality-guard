@@ -43,5 +43,8 @@ func ReasoningRequired(body []byte) bool { return reasoningRequired(body) }
 func ReasoningRequiredForModel(modelName string, body []byte) bool {
 	return reasoningRequiredForModel(modelName, body)
 }
+func ReasoningRequiredForModelWithNonReasoning(modelName string, body []byte, nonReasoning []string) bool {
+	return reasoningRequiredForModelWithNonReasoning(modelName, body, nonReasoning)
+}
 func ModelFromRequestBody(body []byte) string { return modelFromRequestBody(body) }
 func DisabledReasoningValue(value any) bool   { return disabledReasoningValue(value) }

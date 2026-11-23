@@ -134,6 +134,9 @@ func NewStreamAnalyzerWithProtocolAt(protocol string, startedAt time.Time) *doma
 func reasoningRequiredForModel(model string, body []byte) bool {
 	return domain.ReasoningRequiredForModel(model, body)
 }
+func reasoningRequiredForModelWithNonReasoning(model string, body []byte, nonReasoning []string) bool {
+	return domain.ReasoningRequiredForModelWithNonReasoning(model, body, nonReasoning)
+}
 func classifyProbeResult(sig Signals, cfg QualityConfig, expectedMatched, reasoningRequired bool) QualityVerdict {
 	return domain.ClassifyProbeResult(sig, cfg, expectedMatched, reasoningRequired)
 }

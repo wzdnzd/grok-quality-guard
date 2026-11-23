@@ -99,6 +99,58 @@ func TestProbeThinkingGuardRequiresMinimumOutput(t *testing.T) {
 	if atThreshold.Class != ClassMissingThinking {
 		t.Fatalf("probe at thinking guard threshold class = %q", atThreshold.Class)
 	}
+	shortVisible := classifyProbeResult(Signals{
+		Terminal:        true,
+		OutputTokens:    64,
+		VisibleTokens:   3,
+		FirstTokenMS:    100,
+		DurationMS:      1100,
+		FirstVisible:    true,
+		VisibleSpanMS:   150,
+		VisibleChunks:   2,
+		ReasoningTokens: 0,
+	}, config, true, true)
+	if shortVisible.Class != ClassMissingThinking {
+		t.Fatalf("probe short-visible dump class = %q, want missing_thinking", shortVisible.Class)
+	}
+	thinkingEvidence := classifyProbeResult(Signals{
+		Terminal:          true,
+		HasThinking:       true,
+		OutputTokens:      100,
+		VisibleTokens:     100,
+		FirstTokenMS:      100,
+		DurationMS:        3000,
+		FirstVisible:      true,
+		VisibleSpanMS:     2500,
+		VisibleChunks:     10,
+		ReasoningRequired: true,
+	}, config, true, true)
+	if thinkingEvidence.Class != ClassNone {
+		t.Fatalf("probe with thinking evidence class = %q, want none", thinkingEvidence.Class)
+	}
+	usageOnly := Signals{
+		Terminal:        true,
+		OutputTokens:    100,
+		VisibleTokens:   100,
+		FirstTokenMS:    100,
+		DurationMS:      3000,
+		FirstVisible:    true,
+		VisibleSpanMS:   2500,
+		VisibleChunks:   10,
+		ReasoningTokens: 100,
+	}
+	if verdict := classifyProbeResult(usageOnly, config, true, true); verdict.Class != ClassMissingThinking {
+		t.Fatalf("probe usage-only reasoning class = %q, want missing_thinking", verdict.Class)
+	}
+	reasoningBillOnly := Signals{
+		Terminal:        true,
+		ReasoningTokens: 100,
+		FirstTokenMS:    100,
+		DurationMS:      3000,
+	}
+	if verdict := classifyProbeResult(reasoningBillOnly, config, true, true); verdict.Class != ClassMissingThinking {
+		t.Fatalf("probe reasoning-bill-only class = %q, want missing_thinking", verdict.Class)
+	}
 }
 
 func TestFailClosedProbeClassification(t *testing.T) {
@@ -111,5 +163,116 @@ func TestFailClosedProbeClassification(t *testing.T) {
 	insufficient := classifyProbeResult(Signals{Terminal: true, OutputTokens: 128, FirstTokenMS: 100, DurationMS: 600}, config, true, false)
 	if insufficient.Class != ClassInsufficientGeneration {
 		t.Fatalf("fail-closed generation class = %q", insufficient.Class)
+	}
+}
+
+func TestSemanticOutputWithUsageIgnoresShortVisibleText(t *testing.T) {
+	cfg := config.DefaultQualityConfig()
+	cfg.SoftTPS = 1e9
+	cfg.HardTPS = 2e9
+	signals := Signals{
+		Streaming:         true,
+		Terminal:          true,
+		SemanticOutput:    true,
+		FirstTokenKnown:   true,
+		ReasoningRequired: true,
+		FirstTokenMS:      100,
+		DurationMS:        2000,
+		FirstVisible:      true,
+		VisibleSpanMS:     150,
+		VisibleChunks:     2,
+		OutputTokens:      100,
+		VisibleTokens:     3,
+	}
+	if verdict := classifyFinal(signals, cfg, true, 8, true); verdict.Class != ClassMissingThinking {
+		t.Fatalf("streaming semantic output class = %q, want missing_thinking", verdict.Class)
+	}
+	if verdict := classifyPassiveAudit(signals, cfg); verdict.Class != ClassMissingThinking {
+		t.Fatalf("passive semantic output class = %q, want missing_thinking", verdict.Class)
+	}
+	signals.Streaming = false
+	if verdict := classifyNonStreamResult(signals, cfg, true, 8); verdict.Class != ClassMissingThinking {
+		t.Fatalf("non-stream semantic output class = %q, want missing_thinking", verdict.Class)
+	}
+}
+
+func TestShortVisibleTextCantHideBilledOutput(t *testing.T) {
+	cfg := config.DefaultQualityConfig()
+	cfg.SoftTPS = 1e9
+	cfg.HardTPS = 2e9
+	signals := Signals{
+		Streaming:         true,
+		Terminal:          true,
+		FirstTokenKnown:   true,
+		FirstTokenMS:      100,
+		DurationMS:        3000,
+		FirstVisible:      true,
+		VisibleSpanMS:     2500,
+		VisibleChunks:     10,
+		OutputTokens:      100,
+		VisibleTokens:     3,
+		ReasoningRequired: true,
+	}
+	if verdict := classifyFinal(signals, cfg, true, 8, true); verdict.Class != ClassMissingThinking {
+		t.Fatalf("streaming short visible class = %q, want missing_thinking", verdict.Class)
+	}
+	if verdict := classifyPassiveAudit(signals, cfg); verdict.Class != ClassMissingThinking {
+		t.Fatalf("passive short visible class = %q, want missing_thinking", verdict.Class)
+	}
+	signals.Streaming = false
+	if verdict := classifyNonStreamResult(signals, cfg, true, 8); verdict.Class != ClassMissingThinking {
+		t.Fatalf("non-stream short visible class = %q, want missing_thinking", verdict.Class)
+	}
+}
+
+func TestReasoningBillWithoutThinkingEvidenceIsMissingThinking(t *testing.T) {
+	cfg := config.DefaultQualityConfig()
+	cfg.SoftTPS = 1e9
+	cfg.HardTPS = 2e9
+	signals := Signals{
+		Streaming:         true,
+		Terminal:          true,
+		SemanticOutput:    true,
+		FirstTokenKnown:   true,
+		FirstTokenMS:      100,
+		DurationMS:        3000,
+		ReasoningTokens:   100,
+		ReasoningRequired: true,
+	}
+	verdict := classifyFinal(signals, cfg, true, 8, true)
+	if verdict.Class != ClassMissingThinking || verdict.Action != QualityActionWithhold {
+		t.Fatalf("reasoning-bill-only response = %#v, want missing_thinking withhold", verdict)
+	}
+	if verdict := classifyPassiveAudit(signals, cfg); verdict.Class != ClassMissingThinking {
+		t.Fatalf("passive reasoning-bill-only class = %q, want missing_thinking", verdict.Class)
+	}
+	signals.Streaming = false
+	if verdict := classifyNonStreamResult(signals, cfg, true, 8); verdict.Class != ClassMissingThinking {
+		t.Fatalf("non-stream reasoning-bill-only class = %q, want missing_thinking", verdict.Class)
+	}
+}
+
+func TestSemanticOnlyWithUsageIsMissingThinkingOnTerminalPaths(t *testing.T) {
+	cfg := config.DefaultQualityConfig()
+	cfg.SoftTPS = 1e9
+	cfg.HardTPS = 2e9
+	signals := Signals{
+		Streaming:         true,
+		Terminal:          true,
+		SemanticOutput:    true,
+		FirstTokenKnown:   true,
+		FirstTokenMS:      100,
+		DurationMS:        2000,
+		OutputTokens:      100,
+		ReasoningTokens:   0,
+		VisibleTokens:     0,
+		ReasoningRequired: true,
+	}
+	if verdict := classifyPassiveAudit(signals, cfg); verdict.Class != ClassMissingThinking {
+		t.Fatalf("passive semantic-only class = %q, want missing_thinking", verdict.Class)
+	}
+	signals.Streaming = false
+	if verdict := classifyNonStreamResult(signals, cfg, true, 8); verdict.Class != ClassMissingThinking {
+		t.Fatalf("non-stream semantic-only class = %q, want missing_thinking", verdict.Class)
 	}
 }

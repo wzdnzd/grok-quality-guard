@@ -43,3 +43,13 @@ func TestReviewCompactPendingBodyDropsPrompt(t *testing.T) {
 		t.Fatalf("compact body dropped reasoning fields: %s", compact)
 	}
 }
+
+func TestUsageReasoningRequiredWithNonReasoningOverridesModelFallback(t *testing.T) {
+	record := pluginapi.UsageRecord{Model: "Build/grok-4.8", ReasoningEffort: "high"}
+	if UsageReasoningRequired(record, nil) == false {
+		t.Fatal("grok-4.8 fallback should require thinking without an exclusion")
+	}
+	if UsageReasoningRequiredWithNonReasoning(record, nil, []string{"grok-4.8"}) {
+		t.Fatal("configured non-reasoning model still required thinking")
+	}
+}

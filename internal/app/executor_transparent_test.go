@@ -337,6 +337,31 @@ func TestTransparentNonReasoningStreamDelivered(t *testing.T) {
 	}
 }
 
+func TestTransparentThinkingGuardDisabledDeliversNoThinkingStream(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1", badStreamScript()...)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.Quality.ThinkingGuard = false
+	})
+	plugin.runTransparentStreamBridge(context.Background(), streamRequestForTest(), "plugin-stream-thinking-guard-disabled")
+
+	var joined strings.Builder
+	for _, payload := range host.emitted["plugin-stream-thinking-guard-disabled"] {
+		joined.Write(payload)
+	}
+	if !strings.Contains(joined.String(), "bad answer") {
+		t.Fatalf("thinking_guard=false stream was not delivered: %s", joined.String())
+	}
+	if detail := host.closes["plugin-stream-thinking-guard-disabled"]; detail != nil {
+		t.Fatalf("thinking_guard=false stream closed with error: %#v", detail)
+	}
+	if len(host.modelCalls) != 1 {
+		t.Fatalf("thinking_guard=false stream used %d attempts, want 1", len(host.modelCalls))
+	}
+}
+
 func TestTransparentNonReasoningEmptyStreamRejected(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	host := newMockHostCall(entries, auths)
@@ -516,6 +541,15 @@ func badResponsesStreamScript() []pluginapi.HostModelStreamReadResponse {
 	}
 }
 
+func semanticOnlyResponsesStreamScript() []pluginapi.HostModelStreamReadResponse {
+	return []pluginapi.HostModelStreamReadResponse{
+		streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_semantic\",\"model\":\"grok-4.6\"}}\n\n"),
+		streamData("data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"call_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"exec\",\"arguments\":\"{}\"}}\n\n"),
+		streamData("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_semantic\",\"usage\":{\"output_tokens\":421,\"output_tokens_details\":{\"reasoning_tokens\":355}}}}\n\n"),
+		{Done: true},
+	}
+}
+
 func TestTransparentCodexResponsesThinkingStreamDelivered(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	host := newMockHostCall(entries, auths)
@@ -610,6 +644,32 @@ func TestTransparentCodexResponsesMissingThinkingFailsOver(t *testing.T) {
 	}
 	if !strings.Contains(joined.String(), "good answer") {
 		t.Fatalf("good Responses account was not delivered: %s", joined.String())
+	}
+}
+
+func TestTransparentCodexResponsesSemanticOnlyWithUsageFailsOver(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1", semanticOnlyResponsesStreamScript()...)
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+	plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.6", true), "plugin-stream-responses-semantic-usage")
+
+	joined := strings.Builder{}
+	for _, payload := range host.emitted["plugin-stream-responses-semantic-usage"] {
+		joined.Write(payload)
+	}
+	if strings.Contains(joined.String(), `"name":"exec"`) || strings.Contains(joined.String(), "resp_semantic") {
+		t.Fatalf("semantic-only missing-thinking content leaked: %s", joined.String())
+	}
+	if !strings.Contains(joined.String(), "good answer") {
+		t.Fatalf("good Responses account was not delivered: %s", joined.String())
+	}
+	if detail := host.closes["plugin-stream-responses-semantic-usage"]; detail != nil {
+		t.Fatalf("semantic-only failover closed with error: %#v", detail)
+	}
+	if len(host.modelCalls) != 2 {
+		t.Fatalf("semantic-only failover used %d attempts, want 2", len(host.modelCalls))
 	}
 }
 

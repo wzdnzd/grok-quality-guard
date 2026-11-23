@@ -4904,6 +4904,8 @@
                       type="number" min="1"><span class="hint">ui.milliseconds</span></div>
                   <label class="check-card"><input id="p_thinking_guard" type="checkbox"><span class="check-copy"><span
                         class="check-title">ui.enable_missing_reasoning_detection</span><span class="check-desc">ui.when_disabled_only_tps_empty_stream_and_similar_quality</span></span></label>
+                  <div class="field"><label for="p_non_reasoning_models">ui.non_reasoning_models</label><input id="p_non_reasoning_models"
+                      type="text" autocomplete="off"><span class="hint">ui.non_reasoning_models_help</span></div>
                   <label class="check-card"><input id="p_soft_cross_verify" type="checkbox"><span
                       class="check-copy"><span class="check-title">ui.soft_threshold_cross_verification</span><span class="check-desc">ui.after_consecutive_soft_tps_hits_run_an_asynchronous_probe</span></span></label>
                   <label class="check-card"><input id="p_thinking_cross_verify" type="checkbox"><span
@@ -9818,6 +9820,7 @@
       setValue('p_score_max_age', scoreRefresh.max_age || '30m');
       setValue('p_score_drift_threshold', scoreRefresh.drift_threshold ?? 0.03);
       setValue('p_soft_tps', quality.soft_tps || 500);
+      setValue('p_non_reasoning_models', (quality.non_reasoning_models || []).join(', '));
       setValue('p_hard_tps', quality.hard_tps || 1000);
       setValue('p_consecutive_soft', quality.consecutive_soft || 2);
       setValue('p_consecutive_errors', quality.consecutive_errors || 2);
@@ -9890,6 +9893,7 @@
       policy.routing.scoring.refresh.drift_threshold = signedNumberValue('p_score_drift_threshold', 0.03);
       policy.quality = policy.quality || {};
       policy.quality.soft_tps = numberValue('p_soft_tps', 500);
+      policy.quality.non_reasoning_models = (valueOf('p_non_reasoning_models') || '').split(',').map((item) => item.trim()).filter(Boolean);
       policy.quality.hard_tps = numberValue('p_hard_tps', 1000);
       policy.quality.consecutive_soft = numberValue('p_consecutive_soft', 2);
       policy.quality.consecutive_errors = numberValue('p_consecutive_errors', 2);

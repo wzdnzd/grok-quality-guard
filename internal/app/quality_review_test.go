@@ -106,14 +106,14 @@ func TestReviewClientDisconnectDoesNotPenalize(t *testing.T) {
 	}
 }
 
-func TestReviewEncryptedStreamNotBurst(t *testing.T) {
+func TestReviewEncryptedStreamDumpWindow(t *testing.T) {
 	cases := []struct {
 		span int64
 		want string
 	}{
 		{span: 0, want: qualitypkg.ClassBufferedBurst},
-		{span: 500, want: qualitypkg.ClassNone},
-		{span: 1500, want: qualitypkg.ClassNone},
+		{span: 500, want: qualitypkg.ClassBufferedBurst},
+		{span: 1500, want: qualitypkg.ClassFakeEncryptedDump},
 		{span: 3000, want: qualitypkg.ClassNone},
 	}
 	for _, test := range cases {
@@ -131,19 +131,20 @@ func TestReviewEncryptedStreamNotBurst(t *testing.T) {
 			VisibleChunks:   6,
 		}
 		verdict := ClassifyQualityHold(sig, 8)
-		if test.span >= 200 && verdict.Action != qualitypkg.QualityActionDeliver {
-			t.Fatalf("span %d action = %q class = %q, want deliver", test.span, verdict.Action, verdict.Class)
+		if verdict.Class != test.want {
+			t.Fatalf("span %d class = %q, want %q", test.span, verdict.Class, test.want)
 		}
-		if test.span >= 200 && verdict.Class != qualitypkg.ClassNone {
-			t.Fatalf("span %d class = %q, want none", test.span, verdict.Class)
+		wantAction := qualitypkg.QualityActionWithhold
+		if test.want == qualitypkg.ClassNone {
+			wantAction = qualitypkg.QualityActionDeliver
 		}
-		if test.span == 0 && verdict.Class != test.want {
-			t.Fatalf("span 0 class = %q, want %q", verdict.Class, test.want)
+		if verdict.Action != wantAction {
+			t.Fatalf("span %d action = %q, want %q", test.span, verdict.Action, wantAction)
 		}
 	}
 }
 
-func TestReviewHoldExpiryKeepsSustainedEncryptedStream(t *testing.T) {
+func TestReviewHoldExpiryRequiresSustainedEncryptedStream(t *testing.T) {
 	sig := qualitypkg.Signals{
 		Terminal:        false,
 		HoldExpired:     true,
@@ -154,11 +155,16 @@ func TestReviewHoldExpiryKeepsSustainedEncryptedStream(t *testing.T) {
 		EncryptedBytes:  2048,
 		EncryptedFloor:  256,
 		FirstVisible:    true,
-		VisibleSpanMS:   1000,
+		VisibleSpanMS:   3000,
 		VisibleChunks:   6,
 	}
 	if verdict := ClassifyQualityHold(sig, 8); verdict.Action != qualitypkg.QualityActionDeliver || verdict.Class != qualitypkg.ClassNone {
 		t.Fatalf("sustained stream at hold expiry = %#v, want deliver", verdict)
+	}
+	early := sig
+	early.VisibleSpanMS = 1000
+	if verdict := ClassifyQualityHold(early, 8); verdict.Class != qualitypkg.ClassBufferedBurst {
+		t.Fatalf("fast hold-expiry stream = %#v, want buffered burst", verdict)
 	}
 	dump := sig
 	dump.VisibleChunks = 1
@@ -166,6 +172,13 @@ func TestReviewHoldExpiryKeepsSustainedEncryptedStream(t *testing.T) {
 	dump.VisibleTokens = 4
 	if verdict := ClassifyQualityHold(dump, 8); verdict.Class != qualitypkg.ClassBufferedBurst {
 		t.Fatalf("single-chunk hold dump = %#v, want buffered burst", verdict)
+	}
+	tiny := sig
+	tiny.VisibleChunks = 8
+	tiny.VisibleSpanMS = 3000
+	tiny.VisibleTokens = 4
+	if verdict := ClassifyQualityHold(tiny, 8); verdict.Class != qualitypkg.ClassBufferedBurst {
+		t.Fatalf("long-span tiny hold dump = %#v, want buffered burst", verdict)
 	}
 }
 
@@ -435,7 +448,7 @@ func TestReviewNonReasoningProbeSkipsDumpClasses(t *testing.T) {
 	}
 }
 
-func TestReviewEncryptedStreamFastDeltasNotDump(t *testing.T) {
+func TestReviewEncryptedFastDeltasWithinDumpWindowWithheld(t *testing.T) {
 	config := appconfig.DefaultQualityConfig()
 	analyzer := NewStreamAnalyzerWithProtocolAt("openai-response", time.Now())
 	analyzer.SetRetainText(false)
@@ -455,8 +468,8 @@ func TestReviewEncryptedStreamFastDeltasNotDump(t *testing.T) {
 	if sig.VisibleChunks != 12 || sig.VisibleSpanMS < 100 {
 		t.Fatalf("unexpected visible stream signals: %#v", sig)
 	}
-	if verdict := classifyFinal(sig, config, true, config.MinHoldOutputTokens, true); verdict.Action != qualitypkg.QualityActionDeliver {
-		t.Fatalf("healthy fast stream final verdict = %#v, want deliver", verdict)
+	if verdict := classifyFinal(sig, config, true, config.MinHoldOutputTokens, true); verdict.Action != qualitypkg.QualityActionWithhold || verdict.Class != qualitypkg.ClassBufferedBurst {
+		t.Fatalf("fast encrypted stream final verdict = %#v, want buffered burst withhold", verdict)
 	}
 }
 
@@ -733,7 +746,7 @@ func TestPassiveUsageFlagsReasoningRequestWithoutThinking(t *testing.T) {
 	}
 }
 
-func TestStreamingSemanticOnlyOutputBypassesMissingThinking(t *testing.T) {
+func TestStreamingSemanticOnlyWithUsageIsNotABypass(t *testing.T) {
 	config := appconfig.DefaultQualityConfig()
 	config.SoftTPS = 1e9
 	config.HardTPS = 2e9
@@ -747,14 +760,32 @@ func TestStreamingSemanticOnlyOutputBypassesMissingThinking(t *testing.T) {
 		t.Fatalf("unexpected semantic-only signals: %#v", signals)
 	}
 	verdict := classifyFinal(signals, config, true, 8, true)
-	if verdict.Class != qualitypkg.ClassNone || verdict.Action != qualitypkg.QualityActionDeliver {
-		t.Fatalf("semantic-only response was rejected: %#v", verdict)
+	if verdict.Class != qualitypkg.ClassMissingThinking || verdict.Action != qualitypkg.QualityActionWithhold {
+		t.Fatalf("semantic-only response with usage was accepted: %#v", verdict)
 	}
 	if !verdict.Signals.ReasoningRequired {
 		t.Fatalf("reasoning requirement was not preserved in evidence: %#v", verdict.Signals)
 	}
 	if verdict.Signals.EncryptedFloor != 1420 {
 		t.Fatalf("encrypted floor = %d, want 1420", verdict.Signals.EncryptedFloor)
+	}
+}
+
+func TestStreamingSemanticOnlyWithoutUsageDelivers(t *testing.T) {
+	config := appconfig.DefaultQualityConfig()
+	config.SoftTPS = 1e9
+	config.HardTPS = 2e9
+	signals := qualitypkg.Signals{
+		Streaming:       true,
+		Terminal:        true,
+		SemanticOutput:  true,
+		FirstTokenKnown: true,
+		FirstTokenMS:    100,
+		DurationMS:      1000,
+	}
+	verdict := classifyFinal(signals, config, true, 8, true)
+	if verdict.Class != qualitypkg.ClassNone || verdict.Action != qualitypkg.QualityActionDeliver {
+		t.Fatalf("zero-usage semantic-only response was rejected: %#v", verdict)
 	}
 }
 

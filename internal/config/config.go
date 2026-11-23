@@ -104,6 +104,7 @@ type QualityConfig struct {
 	StrikeDecayAfterHours           int      `yaml:"strike_decay_after" json:"strike_decay_after"`
 	StrikeDecayMinHealthy           int      `yaml:"strike_decay_min_healthy" json:"strike_decay_min_healthy"`
 	ThinkingGuard                   bool     `yaml:"thinking_guard" json:"thinking_guard"`
+	NonReasoningModels              []string `yaml:"non_reasoning_models" json:"non_reasoning_models"`
 	SoftCrossVerify                 bool     `yaml:"soft_cross_verify" json:"soft_cross_verify"`
 	ThinkingCrossVerify             bool     `yaml:"thinking_cross_verify" json:"thinking_cross_verify"`
 	MinGenerationMS                 int64    `yaml:"min_generation_ms" json:"min_generation_ms"`
@@ -276,6 +277,7 @@ func DefaultQualityConfig() QualityConfig {
 		StrikeDecayAfterHours:           48,
 		StrikeDecayMinHealthy:           10,
 		ThinkingGuard:                   true,
+		NonReasoningModels:              []string{},
 		SoftCrossVerify:                 false,
 		ThinkingCrossVerify:             false,
 		MinGenerationMS:                 1000,
@@ -572,6 +574,7 @@ func normalizeQuality(q *QualityConfig) error {
 	if q.EncryptedBytesPerReasoningToken <= 0 {
 		q.EncryptedBytesPerReasoningToken = defaults.EncryptedBytesPerReasoningToken
 	}
+	q.NonReasoningModels = normalizeNonReasoningModels(q.NonReasoningModels)
 	if q.MissingThinkingCooldown.Duration <= 0 {
 		q.MissingThinkingCooldown = defaults.MissingThinkingCooldown
 	}
@@ -589,6 +592,23 @@ func normalizeQuality(q *QualityConfig) error {
 		return fmt.Errorf("quality.on_exhausted must be fail_closed or fail_open")
 	}
 	return nil
+}
+
+func normalizeNonReasoningModels(models []string) []string {
+	normalized := make([]string, 0, len(models))
+	seen := make(map[string]struct{}, len(models))
+	for _, value := range models {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	return normalized
 }
 
 func normalizeProbe(p *ProbeConfig) error {

@@ -50,6 +50,9 @@ func decodeRequestPayload(body []byte) map[string]any { return domain.DecodeRequ
 func reasoningRequiredForModelPayload(name string, payload map[string]any) bool {
 	return domain.ReasoningRequiredForModelPayload(name, payload)
 }
+func reasoningRequiredForModelPayloadWithNonReasoning(name string, payload map[string]any, nonReasoning []string) bool {
+	return domain.ReasoningRequiredForModelPayloadWithNonReasoning(name, payload, nonReasoning)
+}
 func ensureTransparentReasoningEvidence(body []byte, sourceFormat string, required bool) []byte {
 	return execapp.EnsureTransparentReasoningEvidence(body, sourceFormat, required)
 }

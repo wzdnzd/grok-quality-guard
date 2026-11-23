@@ -185,7 +185,7 @@ func (s *Service) HandleUsage(request []byte) {
 	if pending != nil {
 		reasoningBody = pending.Body
 	}
-	reasoningNeeded := UsageReasoningRequired(record, reasoningBody)
+	reasoningNeeded := UsageReasoningRequiredWithNonReasoning(record, reasoningBody, policy.Quality.NonReasoningModels)
 	sig := quality.Signals{
 		Terminal:        true,
 		Streaming:       record.Stream,
@@ -222,6 +222,10 @@ func (s *Service) HandleUsage(request []byte) {
 }
 
 func UsageReasoningRequired(record pluginapi.UsageRecord, body []byte) bool {
+	return UsageReasoningRequiredWithNonReasoning(record, body, nil)
+}
+
+func UsageReasoningRequiredWithNonReasoning(record pluginapi.UsageRecord, body []byte, nonReasoning []string) bool {
 	if len(body) > 0 && !quality.ReasoningRequired(body) {
 		return false
 	}
@@ -232,7 +236,7 @@ func UsageReasoningRequired(record pluginapi.UsageRecord, body []byte) bool {
 		if strings.TrimSpace(model) == "" {
 			continue
 		}
-		if quality.ReasoningRequiredForModel(model, body) {
+		if quality.ReasoningRequiredForModelWithNonReasoning(model, body, nonReasoning) {
 			return true
 		}
 	}

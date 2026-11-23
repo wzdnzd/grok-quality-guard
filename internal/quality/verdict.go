@@ -88,8 +88,8 @@ func qualityWindowFinal(sig Signals) bool {
 }
 
 // qualityVisibleStreaming reports evidence that the visible text arrived as a
-// real stream instead of a single buffered dump. Dump checks must not fire once
-// this evidence exists.
+// real stream instead of a single buffered dump. This protects sustained
+// streams, but it must not bypass the hard dump windows below.
 func qualityVisibleStreaming(sig Signals) bool {
 	if !sig.FirstVisible || sig.VisibleSpanMS < 100 {
 		return false
@@ -100,24 +100,30 @@ func qualityVisibleStreaming(sig Signals) bool {
 	return sig.VisibleChunks >= 4 || sig.VisibleSpanMS >= 200
 }
 
+// qualitySustainedVisibleStream is the mis-kill protection that is stronger
+// than grok2api's fast-flush rule. It only applies after the full two-second
+// dump window, so it cannot hide a buffered or fake-encrypted dump.
+func qualitySustainedVisibleStream(sig Signals) bool {
+	return sig.VisibleSpanMS >= defaultQualityFakeFlushMS && qualityVisibleStreaming(sig)
+}
+
 func qualityFastFlush(sig Signals, limitMS int64) bool {
-	if !sig.FirstVisible || !qualityWindowFinal(sig) || qualityVisibleStreaming(sig) {
+	if !sig.FirstVisible || !qualityWindowFinal(sig) {
 		return false
 	}
 	return sig.VisibleSpanMS >= 0 && sig.VisibleSpanMS < limitMS
 }
 
 func qualityIsBurstDump(sig Signals, minOutput int64) bool {
-	_ = minOutput
 	if sig.HasReasoningDelta {
 		return false
 	}
 	shortVisible := sig.VisibleTokens > 0 && sig.VisibleTokens < defaultQualityMaxVisible
 	heavyReasoning := sig.ReasoningTokens >= defaultQualityMinReasoning
 	if sig.HoldExpired {
-		// Sustained visible delivery outranks the reasoning bill even when the
-		// hold window expires before the upstream terminal event
-		if qualityVisibleStreaming(sig) {
+		// Preserve the plugin's sustained-stream protection, but do not let it
+		// hide a short greeting dumped after a long hold with a heavy bill.
+		if sig.VisibleTokens >= minOutput && qualitySustainedVisibleStream(sig) {
 			return false
 		}
 		return shortVisible && heavyReasoning
@@ -196,15 +202,12 @@ func ClassifyQualityHold(sig Signals, minOutput int64) QualityVerdict {
 		if sig.Terminal {
 			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.encrypted_reasoning_met_the_floor", Signals: sig}
 		}
-		if sig.VisibleTokens >= minOutput && qualityVisibleStreaming(sig) && sig.VisibleSpanMS >= 500 {
+		if sig.VisibleTokens >= minOutput && qualitySustainedVisibleStream(sig) {
 			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.encrypted_reasoning_with_sustained_visible_output", Signals: sig}
 		}
 		return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.waiting_for_encrypted_reasoning_evidence", Signals: sig}
 	}
-	output := sig.VisibleTokens
-	if output <= 0 {
-		output = sig.OutputTokens
-	}
+	output := qualityThinkingOutput(sig)
 	enough := output >= minOutput
 	if sig.ReasoningStarted && !sig.Terminal && !sig.HoldExpired {
 		return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.waiting_for_reasoning_evidence", Signals: sig}
@@ -242,7 +245,19 @@ func isDumpClass(class string) bool {
 }
 
 func isSemanticOnly(sig Signals) bool {
-	return sig.SemanticOutput && !sig.HasThinking && sig.VisibleTokens == 0
+	return sig.Terminal &&
+		sig.SemanticOutput &&
+		!sig.HasThinking &&
+		sig.ReasoningTokens <= 0 &&
+		sig.OutputTokens <= 0 &&
+		sig.VisibleTokens <= 0
+}
+
+// qualityThinkingOutput keeps a short visible fragment from hiding billed output.
+// Usage is not thinking evidence, but a non-zero reasoning or output bill proves
+// the response is not the zero-usage semantic-only exemption.
+func qualityThinkingOutput(sig Signals) int64 {
+	return maxInt64(maxInt64(sig.VisibleTokens, sig.OutputTokens), sig.ReasoningTokens)
 }
 
 func isEmptyStream(sig Signals) bool {
@@ -315,7 +330,7 @@ func classifyFinal(sig Signals, cfg config.QualityConfig, reasoningRequired bool
 		}
 		sig = hold.Signals
 		if hold.Action == QualityActionWait {
-			if sig.SemanticOutput {
+			if isSemanticOnly(sig) {
 				hold.Action = QualityActionDeliver
 				hold.Class = ClassNone
 			} else {
@@ -324,10 +339,7 @@ func classifyFinal(sig Signals, cfg config.QualityConfig, reasoningRequired bool
 		}
 	}
 	if thinkingRequired && !sig.HasThinking && !isSemanticOnly(sig) {
-		output := sig.VisibleTokens
-		if output <= 0 {
-			output = sig.OutputTokens
-		}
+		output := qualityThinkingOutput(sig)
 		if output >= minOutput {
 			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
 		}
@@ -362,10 +374,7 @@ func classifyProbeResult(sig Signals, cfg config.QualityConfig, expectedMatched,
 	if !expectedMatched {
 		return QualityVerdict{Action: QualityActionWithhold, Class: ClassExpectedMarkerMissing, Reason: "reason.detail.expected_marker_missing", Signals: sig}
 	}
-	output := sig.OutputTokens
-	if output <= 0 {
-		output = sig.VisibleTokens
-	}
+	output := qualityThinkingOutput(sig)
 	if output < cfg.MinPassiveOutputTokens {
 		return QualityVerdict{Action: QualityActionWithhold, Class: ClassInsufficientOutput, Reason: "reason.detail.insufficient_output_tokens", Signals: sig}
 	}
@@ -373,15 +382,17 @@ func classifyProbeResult(sig Signals, cfg config.QualityConfig, expectedMatched,
 	if sig.EncryptedBytes > 0 && sig.EncryptedBytes >= sig.EncryptedFloor {
 		sig.HasThinking = true
 	}
+	if thinkingRequired && !sig.HasThinking && output >= thinkingGuardMinOutputTokens {
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.missing_thinking", Signals: sig}
+	}
 	hold := ClassifyQualityHold(sig, cfg.MinHoldOutputTokens)
 	if hold.Action == QualityActionWithhold {
 		switch {
 		case !reasoningRequired && isDumpClass(hold.Class):
 			// Non-reasoning probe models legitimately produce fast visible text.
 		case hold.Class == ClassMissingThinking:
-			if thinkingRequired && output >= thinkingGuardMinOutputTokens && sig.ReasoningTokens <= 0 {
-				return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.missing_thinking", Signals: sig}
-			}
+			// The usage-level thinking gate above already handled every
+			// qualifying sample. Remaining hits are below its threshold.
 		default:
 			return hold
 		}
@@ -411,17 +422,13 @@ func classifyPassiveAudit(sig Signals, cfg config.QualityConfig) QualityVerdict 
 	}
 	sig.GenerationMS = generationWindowMS(sig.DurationMS, sig.FirstTokenMS, sig.ReasoningTokens)
 	sig.TPS = tps(sig.OutputTokens, sig.GenerationMS)
-	if sig.GenerationMS <= 0 || sig.OutputTokens < cfg.MinPassiveOutputTokens {
+	thinkingOutput := qualityThinkingOutput(sig)
+	thinkingEligible := cfg.ThinkingGuard && sig.ReasoningRequired && thinkingOutput >= cfg.MinPassiveOutputTokens
+	if sig.GenerationMS <= 0 || (sig.OutputTokens < cfg.MinPassiveOutputTokens && !thinkingEligible) {
 		return QualityVerdict{Action: QualityActionDeliver, Class: ClassIgnored, Reason: "reason.detail.insufficient_output_tokens", Signals: sig}
 	}
-	if cfg.ThinkingGuard && sig.ReasoningRequired && !sig.HasThinking && !isSemanticOnly(sig) {
-		output := sig.VisibleTokens
-		if output <= 0 {
-			output = sig.OutputTokens
-		}
-		if output >= cfg.MinPassiveOutputTokens {
-			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
-		}
+	if thinkingEligible && !sig.HasThinking && !isSemanticOnly(sig) {
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
 	}
 	class, speed, gen := classifyOutputSpeed(sig, cfg, cfg.FailClosed)
 	sig.GenerationMS = gen
@@ -451,10 +458,7 @@ func classifyNonStreamResult(sig Signals, cfg config.QualityConfig, reasoningReq
 		return QualityVerdict{Action: QualityActionWithhold, Class: ClassEmptyStream, Reason: "reason.detail.upstream_response_completed_without_content", Signals: sig}
 	}
 	if cfg.ThinkingGuard && reasoningRequired && !sig.HasThinking && !isSemanticOnly(sig) {
-		output := sig.VisibleTokens
-		if output <= 0 {
-			output = sig.OutputTokens
-		}
+		output := qualityThinkingOutput(sig)
 		if output >= minOutput {
 			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
 		}
@@ -483,6 +487,10 @@ func reasoningRequired(body []byte) bool {
 
 func reasoningRequiredForModel(model string, body []byte) bool {
 	return reasoningRequiredForModelPayload(model, decodeRequestPayload(body))
+}
+
+func reasoningRequiredForModelWithNonReasoning(model string, body []byte, nonReasoning []string) bool {
+	return reasoningRequiredForModelPayloadWithNonReasoning(model, decodeRequestPayload(body), nonReasoning)
 }
 
 func modelFromRequestBody(body []byte) string {

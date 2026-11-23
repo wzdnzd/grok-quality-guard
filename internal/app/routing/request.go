@@ -14,7 +14,11 @@ func (s *Service) prepareTransparentRequest(req Request) (Facts, error) {
 	}
 	payload := decodeRequestPayload(body)
 	model := executionModelFromPayload(req, payload)
-	reasoningNeeded := reasoningRequiredForModelPayload(model, payload)
+	var nonReasoning []string
+	if s.env != nil {
+		nonReasoning = s.env.Policy().Quality.NonReasoningModels
+	}
+	reasoningNeeded := reasoningRequiredForModelPayloadWithNonReasoning(model, payload, nonReasoning)
 	body = ensureTransparentReasoningEvidence(body, sourceFormat, reasoningNeeded)
 	return Facts{
 		Body:              body,

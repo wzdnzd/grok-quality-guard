@@ -449,6 +449,13 @@ candidateLoop:
 	s.closePluginErrorStream(streamID, locale, "quality_degraded", http.StatusServiceUnavailable)
 }
 
+func transparentHoldBlocks(cfg QualityConfig, reasoningNeeded bool, verdict QualityVerdict) bool {
+	if verdict.Class == ClassMissingThinking && (!cfg.ThinkingGuard || !reasoningNeeded) {
+		return false
+	}
+	return true
+}
+
 func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig, streamID string, reasoningNeeded bool) StreamAttempt {
 	// The host returns the stream only after the first chunk is readable, so the
 	// TPS clock must start before the call to include upstream TTFT.
@@ -590,7 +597,7 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 			preview.HoldExpired = true
 			preview.ReasoningRequired = reasoningNeeded
 			verdict := ClassifyQualityHold(preview, cfg.MinHoldOutputTokens)
-			if verdict.Action == QualityActionWithhold {
+			if verdict.Action == QualityActionWithhold && transparentHoldBlocks(cfg, reasoningNeeded, verdict) {
 				return StreamAttempt{Class: verdict.Class, Verdict: verdict, Err: fmt.Errorf("quality gate rejected stream: %s", verdict.Class), Buffered: buffer, Available: true}
 			}
 			if verdict.Action == QualityActionDeliver {
@@ -655,7 +662,7 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 			preview.HoldExpired = holdExpired
 			preview.ReasoningRequired = reasoningNeeded
 			holdVerdict := ClassifyQualityHold(preview, cfg.MinHoldOutputTokens)
-			if holdVerdict.Action == QualityActionWithhold {
+			if holdVerdict.Action == QualityActionWithhold && transparentHoldBlocks(cfg, reasoningNeeded, holdVerdict) {
 				return StreamAttempt{Class: holdVerdict.Class, Verdict: holdVerdict, Err: fmt.Errorf("quality gate rejected stream: %s", holdVerdict.Class), Buffered: buffer, Available: true}
 			}
 			if holdVerdict.Action == QualityActionDeliver {

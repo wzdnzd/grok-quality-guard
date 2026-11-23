@@ -677,7 +677,7 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 	sig := analyzer.Finalize(terminal)
 	sig.DurationMS = time.Since(probeStartedAt).Milliseconds()
 	markerOK := matchProbeMarker(sig.VisibleText, probeMarker)
-	probeReasoningRequired := reasoningRequiredForModel(probeCfg.Model, body)
+	probeReasoningRequired := reasoningRequiredForModelWithNonReasoning(probeCfg.Model, body, qualityCfg.NonReasoningModels)
 	verdict := classifyProbeResult(sig, qualityCfg, markerOK, probeReasoningRequired)
 	if verdict.Class == ClassNone {
 		if errSuccess := s.markProbeSuccess(authID, verdict.Signals); errSuccess != nil {
