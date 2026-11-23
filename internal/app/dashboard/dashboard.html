@@ -1857,6 +1857,25 @@
       flex-direction: column;
     }
 
+    .task-center-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      row-gap: 4px;
+    }
+
+    .task-center-heading {
+      min-width: 0;
+    }
+
+    .task-center-header .task-center-summary {
+      grid-column: 1 / -1;
+      margin-top: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     .task-toolbar {
       flex-wrap: nowrap;
       padding: 9px 12px;
@@ -4701,9 +4720,8 @@
           <div class="card-header compact">
             <div>
               <h2 id="residentQueuesTitle"><svg class="icon"><use href="#i-activity"></use></svg>ui.resident_queue</h2>
-              <p id="taskHistorySummary">ui.shows_only_queues_that_are_enabled_or_still_have</p>
+              <p>ui.shows_only_queues_that_are_enabled_or_still_have</p>
             </div>
-            <button class="btn btn-xs btn-ghost" type="button" data-goto-tab="settings" data-open-settings="tasks">ui.configure_task_history</button>
           </div>
           <div class="queue-grid" id="residentQueues"></div>
           <section class="resident-queue-detail" id="residentQueueDetail" aria-live="polite" hidden>
@@ -4723,12 +4741,15 @@
         </section>
         <div class="task-center-grid">
           <section class="card task-list-card" aria-labelledby="taskListTitle">
-            <div class="card-header">
-              <div>
+            <div class="card-header task-center-header">
+              <div class="task-center-heading">
                 <h2 id="taskListTitle"><svg class="icon"><use href="#i-terminal"></use></svg>ui.task_center</h2>
-                <p>ui.track_asynchronous_account_proxy_and_quality_cross_verification_batches</p>
               </div>
-              <div class="card-actions"><span class="badge" id="tasksCount">ui.0_tasks</span></div>
+              <div class="card-actions">
+                <span class="badge" id="tasksCount">ui.0_tasks</span>
+                <button class="btn btn-xs btn-ghost" type="button" data-goto-tab="settings" data-open-settings="tasks">ui.configure_task_history</button>
+              </div>
+              <p id="taskHistorySummary" class="task-center-summary">ui.task_center_and_history</p>
             </div>
             <div class="toolbar task-toolbar">
               <div class="toolbar-left">
@@ -9081,6 +9102,18 @@
       if (value.enabled === false) return i18n.t('ui.history_disabled_only_current');
       return i18n.t('ui.task_history_summary', { days: Number(value.retention_days || 3), records: Number(value.record_count || 0), used: formatBytes(value.archive_bytes || 0), max: formatBytes(value.max_bytes || 0) });
     }
+    function taskCenterSummaryText(history) {
+      const value = history || {};
+      if (value.enabled === false) return i18n.t('ui.task_center_summary_disabled');
+      return i18n.t('ui.task_center_summary', { days: Number(value.retention_days || 3), records: Number(value.record_count || 0), used: formatBytes(value.archive_bytes || 0), max: formatBytes(value.max_bytes || 0) });
+    }
+    function renderTaskCenterSummary(history) {
+      const element = document.getElementById('taskHistorySummary');
+      if (!element) return;
+      const text = taskCenterSummaryText(history);
+      element.textContent = text;
+      element.title = text;
+    }
     function taskCount(value) {
       const count = Number(value ?? 0);
       return Number.isFinite(count) && count > 0 ? count : 0;
@@ -9200,10 +9233,9 @@
     function queueMetric(label, value) {
       return '<span class="task-toolbar-metric"><span>' + esc(label) + '</span><strong>' + esc(value) + '</strong></span>';
     }
-    function renderResidentQueues(queues, history) {
+    function renderResidentQueues(queues) {
       const container = document.getElementById('residentQueues');
       if (!container) return;
-      if (history !== undefined) document.getElementById('taskHistorySummary').textContent = taskHistoryText(history);
       const selectedQueueID = String(state.taskCenterSelectedQueue?.id || '');
       if (!queues || !queues.length) {
         container.innerHTML = '<div class="empty" style="grid-column:1/-1"><svg class="icon"><use href="#i-activity"></use></svg><div>' + esc(i18n.t('ui.no_active_resident_queues')) + '</div></div>';
@@ -9494,7 +9526,8 @@
       document.getElementById('taskRows').innerHTML = items.map(taskRow).join('');
       document.getElementById('tasksEmpty').hidden = items.length > 0;
       renderTaskPager(result);
-      renderResidentQueues(result.resident_queues || [], history);
+      renderTaskCenterSummary(history);
+      renderResidentQueues(result.resident_queues || []);
       renderTaskQueueDetail();
       renderTaskDetail();
     }
