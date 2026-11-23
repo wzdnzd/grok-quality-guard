@@ -270,6 +270,8 @@ plugins:
         unknown_jitter: "30s"
         suspect_backoff: "15m"
         max_backoff: "1h"
+        entry_protocol: "codex"
+        exit_protocol: "codex"
 
       proxy:
         auto_rotate_after_quality_failure: true
