@@ -176,7 +176,8 @@ func TestProbeTPSIncludesPreStreamLatency(t *testing.T) {
 func TestProbeBodyUsesQualityMarkerProfilePrompt(t *testing.T) {
 	body := probeBody(appconfig.DefaultProbeConfig())
 	var payload struct {
-		Input []struct {
+		Include []string `json:"include"`
+		Input   []struct {
 			Content []struct {
 				Text string `json:"text"`
 			} `json:"content"`
@@ -191,6 +192,11 @@ func TestProbeBodyUsesQualityMarkerProfilePrompt(t *testing.T) {
 	want := "先用三点总结为什么天空呈蓝色，最后一行只输出 QUALITY_OK。"
 	if payload.Input[0].Content[0].Text != want {
 		t.Fatalf("probe prompt = %q, want %q", payload.Input[0].Content[0].Text, want)
+	}
+	// Without the include, accounts that do not stream a reasoning summary
+	// carry no thinking evidence and fail every probe as missing_thinking.
+	if len(payload.Include) != 1 || payload.Include[0] != "reasoning.encrypted_content" {
+		t.Fatalf("probe include = %#v, want reasoning.encrypted_content", payload.Include)
 	}
 }
 

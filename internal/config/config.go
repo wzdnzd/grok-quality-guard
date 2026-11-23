@@ -295,7 +295,7 @@ func DefaultQualityConfig() QualityConfig {
 		ShadowMode:                      false,
 		HoldMaxBufferBytes:              4 * 1024 * 1024,
 		MinEncryptedBytes:               256,
-		EncryptedBytesPerReasoningToken: 4,
+		EncryptedBytesPerReasoningToken: 2,
 		MissingThinkingCooldown:         NewDuration(12 * time.Hour),
 		EmptyStreamCooldown:             NewDuration(15 * time.Minute),
 		MaxAttempts:                     6,

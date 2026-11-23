@@ -31,18 +31,23 @@ func TestGenerationWindowCorrectionBoundaries(t *testing.T) {
 }
 
 func TestEncryptedContentDeduplication(t *testing.T) {
+	// One copy stays below the 3000-byte floor, while a double count would
+	// clear it, so the test fails if the repeated item is summed.
 	encrypted := strings.Repeat("A", 2500)
 	analyzer := NewStreamAnalyzer()
 	payload := `data: {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning","encrypted_content":"` + encrypted + `"}}` + "\n\n" +
 		`data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","encrypted_content":"` + encrypted + `"}}` + "\n\n" +
-		`data: {"type":"response.completed","response":{"usage":{"output_tokens":1100,"output_tokens_details":{"reasoning_tokens":1000}}}}` + "\n\n"
+		`data: {"type":"response.completed","response":{"usage":{"output_tokens":1600,"output_tokens_details":{"reasoning_tokens":1500}}}}` + "\n\n"
 	analyzer.ObserveChunk([]byte(payload))
 	sig := analyzer.Finalize(true)
 	if sig.EncryptedBytes != 2500 {
 		t.Fatalf("encrypted bytes = %d, want 2500 after deduplication", sig.EncryptedBytes)
 	}
+	if sig.EncryptedFloor != 3000 {
+		t.Fatalf("encrypted floor = %d, want 3000", sig.EncryptedFloor)
+	}
 	if sig.HasThinking {
-		t.Fatal("duplicated encrypted stub incorrectly satisfied the 4000-byte floor")
+		t.Fatal("duplicated encrypted stub incorrectly satisfied the 3000-byte floor")
 	}
 }
 
@@ -335,6 +340,66 @@ func TestVisibleGapsReported(t *testing.T) {
 	sig := analyzer.Preview()
 	if sig.VisibleGapMaxMS < 20 || sig.VisibleGapMedMS < 5 {
 		t.Fatalf("visible gap stats = max %d median %d", sig.VisibleGapMaxMS, sig.VisibleGapMedMS)
+	}
+}
+
+func TestDefaultEncryptedFloorAcceptsObservedHealthyRatios(t *testing.T) {
+	cfg := config.DefaultQualityConfig()
+	cfg.SoftTPS = 1e9
+	cfg.HardTPS = 2e9
+	// Encrypted sizes observed on healthy accounts that also streamed a
+	// reasoning summary. Half of them are below 4 bytes per reasoning token,
+	// which made accounts without a summary fail as missing_thinking.
+	healthy := []struct{ encrypted, reasoning int64 }{
+		{encrypted: 9678, reasoning: 3973},
+		{encrypted: 1019, reasoning: 374},
+		{encrypted: 5638, reasoning: 2020},
+		{encrypted: 979, reasoning: 282},
+		{encrypted: 724, reasoning: 185},
+		{encrypted: 716, reasoning: 180},
+	}
+	for _, sample := range healthy {
+		sig := Signals{
+			Streaming:       true,
+			Terminal:        true,
+			FirstVisible:    true,
+			VisibleTokens:   64,
+			VisibleSpanMS:   2000,
+			VisibleChunks:   60,
+			UsageReported:   true,
+			OutputTokens:    sample.reasoning + 64,
+			ReasoningTokens: sample.reasoning,
+			EncryptedBytes:  sample.encrypted,
+			FirstTokenMS:    4000,
+			DurationMS:      8000,
+		}
+		sig.ReasoningExplicit = true
+		sig.CapabilityKnown = true
+		sig.EvidenceCapable = true
+		if verdict := classifyFinal(sig, cfg, true, 8, true); verdict.Class != ClassNone {
+			t.Fatalf("healthy %d bytes for %d reasoning tokens = %#v, want none", sample.encrypted, sample.reasoning, verdict)
+		}
+	}
+
+	stub := Signals{
+		Streaming:         true,
+		Terminal:          true,
+		FirstVisible:      true,
+		VisibleTokens:     64,
+		VisibleSpanMS:     2000,
+		VisibleChunks:     60,
+		UsageReported:     true,
+		OutputTokens:      1564,
+		ReasoningTokens:   1500,
+		EncryptedBytes:    400,
+		FirstTokenMS:      4000,
+		DurationMS:        8000,
+		ReasoningExplicit: true,
+		CapabilityKnown:   true,
+		EvidenceCapable:   true,
+	}
+	if verdict := classifyFinal(stub, cfg, true, 8, true); verdict.Class != ClassMissingThinking {
+		t.Fatalf("short stub against a large reasoning bill = %#v, want missing_thinking", verdict)
 	}
 }
 

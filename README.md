@@ -33,8 +33,12 @@ Grok Quality Guard 观测 Grok / xAI auth 的真实响应质量，识别 HTTP 20
 
 ```text
 max(min_encrypted_bytes, reasoning_tokens * encrypted_bytes_per_reasoning_token)
-默认 max(256 bytes, reasoning_tokens * 4 bytes)
+默认 max(256 bytes, reasoning_tokens * 2 bytes)
 ```
+
+每 token 系数按线上实测校准：同时带明文推理摘要、可确认健康的样本中，密文长度为每 reasoning token 2.44 至 8.67 字节，约一半低于 4 字节。系数取 4 时，不输出推理摘要的健康账号会被误判为 `missing_thinking`。下限只用于拦截与推理账单明显不符的短 stub
+
+主动探测与透明请求一样会请求 `include: ["reasoning.encrypted_content"]`。Grok 只有在请求时才返回推理密文，缺少该字段时不输出推理摘要的账号没有任何思考证据，每次探测都会被判为 `missing_thinking`
 
 以下内容不作为思考证据：
 
@@ -262,7 +266,7 @@ plugins:
         stream_idle_timeout: "90s"
         hold_max_buffer_bytes: 4194304
         min_encrypted_bytes: 256
-        encrypted_bytes_per_reasoning_token: 4
+        encrypted_bytes_per_reasoning_token: 2
         missing_thinking_cooldown: "12h"
         empty_stream_cooldown: "15m"
         max_attempts: 6

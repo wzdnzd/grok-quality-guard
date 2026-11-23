@@ -36,7 +36,7 @@ const (
 	defaultQualityCipherVisible    = int64(1024)
 	defaultQualityMaxVisibleTPS    = int64(1000)
 	defaultEncryptedBytes          = int64(256)
-	defaultEncryptedBytesPerToken  = int64(4)
+	defaultEncryptedBytesPerToken  = int64(2)
 	thinkingGuardMinOutputTokens   = int64(64)
 	// A reasoning stream that already delivered at least two visible chunks or
 	// a short visible window has settled: evidence is emitted before the

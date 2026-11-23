@@ -75,7 +75,7 @@ grok2api 的关键实现位于：
 1. `usage.reasoning_tokens` 不是思考证据。降智账号可能报告几百 reasoning tokens，但流里没有 reasoning delta。
 2. `: grok2api-reasoning-start` 只是 timing stub，不是思考证据。
 3. 空 reasoning item 不等于思考。
-4. `encrypted_content` 非空也不够，必须达到密文下限：`max(min_encrypted_bytes, reasoning_tokens * encrypted_bytes_per_reasoning_token)`，默认 `max(256, reasoning_tokens * 4)`。
+4. `encrypted_content` 非空也不够，必须达到密文下限：`max(min_encrypted_bytes, reasoning_tokens * encrypted_bytes_per_reasoning_token)`，默认 `max(256, reasoning_tokens * 2)`。
 5. 密文长度按 trim 后的字符串字节长度计算，与 grok2api 当前实现一致。
 6. visible token 只能从可见 content delta 推导，不能用 `usage.output - usage.reasoning` 代替。
 7. 判断速度异常时，TPS 使用总 output tokens，其中包含 reasoning tokens。
@@ -128,7 +128,7 @@ TPS = outputTokens * 1000 / generationWindow
 | `strike_decay_min_healthy` | 10 | 窗口内至少积累的连续健康观测/探测次数 |
 | `empty_stream_cooldown` | 15m | 空流/空闲流冷却 |
 | `min_encrypted_bytes` | 256 | encrypted thinking 字节下限 |
-| `encrypted_bytes_per_reasoning_token` | 4 | 每 reasoning token 的密文下限 |
+| `encrypted_bytes_per_reasoning_token` | 2 | 每 reasoning token 的密文下限，按线上健康样本 2.44 至 8.67 字节/token 校准 |
 | `fail_closed` | false | 短生成窗口和高 TPS 是否直接判为 burst，以及窗口不足是否单独分类 |
 | `non_reasoning_models` | 空 | 用户额外声明不产生推理的模型标识，提供方前缀会被忽略 |
 
@@ -2104,7 +2104,7 @@ plugins:
         stream_idle_timeout: "90s"
         hold_max_buffer_bytes: 4194304
         min_encrypted_bytes: 256
-        encrypted_bytes_per_reasoning_token: 4
+        encrypted_bytes_per_reasoning_token: 2
         missing_thinking_cooldown: "12h"
         empty_stream_cooldown: "15m"
         max_attempts: 6

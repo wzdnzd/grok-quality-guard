@@ -100,7 +100,7 @@ func pluginRegistrationForLocale(locale string) registration {
 				{Name: "quality.shadow_mode", Type: pluginapi.ConfigFieldTypeBoolean, Default: false, Description: configDescription(locale, "quality.shadow_mode")},
 				{Name: "quality.hold_max_buffer_bytes", Type: pluginapi.ConfigFieldTypeInteger, Default: 4194304, Description: configDescription(locale, "quality.hold_max_buffer_bytes")},
 				{Name: "quality.min_encrypted_bytes", Type: pluginapi.ConfigFieldTypeInteger, Default: 256, Description: configDescription(locale, "quality.min_encrypted_bytes")},
-				{Name: "quality.encrypted_bytes_per_reasoning_token", Type: pluginapi.ConfigFieldTypeInteger, Default: 4, Description: configDescription(locale, "quality.encrypted_bytes_per_reasoning_token")},
+				{Name: "quality.encrypted_bytes_per_reasoning_token", Type: pluginapi.ConfigFieldTypeInteger, Default: 2, Description: configDescription(locale, "quality.encrypted_bytes_per_reasoning_token")},
 				{Name: "quality.missing_thinking_cooldown", Type: pluginapi.ConfigFieldTypeString, Default: "12h", Description: configDescription(locale, "quality.missing_thinking_cooldown")},
 				{Name: "quality.empty_stream_cooldown", Type: pluginapi.ConfigFieldTypeString, Default: "15m", Description: configDescription(locale, "quality.empty_stream_cooldown")},
 				{Name: "quality.max_attempts", Type: pluginapi.ConfigFieldTypeInteger, Default: 6, Description: configDescription(locale, "quality.max_attempts")},

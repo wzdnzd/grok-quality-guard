@@ -752,7 +752,8 @@ func TestStreamingSemanticOnlyWithUsageIsNotABypass(t *testing.T) {
 	config.SoftTPS = 1e9
 	config.HardTPS = 2e9
 	analyzer := NewStreamAnalyzerWithProtocol(qualitypkg.ProtocolResponses)
-	encrypted := strings.Repeat("A", 1331)
+	// The stub stays just below the 710-byte floor for 355 reasoning tokens.
+	encrypted := strings.Repeat("A", 700)
 	analyzer.ObserveChunk([]byte(`data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","encrypted_content":"` + encrypted + `"}}` + "\n\n"))
 	analyzer.ObserveChunk([]byte(`data: {"type":"response.output_item.done","item":{"id":"call_1","type":"function_call","call_id":"call_1","name":"exec","arguments":"{}"}}` + "\n\n"))
 	analyzer.ObserveChunk([]byte(`data: {"type":"response.completed","response":{"id":"resp_1","usage":{"output_tokens":421,"output_tokens_details":{"reasoning_tokens":355}}}}` + "\n\n"))
@@ -767,8 +768,8 @@ func TestStreamingSemanticOnlyWithUsageIsNotABypass(t *testing.T) {
 	if !verdict.Signals.ReasoningRequired {
 		t.Fatalf("reasoning requirement was not preserved in evidence: %#v", verdict.Signals)
 	}
-	if verdict.Signals.EncryptedFloor != 1420 {
-		t.Fatalf("encrypted floor = %d, want 1420", verdict.Signals.EncryptedFloor)
+	if verdict.Signals.EncryptedFloor != 710 {
+		t.Fatalf("encrypted floor = %d, want 710", verdict.Signals.EncryptedFloor)
 	}
 }
 

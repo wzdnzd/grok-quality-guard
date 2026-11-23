@@ -9997,7 +9997,7 @@
       setChecked('p_shadow_mode', quality.shadow_mode === true);
       setValue('p_hold_max_bytes', quality.hold_max_buffer_bytes || 4194304);
       setValue('p_min_encrypted_bytes', quality.min_encrypted_bytes || 256);
-      setValue('p_encrypted_per_token', quality.encrypted_bytes_per_reasoning_token || 4);
+      setValue('p_encrypted_per_token', quality.encrypted_bytes_per_reasoning_token || 2);
       setValue('p_missing_cooldown', quality.missing_thinking_cooldown || '12h');
       setValue('p_empty_cooldown', quality.empty_stream_cooldown || '15m');
       setValue('p_max_attempts', quality.max_attempts || 6);
@@ -10074,7 +10074,7 @@
       policy.quality.shadow_mode = document.getElementById('p_shadow_mode').checked;
       policy.quality.hold_max_buffer_bytes = numberValue('p_hold_max_bytes', 4194304);
       policy.quality.min_encrypted_bytes = numberValue('p_min_encrypted_bytes', 256);
-      policy.quality.encrypted_bytes_per_reasoning_token = numberValue('p_encrypted_per_token', 4);
+      policy.quality.encrypted_bytes_per_reasoning_token = numberValue('p_encrypted_per_token', 2);
       policy.quality.missing_thinking_cooldown = valueOf('p_missing_cooldown');
       policy.quality.empty_stream_cooldown = valueOf('p_empty_cooldown');
       policy.quality.max_attempts = numberValue('p_max_attempts', 6);

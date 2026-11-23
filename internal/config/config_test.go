@@ -34,6 +34,9 @@ func TestDecodeConfigPartialKeepsDefaults(t *testing.T) {
 	if cfg.Quality.ShadowMode {
 		t.Fatalf("shadow mode defaulted to enabled: %#v", cfg.Quality)
 	}
+	if cfg.Quality.MinEncryptedBytes != 256 || cfg.Quality.EncryptedBytesPerReasoningToken != 2 {
+		t.Fatalf("unexpected encrypted floor defaults: min=%d per_token=%d", cfg.Quality.MinEncryptedBytes, cfg.Quality.EncryptedBytesPerReasoningToken)
+	}
 }
 
 func TestDecodeConfigNormalizesUserNonReasoningModels(t *testing.T) {

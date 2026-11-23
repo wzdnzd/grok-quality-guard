@@ -842,6 +842,11 @@ func probeBody(cfg ProbeConfig) []byte {
 		"model":             model,
 		"stream":            true,
 		"max_output_tokens": cfg.MaxOutputTokens,
+		// Grok returns encrypted reasoning only when it is requested. Without
+		// it, an account that does not stream a reasoning summary has no
+		// thinking evidence at all and every probe of it fails as
+		// missing_thinking. Transparent requests add the same include.
+		"include": []any{"reasoning.encrypted_content"},
 		"input": []any{map[string]any{
 			"type": "message",
 			"role": "user",
