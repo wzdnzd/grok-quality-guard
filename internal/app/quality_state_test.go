@@ -409,6 +409,46 @@ func TestConsecutiveErrorsThreshold(t *testing.T) {
 	}
 }
 
+func TestProbeErrorStrikesStayBoundedAcrossRecoveryCooldowns(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.AutoAction = "cooldown_only"
+		cfg.Quality.ConsecutiveErrors = 2
+	})
+	verdict := qualitypkg.QualityVerdict{Class: qualitypkg.ClassProbeError, Reason: "reason.detail.probe_transport_error"}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "probe", ""); errApply != nil {
+			t.Fatal(errApply)
+		}
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.State != appstate.StateCooling || account.ErrorStrikes != 2 {
+		t.Fatalf("initial error threshold state = %#v, want cooling with 2 strikes", account)
+	}
+
+	// Each expired cooldown starts a recovery probe. A repeated transport error
+	// must not keep increasing the consecutive counter beyond the policy
+	// threshold: the dashboard would otherwise show values such as 53/2.
+	for cycle := 0; cycle < 3; cycle++ {
+		if errUpdate := plugin.updateStateAccount("auth-1", func(account *appstate.AccountState) error {
+			account.State = appstate.StateCooling
+			account.DisableKind = appstate.DisableKindCooldown
+			account.CooldownUntil = time.Now().UTC().Add(-time.Second)
+			return nil
+		}); errUpdate != nil {
+			t.Fatal(errUpdate)
+		}
+		if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "probe", ""); errApply != nil {
+			t.Fatal(errApply)
+		}
+		account, _ = plugin.stateAccount("auth-1")
+		if account.ErrorStrikes != 2 {
+			t.Fatalf("recovery cycle %d produced error strikes %d, want bounded at threshold 2: %#v", cycle+1, account.ErrorStrikes, account)
+		}
+	}
+}
 func TestConsecutiveMissingThinkingThreshold(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	host := newMockHostCall(entries, auths)
@@ -507,7 +547,7 @@ func TestStateStorePersistsPolicyAndStrikes(t *testing.T) {
 	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
 	policy.Quality.ConsecutiveSoft = 4
 	policy.Quality.ConsecutiveErrors = 3
-	policy.Quality.ConsecutiveMissingThinking = 2
+	policy.Quality.ConsecutiveMissingThinking = 3
 	policy.Quality.ThinkingGuard = false
 	policy.Quality.SoftCrossVerify = true
 	policy.Quality.ThinkingCrossVerify = true
@@ -533,7 +573,7 @@ func TestStateStorePersistsPolicyAndStrikes(t *testing.T) {
 	}
 	snapshot := reloaded.Snapshot()
 	quality := snapshot.Policy.Quality
-	if quality.ConsecutiveSoft != 4 || quality.ConsecutiveErrors != 3 || quality.ConsecutiveMissingThinking != 2 {
+	if quality.ConsecutiveSoft != 4 || quality.ConsecutiveErrors != 3 || quality.ConsecutiveMissingThinking != 3 {
 		t.Fatalf("consecutive policy was not persisted: %#v", quality)
 	}
 	if quality.ThinkingGuard || !quality.SoftCrossVerify || !quality.ThinkingCrossVerify {

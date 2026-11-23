@@ -21,6 +21,20 @@ type verdictResult struct {
 
 const defaultStrikeDecayMinHealthy = 10
 
+// nextConsecutiveStrike advances an action-trigger counter without allowing it
+// to grow past the configured threshold. Recovery probes keep running after a
+// threshold action, so an unbounded counter eventually rendered nonsense such
+// as consecutive probe errors 53/2.
+func nextConsecutiveStrike(current, threshold int) int {
+	if threshold <= 0 {
+		return current + 1
+	}
+	if current >= threshold {
+		return threshold
+	}
+	return current + 1
+}
+
 // isQualityFailureClass lists classes that are genuine quality signals. Probe
 // and transport errors do not reset the healthy streak used for strike decay.
 func isQualityFailureClass(class string) bool {
@@ -201,8 +215,8 @@ func (s *Service) applyVerdictLocked(
 
 		case ClassSoftTPS, ClassInsufficientOutput, ClassInsufficientGeneration:
 			account.ThinkingStrikes = 0
-			account.SoftStrikes++
 			threshold := positiveInt(policy.Quality.ConsecutiveSoft, 2)
+			account.SoftStrikes = nextConsecutiveStrike(account.SoftStrikes, threshold)
 			if account.SoftStrikes >= threshold {
 				outcome.ThresholdHit = true
 				if policy.Quality.SoftCrossVerify && source != "probe" {
@@ -246,8 +260,8 @@ func (s *Service) applyVerdictLocked(
 
 		case ClassProbeError, ClassProxyError:
 			account.ThinkingStrikes = 0
-			account.ErrorStrikes++
 			threshold := positiveInt(policy.Quality.ConsecutiveErrors, 2)
+			account.ErrorStrikes = nextConsecutiveStrike(account.ErrorStrikes, threshold)
 			proxyRotationReady := false
 			if s.env.AutoRotateAfterQualityFailure() && !preserveIsolation() {
 				if _, managed := s.env.ProxyBindingForAccount(previousState); managed {
@@ -315,9 +329,9 @@ func (s *Service) applyVerdictLocked(
 			}
 
 		case ClassMissingThinking:
-			account.ThinkingStrikes++
-			account.SoftStrikes = 0
 			threshold := positiveInt(policy.Quality.ConsecutiveMissingThinking, 1)
+			account.ThinkingStrikes = nextConsecutiveStrike(account.ThinkingStrikes, threshold)
+			account.SoftStrikes = 0
 			if account.ThinkingStrikes >= threshold {
 				outcome.ThresholdHit = true
 				if policy.Quality.ThinkingCrossVerify && source != "probe" {

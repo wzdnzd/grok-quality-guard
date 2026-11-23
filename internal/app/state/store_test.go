@@ -80,6 +80,38 @@ func TestStateStorePersistsAndReloads(t *testing.T) {
 	}
 }
 
+func TestStateStoreClampsLegacyStrikeCountersOnLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store := NewStore(path)
+	policy := config.PolicyFromConfig(config.DefaultConfig())
+	if errLoad := store.Load(policy, "revision"); errLoad != nil {
+		t.Fatal(errLoad)
+	}
+	if errUpdate := store.Update(func(state *State) error {
+		state.Accounts["auth-1"] = &AccountState{
+			AuthID:          "auth-1",
+			State:           StateCooling,
+			FirstSeenAt:     time.Now().UTC(),
+			SoftStrikes:     53,
+			ErrorStrikes:    63,
+			ThinkingStrikes: 7,
+		}
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+	reloaded := NewStore(path)
+	if errLoad := reloaded.Load(policy, "revision"); errLoad != nil {
+		t.Fatal(errLoad)
+	}
+	account, ok := reloaded.AccountSnapshot("auth-1")
+	if !ok {
+		t.Fatal("account state missing after reload")
+	}
+	if account.SoftStrikes != policy.Quality.ConsecutiveSoft || account.ErrorStrikes != policy.Quality.ConsecutiveErrors || account.ThinkingStrikes != policy.Quality.ConsecutiveMissingThinking {
+		t.Fatalf("legacy strikes were not clamped on load: %#v", account)
+	}
+}
 func TestStateStoreTrimsEvents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	store := NewStore(path)

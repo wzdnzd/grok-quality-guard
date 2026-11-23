@@ -469,6 +469,9 @@ func (s *Store) Load(defaultPolicy config.Policy, revision string) error {
 				account.FirstSeenAt = time.Now().UTC()
 			}
 		}
+		account.SoftStrikes = clampConsecutiveStrike(account.SoftStrikes, state.Policy.Quality.ConsecutiveSoft)
+		account.ErrorStrikes = clampConsecutiveStrike(account.ErrorStrikes, state.Policy.Quality.ConsecutiveErrors)
+		account.ThinkingStrikes = clampConsecutiveStrike(account.ThinkingStrikes, state.Policy.Quality.ConsecutiveMissingThinking)
 	}
 	s.state = state
 	s.rebuildProxyIndexesLocked()
@@ -483,6 +486,13 @@ func (s *Store) Load(defaultPolicy config.Policy, revision string) error {
 		}
 	}
 	return nil
+}
+
+func clampConsecutiveStrike(value, threshold int) int {
+	if threshold > 0 && value > threshold {
+		return threshold
+	}
+	return value
 }
 
 func rawPolicyHasTaskHistory(raw []byte) bool {
