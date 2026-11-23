@@ -155,7 +155,7 @@ function harness(options = {}) {
   const runtimeSource = options.i18nResources === undefined
     ? source
     : source.replace(/const I18N_RESOURCE_DATA = [^\n]*; \/\/ i18n-resource-data/, `const I18N_RESOURCE_DATA = ${JSON.stringify(options.i18nResources)}; // i18n-resource-data`);
-  vm.runInContext(runtimeSource + '\n globalThis.dashboard = { i18n, state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, ensureList, ensureTabData, startListLoad, ensureProxySummary, renderTabSurface, mergeBindingItems, mergeBindingForAccount, renderProxySourceChoices, leaseStatus, selectedAccountIDs, pagedItems, renderOverview, renderAccounts, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, accountRow, renderDrawer, openProxyNodeEditor, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, refreshTaskCenterQueues, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, closeResidentQueueDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, taskKindLabel, taskStatusLabel, taskOutcomeCounts, taskResultSummary, collectPolicy, populatePolicyForm, applyLocationHash, setTab, refreshAll, refreshAccounts, ensureAccountData, ensureProxyData, loadProxyData, renderAll, scheduleAccountMetadataRefresh, refreshResin, refreshEvents };', context);
+  vm.runInContext(runtimeSource + '\n globalThis.dashboard = { i18n, state, formDrafts, proxyGroupDraft, appendProxyGroupValues, proxyRowsMatchPrefix, splitProxyEnum, parseProxyDelimitedTable, formatProxyDelimitedTable, alignProxyImportedRows, populatePolicyForm, populateProxyAutoBindForm, clearFormDraft, formDraftRevision, loadList, loadAllAccounts, applyAccountListData, ensureList, ensureTabData, startListLoad, ensureProxySummary, renderTabSurface, mergeBindingItems, mergeBindingForAccount, renderProxySourceChoices, leaseStatus, selectedAccountIDs, pagedItems, renderOverview, renderAccounts, renderProxySources, renderResin, syncProxySourceSelectionUI, proxySourceAllCount, loadAllProxySourceIDs, selectProxySourceScope, proxySourceEnabledState, proxySourceConnectivity, listParams, testSelectedProxySources, deleteSelectedProxySources, renderProxyGroup, proxyTemplateConditionValues, previewProxyTemplate, proxyResultMessage, waitForTask, closeProxyDrawer, changeProxyEnumSeparator, detachProxyPlaceholderGroup, confirmProxyBindingOptions, renderProxyOperationSourceChoices, searchProxyOperationSourceChoices, chooseProxyOperationSource, proxyOperationSourceValue, importProxyGroupRows, collectProxyTemplateGroups, collectProxyTemplateEditor, runProxyAccountBatches, runSelectedProxyAction, renderProxyAutoBind, normalizeBindingStatus, proxySummaryCounts, proxyNeedsReviewCount, accountRow, renderDrawer, openProxyNodeEditor, openProxyTemplateEditor, openProxyResinEditor, openProxyImportEditor, collectProxyResinEditor, previewProxyResin, endpointCell, leaseRow, toggleLeaseEndpoint, proxySourceRow, toggleSourceEndpoint, eventMatches, renderEvents, api, friendlyApiMessage, saveProxyAutoBind, setProxyAutoBindSettingsOpen, proxyImportLine, parseProxyImportText, cleanHelpCopy, proxyNodeRowHTML, renderTaskCenter, refreshTaskCenter, refreshTaskCenterQueues, selectTaskCenterTask, selectTaskCenterQueue, closeTaskCenterDetail, closeResidentQueueDetail, renderResidentQueues, loadTaskCenterDetail, loadTaskQueueDetail, openTaskCenterChange, renderTaskDetail, renderTaskQueueDetail, renderTaskPager, taskHistoryText, taskKindLabel, taskStatusLabel, taskOutcomeCounts, taskResultSummary, collectPolicy, populatePolicyForm, applyLocationHash, setTab, refreshAll, refreshAccounts, ensureAccountData, ensureProxyData, loadProxyData, renderAll, scheduleAccountMetadataRefresh, refreshResin, refreshEvents };', context);
   function mock(name, callback) {
     context.testCallback = callback;
     vm.runInContext(name + ' = globalThis.testCallback;', context);
@@ -1021,6 +1021,12 @@ test('Lease proxy filter shows source kind and name without source IDs', async (
   assert.equal(ui.state.leaseSourceFilter, 'resin-1');
 });
 
+test('Searchable proxy source filter does not reserve an invisible picker', () => {
+  assert.match(html, /#leaseSourceFilter\s*\{[\s\S]*?padding-right:\s*9px/);
+  assert.match(html, /#leaseSourceFilter::-webkit-calendar-picker-indicator/);
+  assert.match(html, /#leaseSourceFilter::-webkit-search-cancel-button/);
+});
+
 test('Bulk proxy import filters invalid and duplicate lines and stays bounded', () => {
   const { dashboard: ui } = harness();
   const text = [
@@ -1178,9 +1184,28 @@ test('Binding summary separates account coverage from proxy availability', () =>
   ui.state.leaseList = { total: 3092, page: 1, page_size: 50 };
   ui.renderResin();
   const rendered = get('resinMetrics').innerHTML;
-  assert.match(rendered, /绑定覆盖率：100%/);
+  assert.match(rendered, /绑定覆盖率：100\.0%/);
   assert.match(rendered, /可用：2 \/ 2/);
   assert.doesNotMatch(rendered, /可绑定代理：2/);
+
+  ui.state.proxy.binding_counts = { bound: 3078, unbound: 14, external: 0, drifted: 0, unknown: 0, reconcile_required: 0 };
+  ui.renderResin();
+  const partial = get('resinMetrics').innerHTML;
+  assert.match(partial, /绑定覆盖率：99\.5%/);
+  assert.doesNotMatch(partial, /绑定覆盖率：100(?:\.0)?%/);
+});
+
+test('Binding review metric and filter share one aggregate status', () => {
+  const { dashboard: ui, get } = harness();
+  const counts = { bound: 3078, unbound: 14, external: 2, drifted: 3, read_failed: 4, unknown: 5, checking: 0, reconcile_required: 0 };
+  assert.equal(ui.proxyNeedsReviewCount(counts), 14);
+  ui.state.proxy = { binding_counts: counts, binding_total: 3092, source_count: 1, available_source_count: 1, auto_bind: {}, auto_bind_runtime: {} };
+  ui.state.proxySources = [];
+  ui.state.leases = [];
+  ui.state.leaseList = { total: 3092, page: 1, page_size: 50 };
+  ui.renderResin();
+  assert.match(html, /<option value="needs_review">ui.needs_reconciliation<\/option>/);
+  assert.match(get('resinMetrics').innerHTML, /待核对/);
 });
 
 test('A flat source detail response preserves existing template relations', async () => {

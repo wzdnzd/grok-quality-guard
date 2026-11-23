@@ -16,6 +16,32 @@ import (
 	coreproxy "grok-quality-guard/internal/proxy"
 )
 
+func TestProxyStatusFilterMatchesReviewAggregate(t *testing.T) {
+	tests := []struct {
+		filter string
+		status string
+		want   bool
+	}{
+		{filter: "needs_review", status: "external", want: true},
+		{filter: "needs_review", status: "drifted", want: true},
+		{filter: "needs_review", status: "read_failed", want: true},
+		{filter: "needs_review", status: "unknown", want: true},
+		{filter: "needs_review", status: "reconcile_required", want: true},
+		{filter: "needs_review", status: "bound", want: false},
+		{filter: "needs_review", status: "unbound", want: false},
+		{filter: "needs_review", status: "checking", want: false},
+		{filter: "drifted", status: "drifted", want: true},
+		{filter: "drifted", status: "external", want: false},
+		{filter: "", status: "checking", want: true},
+		{filter: "all", status: "bound", want: true},
+	}
+	for _, test := range tests {
+		if got := proxyStatusMatches(test.filter, test.status); got != test.want {
+			t.Fatalf("proxyStatusMatches(%q, %q) = %t, want %t", test.filter, test.status, got, test.want)
+		}
+	}
+}
+
 func TestProxyRowViewProvidesFullIdentityForAccountTooltip(t *testing.T) {
 	row := proxyRowView(proxyCatalogRow{Account: Account{ID: "auth-1", Email: "alice@example.com"}})
 	if got := row["display"]; got != "al***e@example.com" {
@@ -316,6 +342,22 @@ func TestProxyObservationClearRemovesEndpointMetadata(t *testing.T) {
 	service.mgr.mu.Unlock()
 	if !observation.Known || observation.Masked != "" || observation.Hash != "" {
 		t.Fatalf("cleared observation retained endpoint metadata: %#v", observation)
+	}
+}
+
+func TestConfirmProxyObservationFallsBackAfterFileMetadataReadFailure(t *testing.T) {
+	environment := &proxyObservationRecoveryEnvironment{
+		proxyViewTestEnvironment: proxyViewTestEnvironment{store: newProxyTestStore(t)},
+		raw:                      map[string]json.RawMessage{},
+	}
+	service := NewService(environment)
+	account := Account{ID: "auth-1", Path: "auth-1.json", ProxyMetaInspected: true, ModTime: time.Now().UTC()}
+	observation := service.confirmProxyObservation(context.Background(), account)
+	if !observation.Known || observation.Masked != "" || observation.Hash != "" {
+		t.Fatalf("host-confirmed empty proxy = %#v", observation)
+	}
+	if calls := environment.calls.Load(); calls != 1 {
+		t.Fatalf("host auth calls = %d, want 1", calls)
 	}
 }
 

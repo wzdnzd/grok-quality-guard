@@ -232,7 +232,10 @@ func (s *Service) proxyAutoBindScan(ctx context.Context) {
 		if accountState.Managed() {
 			continue
 		}
-		if !observations[i].Known && a.Path == "" && len(unknown) < min(32, config.MaxPerCycle) {
+		// New file-backed auths can be published before their asynchronous
+		// metadata pass finishes. Confirm through the host as a bounded fallback
+		// so auto-bind is not skipped just because the catalog row is still cold.
+		if !observations[i].Known && len(unknown) < min(32, config.MaxPerCycle) {
 			unknown = append(unknown, i)
 		}
 	}

@@ -291,6 +291,29 @@ func TestProxyAutoBindSkipsExternalAndBindsEmptyAuth(t *testing.T) {
 	}
 }
 
+func TestProxyAutoBindUsesHostFallbackForFileMetadataFailure(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "file-auth@example.com", nil)
+	entries[0].Path = filepath.Join(t.TempDir(), "missing-auth.json")
+	entries[0].Size = 1
+	entries[0].ModTime = time.Now().UTC()
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	if _, errCreate := plugin.createProxyNode(proxyapp.NodeInput{URL: "http://u:p@proxy.example:8080"}); errCreate != nil {
+		t.Fatal(errCreate)
+	}
+	if _, _, errConfig := plugin.updateProxyAutoBind(map[string]any{"enabled": true, "scan_interval": "1s", "retry_initial": "1s", "retry_max": "2s"}); errConfig != nil {
+		t.Fatal(errConfig)
+	}
+	plugin.proxyAutoBindScan(context.Background())
+	account, _ := plugin.stateAccount("auth-1")
+	if account.Proxy.SourceID == "" {
+		t.Fatal("file-backed auth with unreadable metadata was not auto-bound through host fallback")
+	}
+	if _, saved := host.saves["auth-1"]; !saved {
+		t.Fatal("auto-bind did not persist the selected proxy")
+	}
+}
+
 func TestProxyAutoBindSkipsOnlyAccountsInActiveManualTask(t *testing.T) {
 	entries := []pluginapi.HostAuthFileEntry{
 		{ID: "auth-1", AuthIndex: "auth-1", Name: "auth-1", Type: "xai", Provider: "xai", Email: "[EMAIL]", Label: "[EMAIL]"},

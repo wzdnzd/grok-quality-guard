@@ -53,6 +53,10 @@ func (p *Plugin) EnsureAuthMetaForIDs(ctx context.Context, authIDs []string, bud
 func (p *Plugin) NotifyProxyBindingsChanged(authIDs []string) {
 	if p != nil && p.proxySvc != nil {
 		p.proxySvc.TouchBindingStates(authIDs)
+		// Metadata enrichment can turn a cold auth row into a bindable one.
+		// Wake the scheduler so new accounts are not left waiting for a full
+		// scan interval after the catalog refresh that discovered them.
+		p.proxySvc.WakeAutoBind()
 	}
 }
 

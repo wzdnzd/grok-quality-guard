@@ -1339,7 +1339,19 @@ func (s *Service) proxyObservationFor(account Account) proxyObservation {
 	if ok && proxyObservationFreshAt(account, observation, time.Now()) {
 		return observation
 	}
-	return proxyObservation{Masked: account.ProxyMasked, Hash: account.ProxyHash, Known: account.ProxyURLKnown || account.ProxyMasked != "", Inspected: account.ProxyMetaInspected, CheckedAt: account.ModTime}
+	observation = proxyObservation{
+		Masked:    account.ProxyMasked,
+		Hash:      account.ProxyHash,
+		Known:     account.ProxyURLKnown || account.ProxyMasked != "",
+		Inspected: account.ProxyMetaInspected,
+	}
+	// A metadata inspection that did not produce an endpoint is not a host
+	// observation. Leave CheckedAt empty so auto-bind can fall back to the host
+	// auth API instead of treating a file-read failure as freshly confirmed.
+	if observation.Known {
+		observation.CheckedAt = account.ModTime
+	}
+	return observation
 }
 
 func (s *Service) confirmProxyObservation(ctx context.Context, account Account) proxyObservation {
@@ -1676,8 +1688,19 @@ func proxyRowView(row proxyCatalogRow) map[string]any {
 	return map[string]any{"auth_id": a.ID, "auth_id_display": maskAuthID(a.ID), "display": maskAccountIdentity(displayFull), "display_full": displayFull, "proxy": state.Proxy, "proxy_status": state.Status, "proxy_source_id": state.SourceID, "proxy_source_kind": state.SourceKind, "proxy_managed": state.SourceID != "", "proxy_generation": state.Generation, "proxy_source_revision": state.SourceRevision, "proxy_lease_account": state.LeaseAccount, "proxy_pending": state.Pending, "proxy_inspected": state.Inspected, "binding_version": state.Version, "auto_bind_excluded": row.AutoBind.Excluded, "next_attempt_at": row.AutoBind.NextAttemptAt, "last_error": row.AutoBind.LastError, "last_error_code": row.AutoBind.LastErrorCode}
 }
 
+var proxyReviewStatuses = map[string]struct{}{
+	"external": {}, "drifted": {}, "read_failed": {}, "unknown": {}, "reconcile_required": {},
+}
+
 func proxyStatusMatches(filter, status string) bool {
-	return filter == "" || filter == "all" || filter == status
+	if filter == "" || filter == "all" {
+		return true
+	}
+	if filter == "needs_review" {
+		_, ok := proxyReviewStatuses[status]
+		return ok
+	}
+	return filter == status
 }
 
 func proxyPage(params map[string]any, total int) (page, size, start, end int) {

@@ -899,6 +899,18 @@
       font-size: 11px;
     }
 
+    #leaseSourceFilter {
+      padding-right: 9px;
+      appearance: none;
+      background-image: none;
+    }
+
+    #leaseSourceFilter::-webkit-calendar-picker-indicator,
+    #leaseSourceFilter::-webkit-search-cancel-button,
+    #leaseSourceFilter::-webkit-search-decoration {
+      display: none;
+    }
+
     .table-wrap {
       overflow-x: auto;
     }
@@ -4472,8 +4484,8 @@
                   <option value="all">ui.all_proxies</option>
                   <option value="bound">proxy.binding.bound</option>
                   <option value="unbound">proxy.binding.unbound</option>
+                  <option value="needs_review">ui.needs_reconciliation</option>
                   <option value="drifted">proxy.binding.drifted</option>
-                  <option value="reconcile_required">proxy.binding.reconcile_required</option>
                   <option value="external">proxy.binding.external</option>
                   <option value="checking">proxy.binding.checking</option>
                   <option value="read_failed">proxy.binding.read_failed</option>
@@ -4481,7 +4493,8 @@
                   <option value="paused">queue.auto_bind.description.paused</option>
                 </select>
                 <input class="control" id="leaseSourceFilter" type="search" list="proxySourceChoices"
-                  aria-label="ui.filter_bound_proxy" placeholder="ui.proxy_type_name_searchable">
+                  aria-label="ui.filter_bound_proxy" placeholder="ui.proxy_type_name_searchable"
+                  autocomplete="off" spellcheck="false">
               </div>
               <div class="toolbar-right">
                 <span class="selection-note" id="leaseSelectionCount">ui.selected_0_accounts</span>
@@ -5983,6 +5996,7 @@
       return JSON.stringify(listParams(kind));
     }
     const BINDING_STATUSES = new Set(['bound', 'unbound', 'external', 'drifted', 'reconcile_required', 'checking', 'read_failed', 'unknown']);
+    const PROXY_REVIEW_STATUSES = ['external', 'drifted', 'read_failed', 'unknown', 'reconcile_required'];
     function normalizeBindingStatus(value) {
       const status = String(value || '').trim();
       return BINDING_STATUSES.has(status) ? status : 'checking';
@@ -5990,6 +6004,9 @@
     function proxySummaryCounts(summary) {
       const counts = (summary || {}).binding_counts || {};
       return Object.assign({ bound: 0, unbound: 0, external: 0, drifted: 0, unknown: 0, checking: 0, read_failed: 0, reconcile_required: 0 }, counts);
+    }
+    function proxyNeedsReviewCount(counts) {
+      return PROXY_REVIEW_STATUSES.reduce((sum, key) => sum + Number(counts?.[key] || 0), 0);
     }
     function normalizeBindingView(value) {
       const item = value || {};
@@ -6826,12 +6843,13 @@
       const statusTotal = ['bound', 'unbound', 'external', 'drifted', 'checking', 'read_failed', 'unknown', 'reconcile_required'].reduce((sum, key) => sum + Number(counts[key] || 0), 0);
       const reportedBindingTotal = Number(proxy.binding_total);
       const bindingTotal = Number.isFinite(reportedBindingTotal) && reportedBindingTotal > 0 ? reportedBindingTotal : statusTotal;
-      const bindingCoverage = bindingTotal ? Math.min(100, Math.round(Number(counts.bound || 0) / bindingTotal * 100)) : 0;
-      const bindingCoverageDetail = bindingTotal ? i18n.t('ui.binding_coverage', { value: num(bindingCoverage) }) : i18n.t('ui.no_accounts');
+      const needsReview = proxyNeedsReviewCount(counts);
+      const bindingCoverage = bindingTotal ? Math.min(100, Math.floor(Number(counts.bound || 0) / bindingTotal * 1000) / 10) : 0;
+      const bindingCoverageDetail = bindingTotal ? i18n.t('ui.binding_coverage', { value: new Intl.NumberFormat(i18n.intlLocale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(bindingCoverage) }) : i18n.t('ui.no_accounts');
       document.getElementById('resinMetrics').innerHTML = [
         metricCard('database', num(counts.bound || 0), i18n.t('ui.bound_accounts'), bindingCoverageDetail, 'info'),
         metricCard('users', num(counts.unbound || 0), i18n.t('ui.unbound_accounts'), i18n.t('ui.actual_proxy_empty'), ''),
-        metricCard('alert', num(Number(counts.external || 0) + Number(counts.read_failed || 0) + Number(counts.unknown || 0) + Number(counts.drifted || 0) + Number(counts.reconcile_required || 0)), i18n.t('ui.needs_reconciliation'), i18n.t('ui.external_config_drift_or_read_failure'), Number(counts.external || 0) + Number(counts.drifted || 0) + Number(counts.read_failed || 0) + Number(counts.unknown || 0) ? 'warn' : 'good'),
+        metricCard('alert', num(needsReview), i18n.t('ui.needs_reconciliation'), i18n.t('ui.external_config_drift_or_read_failure'), needsReview ? 'warn' : 'good'),
         metricCard('check', num(sourceTotal), i18n.t('ui.proxy'), i18n.t('ui.available_ratio', { available: num(available), total: num(sourceTotal) }), available ? 'good' : 'warn')
       ].join('');
       document.getElementById('resinConfigState').textContent = !configured ? i18n.t('ui.no_proxy_configured') : (available ? i18n.t('ui.bindable_proxy_available') : i18n.t('ui.no_bindable_proxy'));
