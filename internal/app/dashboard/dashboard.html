@@ -1454,8 +1454,7 @@
     }
 
     .policy-group-scoring .field.score-metric,
-    .policy-group-scoring .field.score-refresh,
-    .policy-group-scoring .field.score-guidance {
+    .policy-group-scoring .field.score-refresh {
       grid-column: span 2;
     }
 
@@ -3157,8 +3156,7 @@
       }
 
       .policy-group-scoring .field.score-metric,
-      .policy-group-scoring .field.score-refresh,
-      .policy-group-scoring .field.score-guidance {
+      .policy-group-scoring .field.score-refresh {
         grid-column: auto;
       }
 
@@ -4939,9 +4937,6 @@
                   <div class="field score-metric"><label for="p_score_passive_weight">ui.score_passive_weight</label><input
                       id="p_score_passive_weight" type="number" min="0" max="1" step="0.01" value="0"><span
                         class="hint">ui.score_passive_hint</span></div>
-                  <div class="field score-guidance"><span class="hint">ui.score_bucket_hint</span></div>
-                  <div class="field score-guidance"><span class="hint">ui.score_weights_hint</span></div>
-                  <div class="field score-guidance"><span class="hint">ui.score_half_life_hint</span></div>
                   <div class="field score-refresh"><label for="p_score_min_interval">ui.score_min_interval</label><input
                       id="p_score_min_interval" type="text" placeholder="5m"><span
                         class="hint">ui.score_min_interval_hint</span></div>

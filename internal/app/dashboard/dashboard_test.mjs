@@ -276,6 +276,17 @@ test('Missing inline locale resources hydrate from the management endpoint', asy
   assert.equal(get('uiLanguage').value, 'en');
 });
 
+test('Scoring weight hints stay on one line without parentheses or trailing punctuation', () => {
+  for (const locale of ['zh-CN', 'zh-TW', 'en']) {
+    for (const key of ['ui.score_probe_hint', 'ui.score_transparent_hint', 'ui.score_passive_hint']) {
+      const copy = localeResources[locale][key];
+      assert.doesNotMatch(copy, /[\r\n]/, `${locale} ${key} must stay on one line`);
+      assert.doesNotMatch(copy, /[（）()]/, `${locale} ${key} must not use parentheses`);
+      assert.doesNotMatch(copy, /[。；，、：！？,;:!?]$/, `${locale} ${key} must not end with punctuation`);
+    }
+  }
+});
+
 test('Locale resources keep matching keys and interpolation placeholders', () => {
   const baseKeys = Object.keys(localeResources.en).sort();
   for (const locale of ['zh-CN', 'zh-TW']) {
@@ -1601,7 +1612,7 @@ test('Policy settings use a compact grouped grid with responsive density', () =>
   assert.match(html, /\.policy-group-quality \.field-grid,\s*\.policy-group-probe \.field-grid\s*\{\s*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
   assert.match(html, /\.policy-group-scoring\s*\{\s*grid-column: 1 \/ -1;/);
   assert.match(html, /\.policy-group-scoring \.field-grid\s*\{\s*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);/);
-  assert.match(html, /\.policy-group-scoring \.field\.score-metric,\s*\.policy-group-scoring \.field\.score-refresh,\s*\.policy-group-scoring \.field\.score-guidance\s*\{\s*grid-column: span 2;/);
+  assert.match(html, /\.policy-group-scoring \.field\.score-metric,\s*\.policy-group-scoring \.field\.score-refresh\s*\{\s*grid-column: span 2;/);
   assert.match(html, /\.policy-group-scoring \.field>\.hint\s*\{\s*white-space: nowrap;\s*overflow: hidden;\s*text-overflow: ellipsis;/s);
   assert.match(html, /<div class="field score-toggle"><label for="p_scoring_enabled">ui\.score_toggle_label<\/label>/);
   assert.match(html, /\.policy-group-quality \.check-card\s*\{\s*grid-column: span 2;/);
@@ -1656,7 +1667,7 @@ test('Routing scoring controls expose dynamic buckets, weights, and request-driv
     assert.match(html, new RegExp('id="' + id + '"'));
   }
   assert.match(html, /ui\.score_bucket_range_hint/);
-  assert.match(html, /ui\.score_weights_hint/);
+  assert.doesNotMatch(html, /score-guidance|ui\.score_(?:bucket|weights|half_life)_hint/);
   assert.match(html, /ui\.score_enabled_hint/);
   assert.match(html, /ui\.score_success_hint/);
   assert.match(html, /ui\.score_ttft_hint/);
