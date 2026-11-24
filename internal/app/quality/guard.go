@@ -247,7 +247,7 @@ func (s *Service) saveGuardDisableLockedWithOptions(
 		return errState
 	}
 	if !pluginOnly && !authDisabled(raw) {
-		if errSave := s.env.SaveAuthDisabled(response.Name, raw, true); errSave != nil {
+		if errSave := s.env.SaveAuthDisabled(authID, response.Name, raw, true); errSave != nil {
 			return fmt.Errorf("save guard-disabled auth: %w", errSave)
 		}
 	}
@@ -320,7 +320,7 @@ func (s *Service) ManualRestoreExternal(ctx context.Context, authID string, incl
 			}); errIntent != nil {
 				return errIntent
 			}
-			if errSave := s.env.SaveAuthDisabled(response.Name, raw, false); errSave != nil {
+			if errSave := s.env.SaveAuthDisabled(authID, response.Name, raw, false); errSave != nil {
 				return fmt.Errorf("save externally restored auth: %w", errSave)
 			}
 			return store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {
@@ -348,7 +348,7 @@ func (s *Service) ManualRestoreExternal(ctx context.Context, authID string, incl
 		}
 	}
 	if authDisabled(raw) {
-		if errSave := s.env.SaveAuthDisabled(response.Name, raw, false); errSave != nil {
+		if errSave := s.env.SaveAuthDisabled(authID, response.Name, raw, false); errSave != nil {
 			return fmt.Errorf("save restored auth: %w", errSave)
 		}
 	}

@@ -851,11 +851,14 @@ test('Clear options pass null, rebind, and pause as distinct overrides', async (
   }
 });
 
-test('Selected proxy clear explicitly allows external configurations', async () => {
+test('Selected proxy clear is direct and explicitly allows external configurations', async () => {
   const { dashboard: ui, mock } = harness();
   ui.state.leaseSelection.add('auth-external');
   const requests = [];
-  mock('confirmProxyBindingOptions', async () => ({ exclude_auto_bind: null }));
+  let confirmations = 0;
+  let optionPrompts = 0;
+  mock('confirmAction', async () => { confirmations++; return true; });
+  mock('confirmProxyBindingOptions', async () => { optionPrompts++; return { exclude_auto_bind: null }; });
   mock('api', async (action, params) => {
     requests.push({ action, params });
     return {
@@ -871,6 +874,8 @@ test('Selected proxy clear explicitly allows external configurations', async () 
   assert.equal(requests[0].action, 'proxy.bindings.clear');
   assert.equal(requests[0].params.allow_external, true);
   assert.deepEqual(plain(requests[0].params.auth_ids), ['auth-external']);
+  assert.equal(confirmations, 0);
+  assert.equal(optionPrompts, 0);
 });
 
 test('Auto-bind scan runtime is shown in the status bar instead of settings', () => {

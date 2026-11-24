@@ -80,7 +80,7 @@ type Environment interface {
 	UpdateStateAccount(string, func(*appstate.AccountState) error) error
 	RefreshSelectionAccount(string)
 	ResolveAuth(context.Context, string) (model.Account, pluginapi.HostAuthGetResponse, map[string]json.RawMessage, error)
-	SaveAuthDisabled(string, map[string]json.RawMessage, bool) error
+	SaveAuthDisabled(string, string, map[string]json.RawMessage, bool) error
 	FindAccount(string) (model.Account, bool)
 	AccountView(context.Context, model.Account) (any, error)
 	ProbeAccount(context.Context, string, bool, string) error

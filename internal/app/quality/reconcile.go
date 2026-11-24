@@ -53,7 +53,7 @@ func (s *Service) reconcileAccount(ctx context.Context, authID string) {
 	if stateAccount.AuthDisabledIntent != nil {
 		target := *stateAccount.AuthDisabledIntent
 		if target != authDisabled(raw) {
-			if errSave := s.env.SaveAuthDisabled(response.Name, raw, target); errSave != nil {
+			if errSave := s.env.SaveAuthDisabled(authID, response.Name, raw, target); errSave != nil {
 				return
 			}
 		}
@@ -110,7 +110,7 @@ func (s *Service) reconcileAccount(ctx context.Context, authID string) {
 		return
 	}
 	if isCooldownState(stateAccount.State) && time.Now().UTC().Before(stateAccount.CooldownUntil) {
-		_ = s.env.SaveAuthDisabled(response.Name, raw, true)
+		_ = s.env.SaveAuthDisabled(authID, response.Name, raw, true)
 		return
 	}
 	_ = store.UpdateAccount(authID, func(account *AccountState) (*Event, error) {

@@ -127,7 +127,7 @@ func (s *Service) clearProxyFailureStrikes(ctx context.Context, authID string) e
 			return errIntent
 		}
 		if authDisabled(raw) {
-			if errSave := s.env.SaveAuthDisabled(response.Name, raw, false); errSave != nil {
+			if errSave := s.env.SaveAuthDisabled(authID, response.Name, raw, false); errSave != nil {
 				return errSave
 			}
 		}

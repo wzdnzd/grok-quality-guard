@@ -1928,3 +1928,191 @@ func TestCatalogRemovalQueuesResinLeaseDeleteFromSnapshot(t *testing.T) {
 		t.Fatalf("successful lease delete remained queued: %#v", jobs)
 	}
 }
+func TestSaveAuthDisabledReReadsLatestAuthSnapshot(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	const latestURL = "http://refreshed:secret@proxy.example:6060"
+
+	host.mu.Lock()
+	stale, errDecode := rawAuthToMap(host.auths["auth-1"])
+	if errDecode != nil {
+		host.mu.Unlock()
+		t.Fatal(errDecode)
+	}
+	latest, errDecode := rawAuthToMap(host.auths["auth-1"])
+	if errDecode != nil {
+		host.mu.Unlock()
+		t.Fatal(errDecode)
+	}
+	appauth.SetRawString(latest, "proxy_url", latestURL)
+	encoded, errEncode := json.Marshal(latest)
+	if errEncode != nil {
+		host.mu.Unlock()
+		t.Fatal(errEncode)
+	}
+	host.auths["auth-1"] = encoded
+	host.mu.Unlock()
+
+	if err := plugin.SaveAuthDisabled("auth-1", "auth-1", stale, true); err != nil {
+		t.Fatal(err)
+	}
+	saved, errDecode := rawAuthToMap(host.saves["auth-1"])
+	if errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	if got := appauth.RawString(saved, "proxy_url"); got != latestURL {
+		t.Fatalf("stale snapshot overwrote proxy_url: %q", got)
+	}
+	if !appauth.Disabled(saved) || !appauth.Disabled(stale) {
+		t.Fatalf("disabled update was not persisted: saved=%#v stale=%#v", saved, stale)
+	}
+}
+func TestProxyClearForcesManagedDrift(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "drift@example.com", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	if _, err := plugin.createProxyNode(proxyapp.NodeInput{URL: "http://managed:secret@proxy.example:8080"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.bindProxy(context.Background(), "auth-1", proxyapp.BindOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	host.mu.Lock()
+	host.auths["auth-1"] = makeAuthJSON(t, map[string]any{
+		"type":          "xai",
+		"email":         "drift@example.com",
+		"access_token":  "access-auth-1",
+		"refresh_token": "refresh-auth-1",
+		"disabled":      false,
+		"proxy_url":     "http://drifted:secret@proxy.example:9090",
+	})
+	host.mu.Unlock()
+
+	result, err := plugin.clearProxy(context.Background(), "auth-1", proxyapp.BindOptions{})
+	if err != nil {
+		t.Fatalf("forced clear failed: %v", err)
+	}
+	if result.Status != "cleared" || !result.Committed {
+		t.Fatalf("unexpected clear result: %#v", result)
+	}
+	raw, err := rawAuthToMap(host.saves["auth-1"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(appauth.RawString(raw, "proxy_url")) != "" {
+		t.Fatalf("proxy_url was not removed: %#v", raw["proxy_url"])
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.Proxy.SourceID != "" {
+		t.Fatalf("binding was not removed: %#v", account.Proxy)
+	}
+	if pending := plugin.stateStore().ProxyPending("auth-1"); pending != "" {
+		t.Fatalf("forced clear left a pending operation: %s", pending)
+	}
+}
+
+func TestProxyClearForcesDriftDuringPreSaveRead(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	if _, err := plugin.createProxyNode(proxyapp.NodeInput{URL: "http://managed:secret@proxy.example:8080"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.bindProxy(context.Background(), "auth-1", proxyapp.BindOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	original := hostCall
+	defer func() { hostCall = original }()
+	gets := 0
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostAuthGet {
+			gets++
+			if gets == 2 {
+				host.mu.Lock()
+				latest, errDecode := rawAuthToMap(host.auths["auth-1"])
+				if errDecode != nil {
+					panic(errDecode)
+				}
+				appauth.SetRawString(latest, "proxy_url", "http://latest:secret@proxy.example:7070")
+				encoded, errEncode := json.Marshal(latest)
+				if errEncode != nil {
+					panic(errEncode)
+				}
+				host.auths["auth-1"] = encoded
+				host.mu.Unlock()
+			}
+		}
+		return original(method, payload)
+	}
+
+	result, err := plugin.clearProxy(context.Background(), "auth-1", proxyapp.BindOptions{})
+	if err != nil {
+		t.Fatalf("forced clear rejected a concurrent auth read: %v", err)
+	}
+	if result.Status != "cleared" || !result.Committed {
+		t.Fatalf("unexpected clear result: %#v", result)
+	}
+	raw, err := rawAuthToMap(host.saves["auth-1"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(appauth.RawString(raw, "proxy_url")) != "" {
+		t.Fatalf("proxy_url was not removed from the latest auth: %#v", raw["proxy_url"])
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.Proxy.SourceID != "" {
+		t.Fatalf("binding was not removed: %#v", account.Proxy)
+	}
+}
+func TestProxyClearSupersedesPendingOperation(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "pending@example.com", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, nil)
+	node, err := plugin.createProxyNode(proxyapp.NodeInput{URL: "http://managed:secret@proxy.example:8080"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.bindProxy(context.Background(), "auth-1", proxyapp.BindOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	pending := proxy.Operation{
+		ID:                 "pending-before-clear",
+		AuthID:             "auth-1",
+		Action:             "proxy_rotate",
+		Status:             "needs_reconcile",
+		ExpectedHash:       "unmatched-hash",
+		ExpectedGeneration: 1,
+		PreviousSourceID:   node.ID,
+		DesiredURL:         "http://next:secret@proxy.example:9090",
+		Binding:            proxy.Binding{SourceID: node.ID, SourceKind: proxy.SourceNode, Generation: 2, EndpointHash: "pending-hash"},
+		CreatedAt:          now.Add(-time.Minute),
+		UpdatedAt:          now.Add(-time.Minute),
+	}
+	if err := plugin.stateStore().CommitProxy(appstate.ProxyCommit{Operation: &pending}); err != nil {
+		t.Fatal(err)
+	}
+	if got := plugin.stateStore().ProxyPending("auth-1"); got != pending.ID {
+		t.Fatalf("pending operation not installed: %q", got)
+	}
+
+	result, err := plugin.clearProxy(context.Background(), "auth-1", proxyapp.BindOptions{})
+	if err != nil {
+		t.Fatalf("forced clear failed with pending operation: %v", err)
+	}
+	if result.Status != "cleared" || !result.Committed {
+		t.Fatalf("unexpected clear result: %#v", result)
+	}
+	if got := plugin.stateStore().ProxyPending("auth-1"); got != "" {
+		t.Fatalf("pending operation survived forced clear: %s", got)
+	}
+	superseded, ok := plugin.stateStore().ProxyOperation(pending.ID)
+	if !ok || superseded.Status != "superseded" {
+		t.Fatalf("pending operation was not superseded: %#v", superseded)
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.Proxy.SourceID != "" {
+		t.Fatalf("binding was not removed: %#v", account.Proxy)
+	}
+}

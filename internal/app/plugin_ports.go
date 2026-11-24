@@ -135,9 +135,26 @@ func (p *Plugin) SaveAuth(name string, raw json.RawMessage) (pluginapi.HostAuthS
 	return p.saveAuth(name, raw)
 }
 
-func (p *Plugin) SaveAuthDisabled(name string, raw map[string]json.RawMessage, disabled bool) error {
-	appauth.SetRawBool(raw, "disabled", disabled)
-	encoded, errMarshal := marshalRawMap(raw)
+func (p *Plugin) SaveAuthDisabled(authID, name string, raw map[string]json.RawMessage, disabled bool) error {
+	// Re-read under the caller's account lock so a token refresh or another
+	// host update cannot make this plugin write an older proxy_url snapshot.
+	_, latestResponse, latest, errResolve := p.catalogSvc.ResolveAuth(context.Background(), authID)
+	if errResolve != nil {
+		return errResolve
+	}
+	if latestResponse.Name != "" {
+		name = latestResponse.Name
+	}
+	appauth.SetRawBool(latest, "disabled", disabled)
+	// Callers use the same snapshot after the save to decide whether another
+	// auth write is needed, so keep it synchronized with the latest file.
+	for key := range raw {
+		delete(raw, key)
+	}
+	for key, value := range latest {
+		raw[key] = value
+	}
+	encoded, errMarshal := marshalRawMap(latest)
 	if errMarshal != nil {
 		return errMarshal
 	}

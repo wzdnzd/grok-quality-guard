@@ -8886,13 +8886,16 @@
           : action === 'clear' ? i18n.t('action.proxy_clear')
             : action === 'clear-external' ? i18n.t('ui.clear_external_proxy')
               : i18n.t('ui.proxy_operations');
-      const options = action === 'rotate' ? {} : await confirmProxyBindingOptions(action, 1, label);
-      if (options == null) return;
+      let options = {};
+      if (action === 'bind') {
+        options = await confirmProxyBindingOptions(action, 1, label);
+        if (options == null) return;
+      }
       setBusy(button, true);
       try {
         const apiAction = action === 'bind' ? 'proxy.bindings.bind' : (action === 'rotate' ? 'proxy.bindings.rotate' : 'proxy.bindings.clear');
         const params = Object.assign({ auth_id: authID }, options);
-        if (action === 'clear-external') params.allow_external = true;
+        if (action === 'clear' || action === 'clear-external') params.allow_external = true;
         const task = await api(apiAction, params);
         toast(i18n.t('ui.task_submitted_label', { label: label }), 'success');
         const result = await waitForTask(task, label);
@@ -8905,7 +8908,7 @@
       const authIDs = Array.from(state.leaseSelection);
       if (!authIDs.length) { toast(i18n.t("ui.select_accounts_first"), 'success'); return; }
       const label = action === 'bind' ? i18n.t('ui.bind_selected_proxy') : i18n.t('ui.clear_selected');
-      const options = await confirmProxyBindingOptions(action, authIDs.length, label);
+      const options = action === 'bind' ? await confirmProxyBindingOptions(action, authIDs.length, label) : {};
       if (options == null) return;
       setBusy(button, true);
       try {

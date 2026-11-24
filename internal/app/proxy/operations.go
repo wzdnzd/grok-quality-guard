@@ -60,8 +60,13 @@ func (s *Service) commitProxyOperationLocked(ctx context.Context, response plugi
 		return s.failProxyOperation(operation, err, true)
 	}
 	if proxyURLHash(current) != operation.ExpectedHash {
-		err := proxyError("proxy_binding_conflict", 409, "auth proxy changed before save")
-		return s.failProxyOperation(operation, err, true)
+		if !operation.Clear {
+			err := proxyError("proxy_binding_conflict", 409, "auth proxy changed before save")
+			return s.failProxyOperation(operation, err, true)
+		}
+		// Clearing is idempotent and always applies to the latest auth under
+		// the account lock, so a stale binding hash must not block recovery.
+		operation.ExpectedHash = proxyURLHash(current)
 	}
 	response = latestResponse
 	if operation.Clear {
@@ -243,7 +248,7 @@ func (s *Service) finalizeProxyOperation(operation proxy.Operation) (proxyBindin
 		result.NeedsReconcile = true
 		result.Error = redact.SanitizeError(err)
 		result.Code = proxyErrorCode(err)
-		s.updateCatalogProxy(operation.AuthID, operation.DesiredURL)
+		s.TouchBindingStates(nil)
 		return result, err
 	}
 	s.updateCatalogProxy(operation.AuthID, operation.DesiredURL)
@@ -299,7 +304,7 @@ func (s *Service) resumeProxyOperationLocked(ctx context.Context, authID string,
 		return s.finalizeProxyOperation(operation)
 	}
 	if proxyURLHash(actual) != operation.ExpectedHash {
-		return s.failProxyOperation(operation, proxyError("proxy_binding_conflict", 409, "actual auth proxy differs from both operation endpoints"), true)
+		return s.failProxyOperation(operation, proxyError("proxy_state_conflict", 409, "actual auth proxy differs from both operation endpoints"), true)
 	}
 	if operation.Auto && !s.env.ProxyStore().ProxyAutoBindConfig().Enabled {
 		return s.failProxyOperation(operation, proxyError("auto_bind_disabled", 409, "automatic binding is disabled"), false)
@@ -331,6 +336,34 @@ func (s *Service) reconcileProxyOperations(ctx context.Context) {
 	}
 }
 
+func (s *Service) supersedeProxyPendingLocked(authID string) error {
+	store := s.env.ProxyStore()
+	for {
+		id := store.ProxyPending(authID)
+		if id == "" {
+			return nil
+		}
+		operation, ok := store.ProxyOperation(id)
+		if !ok {
+			return proxyError("proxy_reconcile_required", 409, "pending proxy operation is unavailable")
+		}
+		operation.Status = "superseded"
+		operation.NextAttemptAt = time.Time{}
+		operation.Error = ""
+		operation.ErrorCode = ""
+		operation.UpdatedAt = time.Now().UTC()
+		commit := proxyCommit{Operation: &operation}
+		if operation.ChangeID != "" {
+			item := proxy.ChangeItem{AuthID: authID, OperationID: operation.ID, Status: "superseded"}
+			commit.ChangeID = operation.ChangeID
+			commit.ChangeItem = &item
+		}
+		if err := store.CommitProxy(commit); err != nil {
+			return err
+		}
+		s.TouchBindingStates(nil)
+	}
+}
 func (s *Service) clearProxy(ctx context.Context, authID string, opts proxyBindOptions) (proxyBindingResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -350,9 +383,10 @@ func (s *Service) clearProxy(ctx context.Context, authID string, opts proxyBindO
 	if result, found, err := s.retryProxyAction(ctx, authID, opts, "proxy_clear"); found {
 		return result, err
 	}
-	if s.env.ProxyStore().ProxyPending(authID) != "" {
-		err := proxyError("proxy_reconcile_required", 409, "auth has an unresolved proxy operation")
-		return failedProxyResult(authID, "reconcile_required", err), err
+	if !opts.DryRun {
+		if err := s.supersedeProxyPendingLocked(authID); err != nil {
+			return failedProxyResult(authID, "failed", err), err
+		}
 	}
 	_, response, raw, err := s.env.ProxyResolveAuth(ctx, authID)
 	if err != nil {
@@ -373,10 +407,8 @@ func (s *Service) clearProxy(ctx context.Context, authID string, opts proxyBindO
 	if opts.ExpectedGeneration != nil && binding.Generation != *opts.ExpectedGeneration {
 		return proxyBindingResult{AuthID: authID, Status: "superseded"}, nil
 	}
-	if current != "" && managed && !bindingMatchesURL(binding, current) {
-		err := proxyError("proxy_binding_conflict", 409, "auth proxy URL no longer matches its managed binding")
-		return failedProxyResult(authID, "conflict", err), err
-	}
+	// Managed drift is repaired by clearing: the auth file is the current
+	// source of truth for the clear, and the stale binding must not block it.
 	if current != "" && !managed && !opts.AllowExternal {
 		err := proxyError("external_proxy_present", 409, "clearing an external proxy requires allow_external=true")
 		return failedProxyResult(authID, "external", err), err
@@ -445,11 +477,11 @@ func (s *Service) rotateProxy(ctx context.Context, authID string, opts proxyBind
 		return failedProxyResult(authID, "rotation_unavailable", err), err
 	}
 	if opts.ExpectedSourceID != "" && binding.SourceID != opts.ExpectedSourceID {
-		err := proxyError("proxy_binding_conflict", 409, "auth belongs to another proxy source")
+		err := proxyError("proxy_state_conflict", 409, "auth belongs to another proxy source")
 		return failedProxyResult(authID, "conflict", err), err
 	}
 	if !bindingMatchesURL(binding, current) {
-		err := proxyError("proxy_binding_conflict", 409, "auth proxy differs from its managed binding")
+		err := proxyError("proxy_state_conflict", 409, "auth proxy differs from its managed binding")
 		return failedProxyResult(authID, "conflict", err), err
 	}
 	var candidate *proxySourceCandidate
@@ -532,7 +564,7 @@ func (s *Service) replaceProxyEndpoint(ctx context.Context, authID string, kind 
 		return proxyBindingResult{AuthID: authID, SourceID: sourceID, Status: "superseded"}, nil
 	}
 	if !bindingMatchesURL(binding, current) {
-		err := proxyError("proxy_binding_conflict", 409, "current proxy URL does not match its binding")
+		err := proxyError("proxy_state_conflict", 409, "current proxy URL does not match its binding")
 		return failedProxyResult(authID, "conflict", err), err
 	}
 	if s.env.ProxyStore().ProxyPending(authID) != "" {
@@ -609,7 +641,7 @@ func (s *Service) adoptProxy(ctx context.Context, authID string, opts proxyBindO
 	var release func()
 	if entry.Node != nil && !opts.Replace {
 		if proxyURLHash(current) != entry.Node.Endpoint.Fingerprint() {
-			err := proxyError("proxy_binding_conflict", 409, "existing proxy does not exactly match the selected node")
+			err := proxyError("proxy_state_conflict", 409, "existing proxy does not exactly match the selected node")
 			return failedProxyResult(authID, "conflict", err), err
 		}
 		rendered = proxy.RenderedProxy{URL: current, Endpoint: entry.Node.Endpoint}
@@ -620,12 +652,12 @@ func (s *Service) adoptProxy(ctx context.Context, authID string, opts proxyBindO
 		}
 		parsedURL, errParse := url.Parse(strings.TrimSpace(current))
 		if errParse != nil || parsedURL.User == nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-			err := proxyError("proxy_binding_conflict", 409, "existing proxy URL is invalid")
+			err := proxyError("proxy_state_conflict", 409, "existing proxy URL is invalid")
 			return failedProxyResult(authID, "conflict", err), err
 		}
 		parsedEndpoint, errEndpoint := proxy.ParseEndpoint(current)
 		if errEndpoint != nil || !parsedEndpoint.HasPassword {
-			err := proxyError("proxy_binding_conflict", 409, "existing proxy URL is invalid")
+			err := proxyError("proxy_state_conflict", 409, "existing proxy URL is invalid")
 			return failedProxyResult(authID, "conflict", err), err
 		}
 		config := *entry.ResinConfig
@@ -634,7 +666,7 @@ func (s *Service) adoptProxy(ctx context.Context, authID string, opts proxyBindO
 		account := resinAccountFromProxyURL(current)
 		if prefix != "" {
 			if !strings.HasPrefix(username, prefix+".") {
-				err := proxyError("proxy_binding_conflict", 409, "proxy does not match the selected Resin platform")
+				err := proxyError("proxy_state_conflict", 409, "proxy does not match the selected Resin platform")
 				return failedProxyResult(authID, "conflict", err), err
 			}
 			account = strings.TrimPrefix(username, prefix+".")
@@ -642,7 +674,7 @@ func (s *Service) adoptProxy(ctx context.Context, authID string, opts proxyBindO
 		if !config.LocalOnly && (parsedEndpoint.Protocol != entry.Template.Protocol ||
 			!strings.EqualFold(parsedEndpoint.Host, entry.Template.Host) || parsedEndpoint.Port != entry.Template.Port ||
 			parsedEndpoint.Password != entry.Template.Password) {
-			err := proxyError("proxy_binding_conflict", 409, "proxy does not match the selected Resin connection")
+			err := proxyError("proxy_state_conflict", 409, "proxy does not match the selected Resin connection")
 			return failedProxyResult(authID, "conflict", err), err
 		}
 		usage := s.env.ProxyStore().ProxyLeaseUsage(account)
@@ -654,7 +686,7 @@ func (s *Service) adoptProxy(ctx context.Context, authID string, opts proxyBindO
 			return failedProxyResult(authID, "conflict", err), err
 		}
 		if account == "" {
-			err := proxyError("proxy_binding_conflict", 409, "proxy does not match the selected Resin integration")
+			err := proxyError("proxy_state_conflict", 409, "proxy does not match the selected Resin integration")
 			return failedProxyResult(authID, "conflict", err), err
 		}
 		if !opts.DryRun {

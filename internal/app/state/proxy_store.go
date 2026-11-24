@@ -534,7 +534,7 @@ func (s *Store) PrepareProxy(operation proxy.Operation, automatic bool) error {
 	if account != nil {
 		binding, _ := bindingForAccount(*account)
 		if binding.Generation != operation.ExpectedGeneration || binding.SourceID != operation.PreviousSourceID {
-			return proxy.NewError("proxy_binding_conflict", 409, "binding changed before proxy prepare")
+			return proxy.NewError("proxy_state_conflict", 409, "binding changed before proxy prepare")
 		}
 		if automatic && account.AutoBind.Excluded {
 			return proxy.NewError("auto_bind_excluded", 409, "automatic binding is paused for this auth")

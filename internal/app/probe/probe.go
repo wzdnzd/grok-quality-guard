@@ -614,7 +614,7 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 	}
 	reEnabled := false
 	if wasDisabled {
-		if errEnable := s.saveAuthDisabled(response.Name, raw, false); errEnable != nil {
+		if errEnable := s.saveAuthDisabled(authID, response.Name, raw, false); errEnable != nil {
 			return errEnable
 		}
 		reEnabled = true
@@ -807,14 +807,8 @@ func (s *Service) handleProbeFailureResult(authID string, raw map[string]json.Ra
 		reEnabled,
 	)
 }
-func (s *Service) saveAuthDisabled(name string, raw map[string]json.RawMessage, disabled bool) error {
-	setRawBool(raw, "disabled", disabled)
-	encoded, errMarshal := marshalRawMap(raw)
-	if errMarshal != nil {
-		return errMarshal
-	}
-	_, errSave := s.saveAuth(name, encoded)
-	return errSave
+func (s *Service) saveAuthDisabled(authID, name string, raw map[string]json.RawMessage, disabled bool) error {
+	return s.env.SaveAuthDisabled(authID, name, raw, disabled)
 }
 
 func matchProbeMarker(text, expected string) bool {

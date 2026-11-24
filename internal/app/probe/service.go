@@ -96,7 +96,7 @@ type Environment interface {
 	RefreshCatalog(context.Context) error
 	StateAccount(string) (appstate.AccountState, bool)
 	SaveAuth(string, json.RawMessage) (pluginapi.HostAuthSaveResponse, error)
-	SaveAuthDisabled(string, map[string]json.RawMessage, bool) error
+	SaveAuthDisabled(string, string, map[string]json.RawMessage, bool) error
 	RefreshSelectionAccount(string)
 	ExecuteModelStream(context.Context, pluginapi.HostModelExecutionRequest, string) (pluginapi.HostModelStreamResponse, error)
 	CloseModelStream(string) error
