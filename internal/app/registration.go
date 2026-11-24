@@ -103,6 +103,7 @@ func pluginRegistrationForLocale(locale string) registration {
 				{Name: "quality.missing_thinking_cooldown", Type: pluginapi.ConfigFieldTypeString, Default: "12h", Description: configDescription(locale, "quality.missing_thinking_cooldown")},
 				{Name: "quality.empty_stream_cooldown", Type: pluginapi.ConfigFieldTypeString, Default: "15m", Description: configDescription(locale, "quality.empty_stream_cooldown")},
 				{Name: "quality.max_attempts", Type: pluginapi.ConfigFieldTypeInteger, Default: 4, Description: configDescription(locale, "quality.max_attempts")},
+				{Name: "quality.debug_logging", Type: pluginapi.ConfigFieldTypeBoolean, Default: false, Description: configDescription(locale, "quality.debug_logging")},
 				{Name: "quality.on_exhausted", Type: pluginapi.ConfigFieldTypeEnum, Default: "fail_unverified", EnumValues: []string{"fail_unverified", "fail_closed"}, Description: configDescription(locale, "quality.on_exhausted")},
 				{Name: "probe.model", Type: pluginapi.ConfigFieldTypeString, Default: "grok-4.5", Description: configDescription(locale, "probe.model")},
 				{Name: "probe.timeout", Type: pluginapi.ConfigFieldTypeString, Default: "90s", Description: configDescription(locale, "probe.timeout")},
@@ -183,6 +184,10 @@ func (p *Plugin) ManagementRegistrationForLocale(locale string) managementRegist
 			{
 				Method: "GET",
 				Path:   "/plugins/" + pluginID + "/locales",
+			},
+			{
+				Method: "GET",
+				Path:   "/plugins/" + pluginID + "/settings/schema",
 			},
 		},
 		Resources: []pluginapi.ResourceRoute{{

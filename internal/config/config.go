@@ -39,8 +39,6 @@ const (
 	defaultRoutingRefreshMaxAge        = 30 * time.Minute
 	defaultRoutingDriftThreshold       = 0.03
 	defaultRoutingHalfLifeHours        = 168
-	minRoutingRefreshInterval          = 10 * time.Second
-	maxRoutingRefreshAge               = 7 * 24 * time.Hour
 )
 
 // Duration accepts YAML and JSON duration strings while keeping a stable text form
@@ -123,6 +121,7 @@ type QualityConfig struct {
 	EmptyStreamCooldown             Duration `yaml:"empty_stream_cooldown" json:"empty_stream_cooldown"`
 	MaxAttempts                     int      `yaml:"max_attempts" json:"max_attempts"`
 	OnExhausted                     string   `yaml:"on_exhausted" json:"on_exhausted"`
+	DebugLogging                    bool     `yaml:"debug_logging" json:"debug_logging"`
 }
 
 type ProbeConfig struct {
@@ -458,17 +457,18 @@ func normalizeTaskHistory(history *TaskHistoryConfig) error {
 	if history.MaxItemsPerTask <= 0 {
 		history.MaxItemsPerTask = defaults.MaxItemsPerTask
 	}
-	if history.RetentionDays > maxTaskHistoryRetentionDays {
-		return fmt.Errorf("task_history.retention_days must be <= %d", maxTaskHistoryRetentionDays)
-	}
-	if history.MaxRecords > maxTaskHistoryMaxRecords {
-		return fmt.Errorf("task_history.max_records must be <= %d", maxTaskHistoryMaxRecords)
-	}
-	if history.MaxBytes > maxTaskHistoryMaxBytes {
-		return fmt.Errorf("task_history.max_bytes must be <= %d", maxTaskHistoryMaxBytes)
-	}
-	if history.MaxItemsPerTask > maxTaskHistoryMaxItems {
-		return fmt.Errorf("task_history.max_items_per_task must be <= %d", maxTaskHistoryMaxItems)
+	for _, field := range []struct {
+		path  string
+		value int64
+	}{
+		{"task_history.retention_days", int64(history.RetentionDays)},
+		{"task_history.max_records", int64(history.MaxRecords)},
+		{"task_history.max_bytes", history.MaxBytes},
+		{"task_history.max_items_per_task", int64(history.MaxItemsPerTask)},
+	} {
+		if errField := validateFieldValue(field.path, float64(field.value)); errField != nil {
+			return errField
+		}
 	}
 	return nil
 }
@@ -490,26 +490,26 @@ func normalizeRouting(r *RoutingConfig) error {
 	if r.Affinity.TTL.Duration <= 0 {
 		r.Affinity.TTL = defaults.Affinity.TTL
 	}
-	if r.Affinity.TTL.Duration > 168*time.Hour {
-		return fmt.Errorf("routing.affinity.ttl must be <= 168h")
+	if errField := validateFieldValue("routing.affinity.ttl", r.Affinity.TTL.Duration.Seconds()); errField != nil {
+		return errField
 	}
 	if r.Affinity.MaxEntries <= 0 {
 		r.Affinity.MaxEntries = defaults.Affinity.MaxEntries
 	}
-	if r.Affinity.MaxEntries > 100000 {
-		return fmt.Errorf("routing.affinity.max_entries must be <= 100000")
+	if errField := validateFieldValue("routing.affinity.max_entries", float64(r.Affinity.MaxEntries)); errField != nil {
+		return errField
 	}
 	if r.Scoring.MaxAccountsPerBucket == 0 {
 		r.Scoring.MaxAccountsPerBucket = defaults.Scoring.MaxAccountsPerBucket
 	}
-	if r.Scoring.MaxAccountsPerBucket < minRoutingMaxAccountsPerBucket || r.Scoring.MaxAccountsPerBucket > maxRoutingMaxAccountsPerBucket {
-		return fmt.Errorf("routing.scoring.max_accounts_per_bucket must be between %d and %d", minRoutingMaxAccountsPerBucket, maxRoutingMaxAccountsPerBucket)
+	if errField := validateFieldValue("routing.scoring.max_accounts_per_bucket", float64(r.Scoring.MaxAccountsPerBucket)); errField != nil {
+		return errField
 	}
 	if r.Scoring.HalfLifeHours <= 0 {
 		r.Scoring.HalfLifeHours = defaults.Scoring.HalfLifeHours
 	}
-	if r.Scoring.HalfLifeHours < 1 || r.Scoring.HalfLifeHours > 8760 {
-		return fmt.Errorf("routing.scoring.half_life_hours must be between 1 and 8760")
+	if errField := validateFieldValue("routing.scoring.half_life_hours", float64(r.Scoring.HalfLifeHours)); errField != nil {
+		return errField
 	}
 	if !validRoutingWeight(r.Scoring.Weights.Success) || !validRoutingWeight(r.Scoring.Weights.TTFT) || !validRoutingWeight(r.Scoring.Weights.TPS) {
 		return fmt.Errorf("routing.scoring.weights must be between 0 and 1")
@@ -526,20 +526,20 @@ func normalizeRouting(r *RoutingConfig) error {
 	if r.Scoring.Refresh.MinInterval.Duration <= 0 {
 		r.Scoring.Refresh.MinInterval = defaults.Scoring.Refresh.MinInterval
 	}
-	if r.Scoring.Refresh.MinInterval.Duration < minRoutingRefreshInterval {
-		return fmt.Errorf("routing.scoring.refresh.min_interval must be >= %s", minRoutingRefreshInterval)
+	if errField := validateFieldValue("routing.scoring.refresh.min_interval", r.Scoring.Refresh.MinInterval.Duration.Seconds()); errField != nil {
+		return errField
 	}
 	if r.Scoring.Refresh.MaxAge.Duration <= 0 {
 		r.Scoring.Refresh.MaxAge = defaults.Scoring.Refresh.MaxAge
 	}
-	if r.Scoring.Refresh.MaxAge.Duration > maxRoutingRefreshAge {
-		return fmt.Errorf("routing.scoring.refresh.max_age must be <= %s", maxRoutingRefreshAge)
+	if errField := validateFieldValue("routing.scoring.refresh.max_age", r.Scoring.Refresh.MaxAge.Duration.Seconds()); errField != nil {
+		return errField
 	}
 	if r.Scoring.Refresh.MaxAge.Duration < r.Scoring.Refresh.MinInterval.Duration {
 		return fmt.Errorf("routing.scoring.refresh.max_age must be >= min_interval")
 	}
-	if math.IsNaN(r.Scoring.Refresh.DriftThreshold) || math.IsInf(r.Scoring.Refresh.DriftThreshold, 0) || r.Scoring.Refresh.DriftThreshold < 0 || r.Scoring.Refresh.DriftThreshold > 1 {
-		return fmt.Errorf("routing.scoring.refresh.drift_threshold must be between 0 and 1")
+	if errField := validateFieldValue("routing.scoring.refresh.drift_threshold", r.Scoring.Refresh.DriftThreshold); errField != nil {
+		return errField
 	}
 	return nil
 }
@@ -555,6 +555,50 @@ func RoutingEWMAHalfLife(halfLifeHours int) time.Duration {
 		halfLifeHours = defaultRoutingHalfLifeHours
 	}
 	return time.Duration(halfLifeHours) * time.Hour
+}
+
+// validateFieldValue checks one numeric field against its schema spec.
+func validateFieldValue(path string, value float64) error {
+	spec, ok := FieldSpecByPath(path)
+	if !ok {
+		return fmt.Errorf("%s has no schema entry", path)
+	}
+	return ValidateField(spec, value)
+}
+
+// validateFieldEnum checks one enum field against its schema spec.
+func validateFieldEnum(path, value string) error {
+	spec, ok := FieldSpecByPath(path)
+	if !ok {
+		return fmt.Errorf("%s has no schema entry", path)
+	}
+	for _, allowed := range spec.Enum {
+		if value == allowed {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s must be one of %s", path, strings.Join(spec.Enum, ", "))
+}
+
+// validateQualityIntegers checks the consecutive thresholds and strike decay
+// bounds that need no other input.
+func validateQualityIntegers(q *QualityConfig) error {
+	fields := []struct {
+		path  string
+		value int
+	}{
+		{"quality.consecutive_soft", q.ConsecutiveSoft},
+		{"quality.consecutive_errors", q.ConsecutiveErrors},
+		{"quality.consecutive_missing_thinking", q.ConsecutiveMissingThinking},
+		{"quality.strike_decay_after", q.StrikeDecayAfterHours},
+		{"quality.strike_decay_min_healthy", q.StrikeDecayMinHealthy},
+	}
+	for _, field := range fields {
+		if errField := validateFieldValue(field.path, float64(field.value)); errField != nil {
+			return errField
+		}
+	}
+	return nil
 }
 
 func normalizeQuality(q *QualityConfig) error {
@@ -580,20 +624,8 @@ func normalizeQuality(q *QualityConfig) error {
 	if q.ConsecutiveMissingThinking <= 0 {
 		q.ConsecutiveMissingThinking = defaults.ConsecutiveMissingThinking
 	}
-	for name, value := range map[string]int{
-		"quality.consecutive_soft":             q.ConsecutiveSoft,
-		"quality.consecutive_errors":           q.ConsecutiveErrors,
-		"quality.consecutive_missing_thinking": q.ConsecutiveMissingThinking,
-	} {
-		if value < 1 || value > 10 {
-			return fmt.Errorf("%s must be between 1 and 10", name)
-		}
-	}
-	if q.StrikeDecayAfterHours < 0 || q.StrikeDecayAfterHours > 8760 {
-		return fmt.Errorf("quality.strike_decay_after must be between 0 and 8760")
-	}
-	if q.StrikeDecayMinHealthy < 0 || q.StrikeDecayMinHealthy > 1000 {
-		return fmt.Errorf("quality.strike_decay_min_healthy must be between 0 and 1000")
+	if errField := validateQualityIntegers(q); errField != nil {
+		return errField
 	}
 	if q.StrikeDecayMinHealthy == 0 {
 		q.StrikeDecayMinHealthy = defaults.StrikeDecayMinHealthy
@@ -601,26 +633,26 @@ func normalizeQuality(q *QualityConfig) error {
 	if q.MinGenerationMS <= 0 {
 		q.MinGenerationMS = defaults.MinGenerationMS
 	}
-	if q.MinGenerationMS < 100 || q.MinGenerationMS > 60000 {
-		return fmt.Errorf("quality.min_generation_ms must be between 100 and 60000")
+	if errField := validateFieldValue("quality.min_generation_ms", float64(q.MinGenerationMS)); errField != nil {
+		return errField
 	}
 	if q.MinPassiveOutputTokens <= 0 {
 		q.MinPassiveOutputTokens = defaults.MinPassiveOutputTokens
 	}
-	if q.MinPassiveOutputTokens > 10000 {
-		return fmt.Errorf("quality.min_passive_output_tokens must be <= 10000")
+	if errField := validateFieldValue("quality.min_passive_output_tokens", float64(q.MinPassiveOutputTokens)); errField != nil {
+		return errField
 	}
 	if q.MinHoldOutputTokens <= 0 {
 		q.MinHoldOutputTokens = defaults.MinHoldOutputTokens
 	}
-	if q.MinHoldOutputTokens > 10000 {
-		return fmt.Errorf("quality.min_hold_output_tokens must be <= 10000")
+	if errField := validateFieldValue("quality.min_hold_output_tokens", float64(q.MinHoldOutputTokens)); errField != nil {
+		return errField
 	}
 	if q.HoldTimeout.Duration <= 0 {
 		q.HoldTimeout = defaults.HoldTimeout
 	}
-	if q.HoldTimeout.Duration < 5*time.Second || q.HoldTimeout.Duration > 10*time.Minute {
-		return fmt.Errorf("quality.hold_timeout must be between 5s and 10m")
+	if errField := validateFieldValue("quality.hold_timeout", q.HoldTimeout.Duration.Seconds()); errField != nil {
+		return errField
 	}
 	if q.AttemptTimeout.Duration <= 0 {
 		q.AttemptTimeout = defaults.AttemptTimeout
@@ -628,8 +660,8 @@ func normalizeQuality(q *QualityConfig) error {
 	if q.AttemptTimeout.Duration < q.HoldTimeout.Duration+10*time.Second {
 		return fmt.Errorf("quality.attempt_timeout must be at least hold_timeout plus 10s")
 	}
-	if q.AttemptTimeout.Duration > 10*time.Minute {
-		return fmt.Errorf("quality.attempt_timeout must be <= 10m")
+	if errField := validateFieldValue("quality.attempt_timeout", q.AttemptTimeout.Duration.Seconds()); errField != nil {
+		return errField
 	}
 	if q.RequestTimeout.Duration <= 0 {
 		q.RequestTimeout = defaults.RequestTimeout
@@ -637,69 +669,65 @@ func normalizeQuality(q *QualityConfig) error {
 	if q.RequestTimeout.Duration < q.AttemptTimeout.Duration {
 		return fmt.Errorf("quality.request_timeout must be >= attempt_timeout")
 	}
-	if q.RequestTimeout.Duration > 30*time.Minute {
-		return fmt.Errorf("quality.request_timeout must be <= 30m")
+	if errField := validateFieldValue("quality.request_timeout", q.RequestTimeout.Duration.Seconds()); errField != nil {
+		return errField
 	}
 	if q.HoldKeepalive.Duration <= 0 {
 		q.HoldKeepalive = defaults.HoldKeepalive
 	}
-	if q.HoldKeepalive.Duration < time.Second || q.HoldKeepalive.Duration > time.Minute {
-		return fmt.Errorf("quality.hold_keepalive must be between 1s and 1m")
+	if errField := validateFieldValue("quality.hold_keepalive", q.HoldKeepalive.Duration.Seconds()); errField != nil {
+		return errField
 	}
 	if q.HoldMaxBufferBytes <= 0 {
 		q.HoldMaxBufferBytes = defaults.HoldMaxBufferBytes
 	}
-	if q.HoldMaxBufferBytes < 1<<20 || q.HoldMaxBufferBytes > 64<<20 {
-		return fmt.Errorf("quality.hold_max_buffer_bytes must be between 1MiB and 64MiB")
+	if errField := validateFieldValue("quality.hold_max_buffer_bytes", float64(q.HoldMaxBufferBytes)); errField != nil {
+		return errField
 	}
 	if q.MinEncryptedBytes <= 0 {
 		q.MinEncryptedBytes = defaults.MinEncryptedBytes
 	}
-	if q.MinEncryptedBytes < 64 || q.MinEncryptedBytes > 65536 {
-		return fmt.Errorf("quality.min_encrypted_bytes must be between 64 and 65536")
+	if errField := validateFieldValue("quality.min_encrypted_bytes", float64(q.MinEncryptedBytes)); errField != nil {
+		return errField
 	}
 	if q.EncryptedBytesPerReasoningToken <= 0 {
 		q.EncryptedBytesPerReasoningToken = defaults.EncryptedBytesPerReasoningToken
 	}
-	if q.EncryptedBytesPerReasoningToken > 64 {
-		return fmt.Errorf("quality.encrypted_bytes_per_reasoning_token must be <= 64")
+	if errField := validateFieldValue("quality.encrypted_bytes_per_reasoning_token", float64(q.EncryptedBytesPerReasoningToken)); errField != nil {
+		return errField
 	}
 	q.NonReasoningModels = normalizeNonReasoningModels(q.NonReasoningModels)
 	if q.MissingThinkingCooldown.Duration <= 0 {
 		q.MissingThinkingCooldown = defaults.MissingThinkingCooldown
 	}
-	if q.MissingThinkingCooldown.Duration > 30*24*time.Hour {
-		return fmt.Errorf("quality.missing_thinking_cooldown must be <= 30d")
+	if errField := validateFieldValue("quality.missing_thinking_cooldown", q.MissingThinkingCooldown.Duration.Seconds()); errField != nil {
+		return errField
 	}
 	if q.EmptyStreamCooldown.Duration <= 0 {
 		q.EmptyStreamCooldown = defaults.EmptyStreamCooldown
 	}
-	if q.EmptyStreamCooldown.Duration > 24*time.Hour {
-		return fmt.Errorf("quality.empty_stream_cooldown must be <= 24h")
+	if errField := validateFieldValue("quality.empty_stream_cooldown", q.EmptyStreamCooldown.Duration.Seconds()); errField != nil {
+		return errField
 	}
 	if q.MaxAttempts <= 0 {
 		q.MaxAttempts = defaults.MaxAttempts
 	}
-	if q.MaxAttempts > 8 {
-		return fmt.Errorf("quality.max_attempts must be <= 8")
+	if errField := validateFieldValue("quality.max_attempts", float64(q.MaxAttempts)); errField != nil {
+		return errField
 	}
 	q.CrossVerify = strings.ToLower(strings.TrimSpace(q.CrossVerify))
 	if q.CrossVerify == "" {
 		q.CrossVerify = defaults.CrossVerify
 	}
-	switch q.CrossVerify {
-	case "off", "soft", "thinking", "all":
-	default:
-		return fmt.Errorf("quality.cross_verify must be off, soft, thinking, or all")
+	if errEnum := validateFieldEnum("quality.cross_verify", q.CrossVerify); errEnum != nil {
+		return errEnum
 	}
 	q.OnExhausted = strings.ToLower(strings.TrimSpace(q.OnExhausted))
 	if q.OnExhausted == "" {
 		q.OnExhausted = defaults.OnExhausted
 	}
-	switch q.OnExhausted {
-	case "fail_unverified", "fail_closed":
-	default:
-		return fmt.Errorf("quality.on_exhausted must be fail_unverified or fail_closed")
+	if errEnum := validateFieldEnum("quality.on_exhausted", q.OnExhausted); errEnum != nil {
+		return errEnum
 	}
 	return nil
 }
@@ -741,14 +769,14 @@ func normalizeProbe(p *ProbeConfig) error {
 	if p.QueueSize <= 0 {
 		p.QueueSize = defaults.QueueSize
 	}
-	if p.QueueSize > maxProbeQueueSize {
-		return fmt.Errorf("probe.queue_size must be <= %d", maxProbeQueueSize)
+	if errField := validateFieldValue("probe.queue_size", float64(p.QueueSize)); errField != nil {
+		return errField
 	}
 	if p.ScanInterval.Duration <= 0 {
 		p.ScanInterval = defaults.ScanInterval
 	}
-	if p.ScanInterval.Duration < time.Second || p.ScanInterval.Duration > 24*time.Hour {
-		return fmt.Errorf("probe.scan_interval must be between 1s and 24h")
+	if errField := validateFieldValue("probe.scan_interval", p.ScanInterval.Duration.Seconds()); errField != nil {
+		return errField
 	}
 	if p.UnknownDelay.Duration <= 0 {
 		p.UnknownDelay = defaults.UnknownDelay
@@ -756,8 +784,8 @@ func normalizeProbe(p *ProbeConfig) error {
 	if p.UnknownJitter.Duration < 0 {
 		return fmt.Errorf("probe.unknown_jitter must be >= 0")
 	}
-	if p.HealthyIntervalHours < 0 {
-		return fmt.Errorf("probe.healthy_interval_hours must be >= 0")
+	if errField := validateFieldValue("probe.healthy_interval_hours", float64(p.HealthyIntervalHours)); errField != nil {
+		return errField
 	}
 	if p.SuspectBackoff.Duration <= 0 {
 		p.SuspectBackoff = defaults.SuspectBackoff

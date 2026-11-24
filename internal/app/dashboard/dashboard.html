@@ -5042,6 +5042,7 @@
                   <label class="toggle-row"><input id="p_thinking_guard" type="checkbox"><span class="toggle-title">ui.enable_missing_reasoning_detection<span class="hint-icon" tabindex="0" role="img" aria-label="ui.when_disabled_only_tps_empty_stream_and_similar_quality" title="ui.when_disabled_only_tps_empty_stream_and_similar_quality"><svg class="icon"><use href="#i-info"></use></svg></span></span></label>
                   <label class="toggle-row"><input id="p_burst_guard" type="checkbox"><span class="toggle-title">ui.strict_short_window_detection<span class="hint-icon" tabindex="0" role="img" aria-label="ui.when_enabled_a_very_short_generation_window_with_tps" title="ui.when_enabled_a_very_short_generation_window_with_tps"><svg class="icon"><use href="#i-info"></use></svg></span></span></label>
                   <label class="toggle-row"><input id="p_shadow_mode" type="checkbox"><span class="toggle-title">ui.shadow_mode<span class="hint-icon" tabindex="0" role="img" aria-label="ui.shadow_mode_quality_observations_only" title="ui.shadow_mode_quality_observations_only"><svg class="icon"><use href="#i-info"></use></svg></span></span></label>
+                  <label class="toggle-row"><input id="p_debug_logging" type="checkbox"><span class="toggle-title">ui.debug_logging<span class="hint-icon" tabindex="0" role="img" aria-label="ui.debug_logging_help" title="ui.debug_logging_help"><svg class="icon"><use href="#i-info"></use></svg></span></span></label>
                 </div>
               </section>
               <section class="policy-group">
@@ -6564,6 +6565,7 @@
     }
 
     async function loadPolicyData() {
+      await loadPolicySchema();
       const value = await api('policy.get');
       state.policy = value || {};
       state.policyLoadedAt = Date.now();
@@ -9869,11 +9871,103 @@
       'p_probe_suspect_backoff',
       'p_probe_max_backoff'
     ]);
-    const POLICY_DURATION_RULES = new Map([
-      ['p_session_affinity_ttl', { minSeconds: 0, maxSeconds: 604800, message: 'ui.session_ttl_invalid' }],
-      ['p_score_min_interval', { minSeconds: 10, maxSeconds: 604800, message: 'ui.score_min_interval_invalid' }],
-      ['p_score_max_age', { minSeconds: 10, maxSeconds: 604800, message: 'ui.score_max_age_invalid' }]
-    ]);
+    // Field specs come from GET /settings/schema, the same table the backend
+    // validates against, so the ranges are not duplicated in this file.
+    const POLICY_SCHEMA_ENDPOINT = '/v0/management/plugins/grok-quality-guard/settings/schema';
+    const POLICY_SCHEMA_BY_ID = new Map();
+    const FIELD_ID_TO_PATH = {
+      p_guard: 'guard',
+      p_auto_action: 'auto_action',
+      p_events_limit: 'events_limit',
+      p_selection_strategy: 'routing.strategy.selection',
+      p_session_affinity_ttl: 'routing.affinity.ttl',
+      p_session_affinity_max_entries: 'routing.affinity.max_entries',
+      p_max_accounts_per_bucket: 'routing.scoring.max_accounts_per_bucket',
+      p_score_half_life: 'routing.scoring.half_life_hours',
+      p_score_success_weight: 'routing.scoring.weights.success',
+      p_score_ttft_weight: 'routing.scoring.weights.ttft',
+      p_score_tps_weight: 'routing.scoring.weights.tps',
+      p_score_probe_weight: 'routing.scoring.evidence.probe',
+      p_score_transparent_weight: 'routing.scoring.evidence.transparent',
+      p_score_passive_weight: 'routing.scoring.evidence.passive',
+      p_score_min_interval: 'routing.scoring.refresh.min_interval',
+      p_score_max_age: 'routing.scoring.refresh.max_age',
+      p_score_drift_threshold: 'routing.scoring.refresh.drift_threshold',
+      p_soft_tps: 'quality.soft_tps',
+      p_hard_tps: 'quality.hard_tps',
+      p_consecutive_soft: 'quality.consecutive_soft',
+      p_consecutive_errors: 'quality.consecutive_errors',
+      p_consecutive_missing_thinking: 'quality.consecutive_missing_thinking',
+      p_strike_decay_after: 'quality.strike_decay_after',
+      p_strike_decay_min_healthy: 'quality.strike_decay_min_healthy',
+      p_min_generation_ms: 'quality.min_generation_ms',
+      p_cross_verify: 'quality.cross_verify',
+      p_min_passive_output: 'quality.min_passive_output_tokens',
+      p_min_encrypted_bytes: 'quality.min_encrypted_bytes',
+      p_encrypted_per_token: 'quality.encrypted_bytes_per_reasoning_token',
+      p_missing_cooldown: 'quality.missing_thinking_cooldown',
+      p_empty_cooldown: 'quality.empty_stream_cooldown',
+      p_min_hold_output: 'quality.min_hold_output_tokens',
+      p_hold_timeout: 'quality.hold_timeout',
+      p_attempt_timeout: 'quality.attempt_timeout',
+      p_request_timeout: 'quality.request_timeout',
+      p_hold_keepalive: 'quality.hold_keepalive',
+      p_hold_max_bytes: 'quality.hold_max_buffer_bytes',
+      p_max_attempts: 'quality.max_attempts',
+      p_on_exhausted: 'quality.on_exhausted',
+      p_probe_healthy_interval_hours: 'probe.healthy_interval_hours',
+      p_probe_model: 'probe.model',
+      p_probe_timeout: 'probe.timeout',
+      p_probe_max_output: 'probe.max_output_tokens',
+      p_probe_concurrency: 'probe.concurrency',
+      p_probe_queue_size: 'probe.queue_size',
+      p_probe_scan_interval: 'probe.scan_interval',
+      p_probe_unknown_delay: 'probe.unknown_delay',
+      p_probe_unknown_jitter: 'probe.unknown_jitter',
+      p_probe_suspect_backoff: 'probe.suspect_backoff',
+      p_probe_max_backoff: 'probe.max_backoff',
+      p_task_history_retention_days: 'task_history.retention_days',
+      p_task_history_max_records: 'task_history.max_records',
+      p_task_history_max_bytes_mib: 'task_history.max_bytes',
+      p_task_history_max_items: 'task_history.max_items_per_task'
+    };
+    // Fields whose schema unit differs from the input unit.
+    const POLICY_SCHEMA_SCALE = { p_task_history_max_bytes_mib: 1 / 1048576 };
+    async function loadPolicySchema() {
+      try {
+        const response = await fetch(POLICY_SCHEMA_ENDPOINT, { headers: { 'Accept-Language': i18n.locale } });
+        if (!response || !response.ok) return;
+        const payload = await response.json();
+        const fields = payload && payload.data && Array.isArray(payload.data.fields) ? payload.data.fields : [];
+        POLICY_SCHEMA_BY_ID.clear();
+        const byPath = new Map(fields.map((field) => [field.path, field]));
+        for (const [id, path] of Object.entries(FIELD_ID_TO_PATH)) {
+          const spec = byPath.get(path);
+          if (spec) POLICY_SCHEMA_BY_ID.set(id, spec);
+        }
+        applyPolicySchemaBounds();
+      } catch (_) { }
+    }
+    // applyPolicySchemaBounds copies the backend ranges onto the controls so the
+    // browser rejects out-of-range values with the same limits.
+    function applyPolicySchemaBounds() {
+      POLICY_SCHEMA_BY_ID.forEach((spec, id) => {
+        const field = document.getElementById(id);
+        if (!field) return;
+        const scale = POLICY_SCHEMA_SCALE[id] || 1;
+        if (spec.type === 'duration') {
+          field.dataset.minSeconds = Number.isFinite(Number(spec.min)) ? String(Number(spec.min)) : '';
+          field.dataset.maxSeconds = Number.isFinite(Number(spec.max)) ? String(Number(spec.max)) : '';
+          return;
+        }
+        if (spec.type === 'enum' && Array.isArray(spec.enum)) field.dataset.schemaEnum = spec.enum.join(',');
+        if (Number.isFinite(Number(spec.min)) && Number(spec.min) !== 0) field.min = String(Number(spec.min) * scale);
+        if (Number.isFinite(Number(spec.max)) && Number(spec.max) !== 0) field.max = String(Number(spec.max) * scale);
+        if (spec.type === 'integer') field.step = '1';
+      });
+    }
+    // POLICY_NUMBER_MESSAGES keeps the field-specific copy only; the bounds
+    // themselves come from the schema fetched above.
     const POLICY_NUMBER_MESSAGES = {
       p_max_accounts_per_bucket: 'ui.score_bucket_limit_invalid',
       p_score_success_weight: 'ui.score_weights_invalid',
@@ -9889,6 +9983,11 @@
       p_task_history_max_items: 'ui.task_items_range',
       p_probe_queue_size: 'ui.queue_capacity_range',
       p_probe_healthy_interval_hours: 'ui.healthy_probe_interval_range'
+    };
+    const POLICY_DURATION_MESSAGES = {
+      p_session_affinity_ttl: 'ui.session_ttl_invalid',
+      p_score_min_interval: 'ui.score_min_interval_invalid',
+      p_score_max_age: 'ui.score_max_age_invalid'
     };
     const SCORE_METRIC_WEIGHTS = ['p_score_success_weight', 'p_score_ttft_weight', 'p_score_tps_weight'];
     const SCORE_EVIDENCE_WEIGHTS = ['p_score_probe_weight', 'p_score_transparent_weight', 'p_score_passive_weight'];
@@ -9938,12 +10037,13 @@
         }
       }
       if (POLICY_DURATION_FIELDS.has(id)) {
-        const rule = POLICY_DURATION_RULES.get(id);
-        const message = rule?.message || 'ui.policy_duration_invalid';
-        if (!raw || !Number.isFinite(parsePolicyDurationSeconds(raw))) return i18n.t(message);
+        const message = POLICY_DURATION_MESSAGES[id] || 'ui.policy_duration_invalid';
         const seconds = parsePolicyDurationSeconds(raw);
-        const minSeconds = rule?.minSeconds ?? 0;
-        if (seconds <= minSeconds || (rule?.maxSeconds != null && seconds > rule.maxSeconds)) return i18n.t(message);
+        if (!raw || !Number.isFinite(seconds)) return i18n.t(message);
+        const rule = POLICY_SCHEMA_BY_ID.get(id);
+        const minSeconds = rule && rule.min != null ? Number(rule.min) : 0;
+        const maxSeconds = rule && rule.max != null && Number(rule.max) !== 0 ? Number(rule.max) : null;
+        if ((minSeconds > 0 && seconds < minSeconds) || (maxSeconds != null && seconds > maxSeconds)) return i18n.t(message);
       }
       return '';
     }
@@ -10105,6 +10205,7 @@
       setValue('p_request_timeout', quality.request_timeout || '120s');
       setValue('p_hold_keepalive', quality.hold_keepalive || '5s');
       setChecked('p_shadow_mode', quality.shadow_mode === true);
+      setChecked('p_debug_logging', quality.debug_logging === true);
       setValue('p_hold_max_bytes', quality.hold_max_buffer_bytes || 4194304);
       setValue('p_min_encrypted_bytes', quality.min_encrypted_bytes || 256);
       setValue('p_encrypted_per_token', quality.encrypted_bytes_per_reasoning_token || 2);
@@ -10181,6 +10282,7 @@
       policy.quality.request_timeout = valueOf('p_request_timeout');
       policy.quality.hold_keepalive = valueOf('p_hold_keepalive');
       policy.quality.shadow_mode = document.getElementById('p_shadow_mode').checked;
+      policy.quality.debug_logging = document.getElementById('p_debug_logging').checked;
       policy.quality.hold_max_buffer_bytes = numberValue('p_hold_max_bytes', 4194304);
       policy.quality.min_encrypted_bytes = numberValue('p_min_encrypted_bytes', 256);
       policy.quality.encrypted_bytes_per_reasoning_token = numberValue('p_encrypted_per_token', 2);
