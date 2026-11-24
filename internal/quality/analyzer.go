@@ -31,6 +31,8 @@ type StreamAnalyzer struct {
 	hasThinking    bool
 	reasoningStart bool
 	encryptedBytes int64
+	encryptedMax   int64
+	encryptedItems map[string]int64
 	minEncrypted   int64
 	bytesPerToken  int64
 	retainText     bool
@@ -40,11 +42,12 @@ type StreamAnalyzer struct {
 
 func NewStreamAnalyzer() *StreamAnalyzer {
 	return &StreamAnalyzer{
-		streaming:     true,
-		retainText:    true,
-		startedAt:     time.Now(),
-		minEncrypted:  defaultEncryptedBytes,
-		bytesPerToken: defaultEncryptedBytesPerToken,
+		streaming:      true,
+		retainText:     true,
+		startedAt:      time.Now(),
+		encryptedItems: make(map[string]int64),
+		minEncrypted:   defaultEncryptedBytes,
+		bytesPerToken:  defaultEncryptedBytesPerToken,
 	}
 }
 
@@ -212,8 +215,8 @@ func (a *StreamAnalyzer) observeEvent(ev SSEEvent, now time.Time) {
 			a.markFirstToken(now)
 		case strings.HasPrefix(comment, strings.TrimPrefix(qualityReasoningEvidencePrefix, ": ")):
 			value := strings.TrimSpace(strings.TrimPrefix(ev.Comment, strings.TrimPrefix(qualityReasoningEvidencePrefix, ": ")))
-			if count, err := strconv.ParseInt(value, 10, 64); err == nil && count > a.encryptedBytes {
-				a.encryptedBytes = count
+			if count, err := strconv.ParseInt(value, 10, 64); err == nil && count > 0 {
+				a.addEncryptedCount(count)
 			}
 			a.markReasoningStart(now)
 			a.markEvidence(now)
@@ -505,7 +508,7 @@ func (a *StreamAnalyzer) observeResponsesItemMap(item map[string]any, now time.T
 			a.noteProgress()
 		}
 		if enc := asString(item["encrypted_content"]); strings.TrimSpace(enc) != "" {
-			a.addEncrypted(enc)
+			a.addEncrypted(asString(item["id"]), enc)
 		}
 		if !a.streaming {
 			a.observeResponsesReasoningContent(item["summary"])
@@ -640,7 +643,7 @@ func (a *StreamAnalyzer) observeAnthropic(payload map[string]any, now time.Time)
 			}
 		case "redacted_thinking":
 			a.markReasoningStart(now)
-			a.addEncrypted(asString(block["data"]))
+			a.addEncrypted(asString(block["id"]), asString(block["data"]))
 		case "text":
 			a.addVisibleText(asString(block["text"]), now)
 			a.signals.SemanticOutput = true
@@ -661,7 +664,7 @@ func (a *StreamAnalyzer) observeAnthropic(payload map[string]any, now time.Time)
 			a.addReasoningText(firstString(delta, "thinking", "text"))
 		case "signature_delta":
 			a.markReasoningStart(now)
-			a.addEncrypted(asString(delta["signature"]))
+			a.addEncrypted("", asString(delta["signature"]))
 		case "text_delta":
 			a.addVisibleText(asString(delta["text"]), now)
 		case "input_json_delta":
@@ -689,7 +692,7 @@ func (a *StreamAnalyzer) observeAnthropicContent(value any, now time.Time) {
 			a.addReasoningText(firstString(part, "thinking", "text"))
 		case "redacted_thinking":
 			a.markReasoningStart(now)
-			a.addEncrypted(asString(part["data"]))
+			a.addEncrypted("", asString(part["data"]))
 		case "text":
 			a.addVisibleText(asString(part["text"]), now)
 			a.signals.SemanticOutput = true
@@ -815,7 +818,11 @@ func qualityGapStats(gaps []int64) (int64, int64) {
 	return maxGap, sorted[len(sorted)/2]
 }
 
-func (a *StreamAnalyzer) addEncrypted(value string) {
+// addEncrypted records encrypted reasoning for one output item. Grok reports
+// encrypted_content per reasoning item while usage.reasoning_tokens is the sum
+// across items, so the floor must be compared against the sum of distinct
+// items rather than the largest single blob.
+func (a *StreamAnalyzer) addEncrypted(itemID, value string) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return
@@ -824,11 +831,39 @@ func (a *StreamAnalyzer) addEncrypted(value string) {
 	a.markFirstToken(now)
 	a.markReasoningStart(now)
 	a.markEvidence(now)
-	if size := int64(len([]byte(value))); size > a.encryptedBytes {
-		a.encryptedBytes = size
+	a.creditEncrypted(itemID, int64(len([]byte(value))))
+	a.noteProgress()
+}
+
+func (a *StreamAnalyzer) addEncryptedCount(count int64) {
+	if count <= 0 {
+		return
+	}
+	a.markEvidence(time.Now())
+	a.creditEncrypted("comment:synthetic", count)
+}
+
+func (a *StreamAnalyzer) creditEncrypted(itemID string, size int64) {
+	if size <= 0 {
+		return
+	}
+	if a.encryptedItems == nil {
+		a.encryptedItems = make(map[string]int64)
+	}
+	key := strings.TrimSpace(itemID)
+	if key == "" {
+		key = "item:anonymous"
+	}
+	previous := a.encryptedItems[key]
+	if size <= previous {
+		return
+	}
+	a.encryptedItems[key] = size
+	a.encryptedBytes += size - previous
+	if size > a.encryptedMax {
+		a.encryptedMax = size
 	}
 	a.signals.EncryptedBytes = a.encryptedBytes
-	a.noteProgress()
 }
 
 func (a *StreamAnalyzer) noteProgress() {
@@ -904,6 +939,8 @@ func (a *StreamAnalyzer) snapshot(final bool) Signals {
 	sig.Protocol = a.protocol
 	sig.Streaming = a.streaming
 	sig.EncryptedBytes = a.encryptedBytes
+	sig.EncryptedBytesMax = a.encryptedMax
+	sig.EncryptedItemCount = len(a.encryptedItems)
 	sig.ReasoningStarted = a.reasoningStart || sig.ReasoningStarted || sig.HasThinking
 	floor := encryptedFloorWithConfig(sig.ReasoningTokens, a.minEncrypted, a.bytesPerToken)
 	sig.EncryptedFloor = floor

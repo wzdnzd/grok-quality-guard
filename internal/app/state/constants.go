@@ -5,6 +5,7 @@ const (
 	StateHealthy            = "healthy"
 	StateSuspect            = "suspect"
 	StateDegraded           = "degraded"
+	StateUnreachable        = "unreachable"
 	StateCooling            = "cooling"
 	StateQuotaExhausted     = "quota_exhausted"
 	StateCredentialInvalid  = "credential_invalid"
@@ -19,4 +20,4 @@ const (
 	DisableKindPermanent         = "permanent"
 )
 
-const stateSchemaVersion = 1
+const stateSchemaVersion = 2

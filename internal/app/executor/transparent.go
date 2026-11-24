@@ -11,6 +11,7 @@ import (
 )
 
 var errTransparentStreamIdleTimeout = errors.New("upstream stream idle timeout")
+var errTransparentBudgetExhausted = errors.New("transparent verification budget exhausted")
 
 // startTransparentStreamBridge ties the request-lifetime goroutine to the
 // plugin lifecycle so Quiesce/Shutdown can cancel and wait for it.
@@ -32,7 +33,7 @@ func (s *Service) startTransparentStreamBridge(req Request, streamID string) {
 
 func (s *Service) transparentExecute(ctx context.Context, req Request) (Result, error) {
 	policy := s.env.Policy()
-	if !policy.TransparentGuard {
+	if !policy.TransparentGuardEnabled() {
 		return Result{}, fmt.Errorf("transparent guard is disabled")
 	}
 	facts, errFacts := s.env.PrepareRequest(req)
@@ -49,7 +50,6 @@ func (s *Service) transparentExecute(ctx context.Context, req Request) (Result, 
 	}
 	maxAttempts := transparentMaxAttempts(policy)
 	attempts := 0
-	last := Result{}
 candidateLoop:
 	for {
 		attempt, ok := selection.Next(ctx)
@@ -90,9 +90,6 @@ candidateLoop:
 				return result, nil
 			}
 			class := verdict.Class
-			if result.Available {
-				last = result
-			}
 			selection.MarkFailure(account.ID, source, class)
 			failureRetryable := attempts < maxAttempts && transparentFailureCanFailover(replayable, false, result.PreResponse, class)
 			if failureRetryable && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
@@ -111,15 +108,12 @@ candidateLoop:
 			break
 		}
 	}
-	if policy.Quality.OnExhausted == "fail_open" && last.Available {
-		return last, nil
-	}
 	return Result{}, fmt.Errorf("no healthy Grok account produced a valid response")
 }
 
 func (s *Service) transparentExecuteBufferedStream(ctx context.Context, req Request) (Result, error) {
 	policy := s.env.Policy()
-	if !policy.TransparentGuard {
+	if !policy.TransparentGuardEnabled() {
 		return Result{}, fmt.Errorf("transparent guard is disabled")
 	}
 	facts, errFacts := s.env.PrepareRequest(req)
@@ -136,7 +130,6 @@ func (s *Service) transparentExecuteBufferedStream(ctx context.Context, req Requ
 	}
 	maxAttempts := transparentMaxAttempts(policy)
 	attempts := 0
-	last := Result{}
 candidateLoop:
 	for {
 		attempt, ok := selection.Next(ctx)
@@ -177,9 +170,6 @@ candidateLoop:
 				return result, nil
 			}
 			class := verdict.Class
-			if result.Available {
-				last = result
-			}
 			selection.MarkFailure(account.ID, source, class)
 			failureRetryable := attempts < maxAttempts && transparentFailureCanFailover(replayable, false, result.PreResponse, class)
 			if failureRetryable && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
@@ -197,9 +187,6 @@ candidateLoop:
 			}
 			break
 		}
-	}
-	if policy.Quality.OnExhausted == "fail_open" && last.Available {
-		return last, nil
 	}
 	return Result{}, fmt.Errorf("no healthy Grok account produced a valid response")
 }
@@ -243,7 +230,7 @@ func (s *Service) executeTransparentOnce(ctx context.Context, execution pluginap
 }
 
 func (s *Service) openTransparentModelStream(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig) (pluginapi.HostModelStreamResponse, error) {
-	openCtx, cancel := context.WithTimeout(ctx, transparentStreamIdleTimeout(cfg))
+	openCtx, cancel := context.WithTimeout(ctx, transparentAttemptTimeout(cfg))
 	defer cancel()
 	stream, errExecute := s.env.ExecuteModelStream(openCtx, execution, callbackID)
 	if errExecute != nil {
@@ -302,7 +289,7 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 	var bufferBytes int64
 	holdOverflow := false
 	reader = s.openModelStreamReader(ctx, stream.StreamID)
-	idleTimeout := transparentStreamIdleTimeout(cfg)
+	idleTimeout := transparentAttemptTimeout(cfg)
 	idleDeadline := attemptStartedAt.Add(idleTimeout)
 	for {
 		select {
@@ -385,7 +372,7 @@ func (s *Service) runTransparentStreamBridge(ctx context.Context, req Request, s
 		}
 	}()
 	policy := s.env.Policy()
-	if !policy.TransparentGuard {
+	if !policy.TransparentGuardEnabled() {
 		s.closePluginErrorStream(streamID, locale, "transparent_guard_disabled", http.StatusServiceUnavailable)
 		return
 	}
@@ -405,12 +392,15 @@ func (s *Service) runTransparentStreamBridge(ctx context.Context, req Request, s
 	}
 	// One withhold budget covers every attempt of this request, so a pool of
 	// degraded accounts cannot hold the client past its own timeout.
-	holdDeadline := time.Now().Add(policy.Quality.MaxHoldTotal.Duration)
+	holdDeadline := time.Now().Add(transparentRequestTimeout(policy.Quality))
 	maxAttempts := transparentMaxAttempts(policy)
 	attempts := 0
 	last := StreamAttempt{}
 candidateLoop:
 	for {
+		if time.Until(holdDeadline) < minVerifyWindow(policy.Quality) {
+			break
+		}
 		attempt, ok := selection.Next(ctx)
 		if !ok {
 			break
@@ -444,6 +434,13 @@ candidateLoop:
 				s.closePluginStream(streamID, "", "", 0)
 				return
 			}
+			if outcome.Class == ClassInconclusive {
+				if outcome.Available {
+					last = outcome
+				}
+				attempt.Release()
+				break candidateLoop
+			}
 			if outcome.Emitted {
 				if outcome.Err != nil {
 					selection.MarkFailure(account.ID, source, outcome.Class)
@@ -471,9 +468,6 @@ candidateLoop:
 			if outcome.Verdict.Class != "" {
 				class = outcome.Verdict.Class
 			}
-			if outcome.Available {
-				last = outcome
-			}
 			selection.MarkFailure(account.ID, source, class)
 			failureRetryable := attempts < maxAttempts && transparentFailureCanFailover(replayable, outcome.Emitted, outcome.PreResponse, class)
 			if failureRetryable && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
@@ -492,7 +486,7 @@ candidateLoop:
 			break
 		}
 	}
-	if policy.Quality.OnExhausted == "fail_open" && last.Available {
+	if policy.Quality.ExhaustedDelivers() && last.Available {
 		for _, payload := range last.Buffered {
 			if errEmit := s.emitPluginStreamChunk(streamID, payload); errEmit != nil {
 				return
@@ -516,6 +510,11 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 	// The host returns the stream only after the first chunk is readable, so the
 	// stream-open and TPS clocks must start before the call to include upstream TTFT.
 	attemptStartedAt := time.Now()
+	holdLimit, holdOK := transparentHoldLimit(cfg, holdDeadline)
+	if !holdOK {
+		return StreamAttempt{Class: ClassInconclusive, Verdict: QualityVerdict{Class: ClassInconclusive, Reason: "reason.detail.budget_exhausted"}, Err: errTransparentBudgetExhausted, PreResponse: true}
+	}
+	budgetClipped := holdLimit < cfg.HoldTimeout.Duration
 	stream, errExecute := s.openTransparentModelStream(ctx, execution, callbackID, cfg)
 	if errExecute != nil {
 		if ctx.Err() != nil {
@@ -575,7 +574,6 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 
 	// The visible hold starts with the first visible chunk, so time spent
 	// thinking cannot consume the window before the answer even begins.
-	holdLimit := transparentHoldLimit(cfg, holdDeadline)
 	var holdTimer *time.Timer
 	var holdC <-chan time.Time
 	defer func() {
@@ -583,7 +581,7 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 			holdTimer.Stop()
 		}
 	}()
-	streamIdleTimeout := transparentStreamIdleTimeout(cfg)
+	streamIdleTimeout := transparentAttemptTimeout(cfg)
 	streamIdleTimer := time.NewTimer(time.Until(attemptStartedAt.Add(streamIdleTimeout)))
 	defer streamIdleTimer.Stop()
 	resetStreamIdle := func() {
@@ -636,7 +634,7 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 			bufferBytes = 0
 		}
 		return s.finishTransparentStreamAttempt(
-			ctx, execution, callbackID, cfg, streamID, analyzer, buffer, emitted, holdExpired, overflowed, info,
+			execution, callbackID, cfg, streamID, analyzer, buffer, emitted, holdExpired, overflowed, info,
 		)
 	}
 	var earlyTimer *time.Timer
@@ -679,6 +677,9 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 	applyHold := func(verdict QualityVerdict) (StreamAttempt, bool) {
 		switch verdict.Action {
 		case QualityActionWithhold:
+			if budgetClipped && verdict.Class == ClassMissingThinking {
+				return StreamAttempt{Class: ClassInconclusive, Verdict: QualityVerdict{Class: ClassInconclusive, Reason: "reason.detail.budget_exhausted"}, Err: errTransparentBudgetExhausted, Buffered: buffer, Available: true}, true
+			}
 			if cfg.ShadowMode {
 				s.recordShadowVerdict(execution.AuthID, verdict)
 			} else if transparentHoldBlocks(cfg, reasoningNeeded, verdict) {
@@ -812,7 +813,6 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 }
 
 func (s *Service) finishTransparentStreamAttempt(
-	ctx context.Context,
 	execution pluginapi.HostModelExecutionRequest,
 	callbackID string,
 	cfg QualityConfig,

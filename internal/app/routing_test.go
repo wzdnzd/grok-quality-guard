@@ -85,7 +85,7 @@ func TestTransparentSelectionRoundRobinDistributesConcurrentIdleAuths(t *testing
 	entries := manyGrokAuths(t, 10)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		cfg.TransparentGuard = true
+		cfg.Guard = "transparent"
 		cfg.Routing.Strategy.Selection = "round_robin"
 		cfg.Routing.Strategy.PreferLastSuccess = false
 		cfg.Routing.Affinity.Enabled = false
@@ -190,7 +190,7 @@ func TestTransparentSelectionUsesHighestScoreBucketAndFallsBackByScore(t *testin
 	entries := manyGrokAuths(t, 17)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		cfg.TransparentGuard = true
+		cfg.Guard = "transparent"
 		cfg.Routing.Strategy.Selection = "fill_first"
 		cfg.Routing.Strategy.PreferLastSuccess = false
 		cfg.Routing.Affinity.Enabled = false
@@ -252,7 +252,7 @@ func TestTransparentSelectionPreferredBusyFallsBackToIdleAuth(t *testing.T) {
 	entries := manyGrokAuths(t, 2)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		cfg.TransparentGuard = true
+		cfg.Guard = "transparent"
 		cfg.Routing.Strategy.Selection = "fill_first"
 		cfg.Routing.Strategy.PreferLastSuccess = true
 		cfg.Routing.Affinity.Enabled = false
@@ -294,7 +294,7 @@ func TestTransparentSelectionKeepsPreferredAcrossScoreBuckets(t *testing.T) {
 	entries := manyGrokAuths(t, 17)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		cfg.TransparentGuard = true
+		cfg.Guard = "transparent"
 		cfg.Routing.Strategy.Selection = "fill_first"
 		cfg.Routing.Strategy.PreferLastSuccess = true
 		cfg.Routing.Affinity.Enabled = false
@@ -325,7 +325,7 @@ func TestTransparentSelectionSessionBindingSurvivesScoreBucketChange(t *testing.
 	entries := manyGrokAuths(t, 17)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		cfg.TransparentGuard = true
+		cfg.Guard = "transparent"
 		cfg.Routing.Strategy.Selection = "fill_first"
 		cfg.Routing.Strategy.PreferLastSuccess = false
 		cfg.Routing.Affinity.Enabled = true
@@ -354,7 +354,7 @@ func TestTransparentSelectionConcurrentFirstSessionRequestsShareAuth(t *testing.
 	entries := manyGrokAuths(t, 2)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		cfg.TransparentGuard = true
+		cfg.Guard = "transparent"
 		cfg.Routing.Strategy.Selection = "round_robin"
 		cfg.Routing.Strategy.PreferLastSuccess = false
 		cfg.Routing.Affinity.Enabled = true
@@ -395,13 +395,13 @@ func TestTransparentSelectionConcurrentFirstSessionRequestsShareAuth(t *testing.
 	}
 }
 
-func TestTransportFailuresInvalidateSessionAffinity(t *testing.T) {
-	for _, class := range []string{qualitypkg.ClassProxyError, qualitypkg.ClassProbeError} {
+func TestTransportFailuresKeepSessionAffinity(t *testing.T) {
+	for _, class := range []string{qualitypkg.ClassProxyError, qualitypkg.ClassProbeError, qualitypkg.ClassMissingThinking} {
 		t.Run(class, func(t *testing.T) {
 			entries := manyGrokAuths(t, 2)
 			host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 			plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-				cfg.TransparentGuard = true
+				cfg.Guard = "transparent"
 				cfg.Routing.Strategy.Selection = "round_robin"
 				cfg.Routing.Strategy.PreferLastSuccess = false
 				cfg.Routing.Affinity.Enabled = true
@@ -416,9 +416,12 @@ func TestTransportFailuresInvalidateSessionAffinity(t *testing.T) {
 				t.Fatalf("session binding = %q, %v, want %s", bound, ok, attempt.Account.ID)
 			}
 
+			// Transport blips and single quality misses must not split a
+			// conversation; selection drops the binding once the account leaves
+			// the pool.
 			selection.MarkFailure(attempt.Account.ID, attempt.Source, class)
-			if bound, ok := plugin.routingSvc.Runtime().LookupBinding(sessionKey, time.Now().UTC()); ok {
-				t.Fatalf("%s failure kept sticky session auth %q", class, bound)
+			if bound, ok := plugin.routingSvc.Runtime().LookupBinding(sessionKey, time.Now().UTC()); !ok || bound != attempt.Account.ID {
+				t.Fatalf("%s failure dropped sticky session auth: %q %v", class, bound, ok)
 			}
 			attempt.Release()
 		})
@@ -494,7 +497,7 @@ func TestTransparentSelectionRebindsSessionAfterAuthBecomesIneligible(t *testing
 	entries := manyGrokAuths(t, 2)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		cfg.TransparentGuard = true
+		cfg.Guard = "transparent"
 		cfg.Routing.Strategy.Selection = "fill_first"
 		cfg.Routing.Strategy.PreferLastSuccess = false
 		cfg.Routing.Affinity.Enabled = true
@@ -547,7 +550,7 @@ func TestRoutingPolicyUpdateDisablesPreferredSelection(t *testing.T) {
 	entries := manyGrokAuths(t, 2)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		cfg.TransparentGuard = true
+		cfg.Guard = "transparent"
 		cfg.Routing.Strategy.Selection = "round_robin"
 		cfg.Routing.Strategy.PreferLastSuccess = true
 		cfg.Routing.Affinity.Enabled = false
@@ -581,7 +584,7 @@ func TestRoutingPolicyUpdateDisablesSessionAffinity(t *testing.T) {
 	entries := manyGrokAuths(t, 2)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		cfg.TransparentGuard = true
+		cfg.Guard = "transparent"
 		cfg.Routing.Strategy.Selection = "round_robin"
 		cfg.Routing.Strategy.PreferLastSuccess = false
 		cfg.Routing.Affinity.Enabled = true
@@ -610,7 +613,7 @@ func TestRoutingPolicyUpdateDisablesScoringBuckets(t *testing.T) {
 	entries := manyGrokAuths(t, 17)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		cfg.TransparentGuard = true
+		cfg.Guard = "transparent"
 		cfg.Routing.Strategy.Selection = "fill_first"
 		cfg.Routing.Strategy.PreferLastSuccess = false
 		cfg.Routing.Affinity.Enabled = false
@@ -645,7 +648,7 @@ func TestRoutingPolicyUpdateChangesScoreBucketCapacity(t *testing.T) {
 	entries := manyGrokAuths(t, 17)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		cfg.TransparentGuard = true
+		cfg.Guard = "transparent"
 		cfg.Routing.Strategy.Selection = "fill_first"
 		cfg.Routing.Strategy.PreferLastSuccess = false
 		cfg.Routing.Affinity.Enabled = false
@@ -676,7 +679,7 @@ func TestConfigureInvalidatesRoutingSnapshot(t *testing.T) {
 	entries := manyGrokAuths(t, 1)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		cfg.TransparentGuard = true
+		cfg.Guard = "transparent"
 		cfg.Routing.Strategy.PreferLastSuccess = false
 		cfg.Routing.Affinity.Enabled = false
 	})
@@ -705,7 +708,7 @@ func TestHardFailureClearsPreferredEvenWhenSelectionSnapshotIsStale(t *testing.T
 	entries := manyGrokAuths(t, 2)
 	host := newMockHostCall(entries, selectionAuthRaw(t, entries))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		cfg.TransparentGuard = true
+		cfg.Guard = "transparent"
 		cfg.Routing.Strategy.Selection = "fill_first"
 		cfg.Routing.Strategy.PreferLastSuccess = true
 		cfg.Routing.Affinity.Enabled = false
@@ -715,7 +718,7 @@ func TestHardFailureClearsPreferredEvenWhenSelectionSnapshotIsStale(t *testing.T
 	selection, attempt := nextSelectionAttempt(t, plugin, "")
 	attempt.Release()
 	plugin.routingSvc.Runtime().SetPreferred("auth-02", time.Now().UTC())
-	selection.MarkFailure("auth-02", routingapp.TransparentSourceStrategy, qualitypkg.ClassProxyError)
+	selection.MarkFailure("auth-02", routingapp.TransparentSourceStrategy, qualitypkg.ClassCredentialInvalid)
 	if preferred, _ := plugin.routingSvc.Runtime().Preferred(); preferred != "" {
 		t.Fatalf("hard failure retained stale global preferred %q", preferred)
 	}

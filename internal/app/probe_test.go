@@ -204,11 +204,11 @@ func TestProbeBackoffGrowsAndCaps(t *testing.T) {
 	cfg := appconfig.DefaultProbeConfig()
 	now := time.Now().UTC()
 	first := nextProbeBackoff(cfg, appstate.AccountState{})
-	if first != 15*time.Minute {
+	if first != 2*time.Minute {
 		t.Fatalf("first backoff = %s", first)
 	}
-	second := nextProbeBackoff(cfg, appstate.AccountState{LastProbeAt: now, ProbeBackoffUntil: now.Add(15 * time.Minute)})
-	if second != 30*time.Minute {
+	second := nextProbeBackoff(cfg, appstate.AccountState{LastProbeAt: now, ProbeBackoffUntil: now.Add(2 * time.Minute)})
+	if second != 4*time.Minute {
 		t.Fatalf("second backoff = %s", second)
 	}
 	capped := nextProbeBackoff(cfg, appstate.AccountState{LastProbeAt: now, ProbeBackoffUntil: now.Add(time.Hour)})
@@ -934,8 +934,8 @@ func TestProbeBroadTransportErrorCountsAndStopsPendingLoop(t *testing.T) {
 	if account.State == appstate.StateUnknown {
 		t.Fatalf("transport failures left the account pending forever: %#v", account)
 	}
-	if account.State != appstate.StateDegraded {
-		t.Fatalf("state = %q, want %q: %#v", account.State, appstate.StateDegraded, account)
+	if account.State != appstate.StateUnreachable {
+		t.Fatalf("state = %q, want %q: %#v", account.State, appstate.StateUnreachable, account)
 	}
 	if account.ErrorStrikes != 2 {
 		t.Fatalf("error strikes = %d, want 2: %#v", account.ErrorStrikes, account)

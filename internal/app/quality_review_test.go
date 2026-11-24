@@ -25,7 +25,7 @@ import (
 
 func TestReviewNonStreamNeverSpeedClassified(t *testing.T) {
 	config := appconfig.DefaultQualityConfig()
-	config.FailClosed = true
+	config.BurstGuard = true
 	unit := classifyNonStreamResult(qualitypkg.Signals{
 		Terminal:      true,
 		FirstTokenMS:  1,
@@ -45,8 +45,7 @@ func TestReviewNonStreamNeverSpeedClassified(t *testing.T) {
 		Body:       []byte(`{"id":"chatcmpl_1","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"` + strings.Repeat("answer ", 80) + `"},"finish_reason":"stop"}],"usage":{"completion_tokens":300,"prompt_tokens":10}}`),
 	})
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		cfg.TransparentGuard = true
-		cfg.PassiveGuard = true
+		cfg.Guard = "transparent"
 	})
 	req := streamRequestForTest()
 	req.Stream = false

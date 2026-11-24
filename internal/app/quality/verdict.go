@@ -177,7 +177,7 @@ func (s *Service) applyVerdictLocked(
 			account.LastReason = verdict.Class
 			account.LastEvidence = qualityEvidenceFromVerdict(verdict, source, now)
 		}
-		observeRoutingVerdict(account, source, verdict, now, policy.Probe.HealthyIntervalHours)
+		observeRoutingVerdict(account, source, verdict, now, policy.Routing.Scoring.HalfLifeHours)
 		if source == "probe" {
 			account.LastProbeAt = now
 			if isProbeErrorClass(verdict.Class) || verdict.Class == ClassIgnored {
@@ -220,7 +220,7 @@ func (s *Service) applyVerdictLocked(
 			account.SoftStrikes = nextConsecutiveStrike(account.SoftStrikes, threshold)
 			if account.SoftStrikes >= threshold {
 				outcome.ThresholdHit = true
-				if policy.Quality.SoftCrossVerify && source != "probe" {
+				if policy.Quality.CrossVerifySoft() && source != "probe" {
 					outcome.CrossVerify = true
 					eventAction = "cross_verify_schedule"
 					eventResult = "pending"
@@ -269,9 +269,15 @@ func (s *Service) applyVerdictLocked(
 					proxyRotationReady = true
 				}
 			}
+			// Transport failures never become quality evidence. They keep the
+			// account out of the pool for a short window and let a link recovery
+			// return it without a manual restore.
+			if !preserveIsolation() {
+				account.State = StateUnreachable
+				account.ProbeBackoffUntil = now.Add(transportBackoff(previousState))
+			}
 			if account.ErrorStrikes >= threshold {
 				outcome.ThresholdHit = true
-				outcome.Actioned = true
 				if proxyRotationReady {
 					if source == "probe" {
 						outcome.ProxyRotate = true
@@ -285,18 +291,12 @@ func (s *Service) applyVerdictLocked(
 				if verdict.Reason != "" {
 					eventDetail += " · " + verdict.Reason
 				}
-				if !preserveIsolation() {
-					account.State = StateDegraded
-				}
 			} else {
 				eventResult = "pending"
 				eventDetailKey = "event.detail.probe_errors"
 				eventDetailArgs = map[string]any{"source": source, "strikes": account.ErrorStrikes, "threshold": threshold}
 				if verdict.Reason != "" {
 					eventDetail += " · " + verdict.Reason
-				}
-				if !preserveIsolation() && !proxyRotationReady {
-					account.State = StateSuspect
 				}
 			}
 
@@ -331,11 +331,16 @@ func (s *Service) applyVerdictLocked(
 
 		case ClassMissingThinking:
 			threshold := positiveInt(policy.Quality.ConsecutiveMissingThinking, 1)
+			if source == "probe" {
+				// A probe is the deliberate confirmation step: it asks for reasoning
+				// on a protocol that exposes it, so one miss is authoritative.
+				threshold = 1
+			}
 			account.ThinkingStrikes = nextConsecutiveStrike(account.ThinkingStrikes, threshold)
 			account.SoftStrikes = 0
 			if account.ThinkingStrikes >= threshold {
 				outcome.ThresholdHit = true
-				if policy.Quality.ThinkingCrossVerify && source != "probe" {
+				if policy.Quality.CrossVerifyThinking() && source != "probe" {
 					outcome.CrossVerify = true
 					eventAction = "cross_verify_schedule"
 					eventResult = "pending"

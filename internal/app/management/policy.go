@@ -165,9 +165,15 @@ func (s *Service) actionEventsList(params map[string]any, locales ...string) (an
 	if end > len(filtered) {
 		end = len(filtered)
 	}
-	items := make([]Event, 0, end-start)
+	items := make([]eventView, 0, end-start)
 	for _, event := range filtered[start:end] {
-		items = append(items, localizeEvent(locale, event))
+		localized := localizeEvent(locale, event)
+		items = append(items, eventView{
+			Event:    localized,
+			Category: verdictCategory(localized.Class),
+			Code:     localized.Class,
+			Decision: verdictDecision(localized.Class, ""),
+		})
 	}
 	return map[string]any{"items": items, "next_cursor": end, "total": len(filtered)}, http.StatusOK, nil
 }

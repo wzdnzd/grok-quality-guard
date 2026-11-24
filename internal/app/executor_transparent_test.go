@@ -82,10 +82,24 @@ func nonReasoningStreamRequestForTest() execapp.Request {
 }
 
 func enableTransparentForTest(cfg *appconfig.Config) {
-	cfg.TransparentGuard = true
-	cfg.PassiveGuard = true
+	cfg.Guard = "transparent"
 	cfg.Quality.SoftTPS = 1e9
 	cfg.Quality.HardTPS = 2e9
+}
+
+// setTransparentTimingForTest installs sub-second hold and attempt windows on
+// the live policy. Real configs must respect the validated ranges, but timing
+// tests need millisecond windows to stay fast.
+func setTransparentTimingForTest(plugin *Plugin, hold, attempt time.Duration) {
+	policy := plugin.Policy()
+	if hold > 0 {
+		policy.Quality.HoldTimeout = appconfig.NewDuration(hold)
+	}
+	if attempt > 0 {
+		policy.Quality.AttemptTimeout = appconfig.NewDuration(attempt)
+	}
+	policy.Quality.RequestTimeout = appconfig.NewDuration(time.Minute)
+	plugin.SetPolicy(policy)
 }
 
 func TestTransparentCandidatesIncludeProbeMarkedAccount(t *testing.T) {
@@ -151,8 +165,10 @@ func TestTransparentStreamFailsOverBeforeEmit(t *testing.T) {
 	}
 	badState, _ := plugin.stateAccount("auth-1")
 	goodState, _ := plugin.stateAccount("auth-2")
-	if badState.State != appstate.StateDegraded {
-		t.Fatalf("bad auth state = %q, want degraded", badState.State)
+	// One transparent miss is not authoritative: the account waits for a
+	// second miss or a cross-verification probe before it is degraded.
+	if badState.State != appstate.StateSuspect || badState.ThinkingStrikes != 1 {
+		t.Fatalf("bad auth state = %q strikes=%d, want suspect with 1 strike", badState.State, badState.ThinkingStrikes)
 	}
 	if goodState.State != appstate.StateHealthy {
 		t.Fatalf("good auth state = %q, want healthy", goodState.State)
@@ -241,13 +257,13 @@ func TestTransparentStreamAllCandidatesExhausted(t *testing.T) {
 	}
 }
 
-func TestTransparentStreamFailOpenEmitsLastBufferedResponse(t *testing.T) {
+func TestTransparentStreamFailUnverifiedNeverReleasesConfirmedDegradation(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "alice@example.com", nil)
 	host := newMockHostCall(entries, auths)
 	host.scriptStream("auth-1", badStreamScript()...)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
-		cfg.Quality.OnExhausted = "fail_open"
+		cfg.Quality.OnExhausted = "fail_unverified"
 	})
 	plugin.runTransparentStreamBridge(context.Background(), streamRequestForTest(), "plugin-stream-3")
 	emitted := host.emitted["plugin-stream-3"]
@@ -255,11 +271,13 @@ func TestTransparentStreamFailOpenEmitsLastBufferedResponse(t *testing.T) {
 	for _, payload := range emitted {
 		joined.Write(payload)
 	}
-	if !strings.Contains(joined.String(), "bad answer bad answer bad answer bad answer bad answer bad answer bad answer bad answer bad answer bad answer bad answer bad answer ") {
-		t.Fatalf("fail_open did not emit buffered response: %s", joined.String())
+	// fail_unverified only releases a response the gate could not judge. A
+	// confirmed degraded response is never sent to the client.
+	if strings.Contains(joined.String(), "bad answer") {
+		t.Fatalf("fail_unverified released a confirmed degraded response: %s", joined.String())
 	}
-	if detail := host.closes["plugin-stream-3"]; detail != nil {
-		t.Fatalf("fail_open closed with error: %#v", detail)
+	if detail := host.closes["plugin-stream-3"]; detail == nil || detail.Code != "quality_degraded" {
+		t.Fatalf("confirmed degradation did not fail closed: %#v", detail)
 	}
 }
 
@@ -382,13 +400,15 @@ func TestTransparentNonReasoningEmptyStreamRejected(t *testing.T) {
 func TestTransparentStreamBufferOverflowDeliversAndRecords(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	host := newMockHostCall(entries, auths)
+	// The buffer floor is 1MiB, so the scripted chunk must exceed it.
+	oversized := strings.Repeat("overflow ", (1<<20)/9+1)
 	host.scriptStream("auth-1",
-		streamData("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"),
+		streamData("data: {\"choices\":[{\"delta\":{\"content\":\""+oversized+"\"}}]}\n\n"),
 		pluginapi.HostModelStreamReadResponse{Done: true},
 	)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
-		cfg.Quality.HoldMaxBufferBytes = 1
+		cfg.Quality.HoldMaxBufferBytes = 1 << 20
 	})
 	plugin.runTransparentStreamBridge(context.Background(), nonReasoningStreamRequestForTest(), "plugin-stream-buffer-overflow")
 
@@ -1394,8 +1414,8 @@ func TestTransparentThinkingGuardDisabledEmitsBeforeTerminal(t *testing.T) {
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
 		cfg.Quality.ThinkingGuard = false
-		cfg.Quality.HoldTimeout = appconfig.NewDuration(50 * time.Millisecond)
 	})
+	setTransparentTimingForTest(plugin, 50*time.Millisecond, 0)
 
 	streamID := "plugin-stream-thinking-guard-before-terminal"
 	output := runBlockedTransparentStream(t, host, plugin, streamRequestForTest(), streamID, 2)
@@ -1419,8 +1439,8 @@ func TestTransparentThinkingGuardDisabledEmitsAfterUnblockedHold(t *testing.T) {
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
 		cfg.Quality.ThinkingGuard = false
-		cfg.Quality.HoldTimeout = appconfig.NewDuration(50 * time.Millisecond)
 	})
+	setTransparentTimingForTest(plugin, 50*time.Millisecond, 0)
 
 	streamID := "plugin-stream-thinking-guard-unblocked-hold"
 	output := runBlockedTransparentStream(t, host, plugin, streamRequestForTest(), streamID, 3)
@@ -1439,9 +1459,8 @@ func TestTransparentSilentAfterResponseCreatedFailsOver(t *testing.T) {
 	host.scriptStream("auth-2", goodResponsesStreamScript()...)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
-		cfg.Quality.HoldTimeout = appconfig.NewDuration(20 * time.Millisecond)
-		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(80 * time.Millisecond)
 	})
+	setTransparentTimingForTest(plugin, 20*time.Millisecond, 80*time.Millisecond)
 
 	innerHostCall := hostCall
 	releaseRead := make(chan struct{})
@@ -1498,10 +1517,9 @@ func TestTransparentStubOnlyIdleTimeoutDoesNotFailOpen(t *testing.T) {
 	host.scriptStream("auth-1", streamData(": grok2api-reasoning-start\n\n"))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
-		cfg.Quality.HoldTimeout = appconfig.NewDuration(20 * time.Millisecond)
-		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(80 * time.Millisecond)
-		cfg.Quality.OnExhausted = "fail_open"
+		cfg.Quality.OnExhausted = "fail_unverified"
 	})
+	setTransparentTimingForTest(plugin, 20*time.Millisecond, 80*time.Millisecond)
 
 	innerHostCall := hostCall
 	releaseRead := make(chan struct{})
@@ -1549,8 +1567,8 @@ func TestTransparentStreamIdleTimeoutResetsOnProgress(t *testing.T) {
 	host.scriptStream("auth-1", goodResponsesStreamScript()...)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
-		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(100 * time.Millisecond)
 	})
+	setTransparentTimingForTest(plugin, 0, 100*time.Millisecond)
 
 	innerHostCall := hostCall
 	var readCount atomic.Int32
@@ -1628,8 +1646,8 @@ func TestTransparentStreamOpenIdleTimeoutFailsOverBeforeFirstChunk(t *testing.T)
 	host.scriptStream("auth-2", goodResponsesStreamScript()...)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
-		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(60 * time.Millisecond)
 	})
+	setTransparentTimingForTest(plugin, 0, 60*time.Millisecond)
 
 	innerHostCall := hostCall
 	releaseOpen := make(chan struct{})
@@ -1686,9 +1704,9 @@ func TestTransparentStreamOpenIdleTimeoutDoesNotFailOpen(t *testing.T) {
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
-		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(60 * time.Millisecond)
-		cfg.Quality.OnExhausted = "fail_open"
+		cfg.Quality.OnExhausted = "fail_unverified"
 	})
+	setTransparentTimingForTest(plugin, 0, 60*time.Millisecond)
 
 	innerHostCall := hostCall
 	releaseOpen := make(chan struct{})
@@ -1735,8 +1753,8 @@ func TestTransparentBufferedStreamOpenIdleTimeoutFailsOver(t *testing.T) {
 	host.scriptStream("auth-2", goodResponsesStreamScript()...)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
-		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(60 * time.Millisecond)
 	})
+	setTransparentTimingForTest(plugin, 0, 60*time.Millisecond)
 
 	innerHostCall := hostCall
 	releaseOpen := make(chan struct{})
@@ -1776,8 +1794,8 @@ func TestTransparentBufferedStreamReadIdleTimeoutFailsOver(t *testing.T) {
 	host.scriptStream("auth-2", goodResponsesStreamScript()...)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
-		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(60 * time.Millisecond)
 	})
+	setTransparentTimingForTest(plugin, 0, 60*time.Millisecond)
 
 	innerHostCall := hostCall
 	releaseRead := make(chan struct{})
@@ -1818,10 +1836,9 @@ func TestTransparentStreamReasoningStubsDoNotResetIdleTimeout(t *testing.T) {
 	host.scriptStream("auth-1", stubs...)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
-		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(60 * time.Millisecond)
-		cfg.Quality.HoldTimeout = appconfig.NewDuration(10 * time.Millisecond)
-		cfg.Quality.OnExhausted = "fail_open"
+		cfg.Quality.OnExhausted = "fail_unverified"
 	})
+	setTransparentTimingForTest(plugin, 10*time.Millisecond, 60*time.Millisecond)
 
 	innerHostCall := hostCall
 	hostCall = func(method string, payload any) (json.RawMessage, error) {
@@ -1864,8 +1881,8 @@ func TestTransparentBufferedUnsafeReadIdleTimeoutFailsClosed(t *testing.T) {
 	host.scriptStream("auth-2", goodResponsesStreamScript()...)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
-		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(60 * time.Millisecond)
 	})
+	setTransparentTimingForTest(plugin, 0, 60*time.Millisecond)
 
 	innerHostCall := hostCall
 	releaseRead := make(chan struct{})
@@ -1915,9 +1932,8 @@ func TestTransparentDegradedVisibleStreamFailsOverBeforeHoldTimeout(t *testing.T
 		enableTransparentForTest(cfg)
 		// Both windows stay far beyond the assertion deadline: only an early
 		// missing-thinking judgment can release the client this quickly.
-		cfg.Quality.HoldTimeout = appconfig.NewDuration(30 * time.Second)
-		cfg.Quality.StreamIdleTimeout = appconfig.NewDuration(30 * time.Second)
 	})
+	setTransparentTimingForTest(plugin, 30*time.Second, 30*time.Second)
 
 	innerHostCall := hostCall
 	hostCall = func(method string, payload any) (json.RawMessage, error) {

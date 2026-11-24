@@ -118,7 +118,7 @@ func TestOutputSpeedTreatsBurstsAsDelivery(t *testing.T) {
 		t.Fatalf("3000-token burst = %q over %dms, want hard_tps", class, gen)
 	}
 
-	cfg.FailClosed = true
+	cfg.BurstGuard = true
 	text := Signals{OutputTokens: 2000, FirstTokenMS: 10000, DurationMS: 10100}
 	if class, _, _ := classifyOutputSpeed(text, cfg, true); class != ClassBufferedBurst {
 		t.Fatalf("fail-closed buffered text = %q, want buffered_burst", class)

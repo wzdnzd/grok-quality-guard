@@ -181,6 +181,7 @@ type accountSummaryView struct {
 	OutputTokens      int64            `json:"output_tokens,omitempty"`
 	ReasoningTokens   int64            `json:"reasoning_tokens,omitempty"`
 	EncryptedBytes    int64            `json:"encrypted_bytes,omitempty"`
+	Verdict           *verdictView     `json:"verdict,omitempty"`
 }
 
 type accountView struct {

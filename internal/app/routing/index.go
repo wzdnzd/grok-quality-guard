@@ -88,6 +88,7 @@ type routingSelectionRuntime struct {
 	mu                 sync.Mutex
 	cursors            map[string]int
 	activeAttempts     map[string]int
+	attemptSince       map[string]time.Time
 	preferredAuthID    string
 	preferredSuccessAt time.Time
 	bindings           map[string]routingSessionBinding
@@ -105,6 +106,7 @@ func newRoutingSelectionRuntime() routingSelectionRuntime {
 	return routingSelectionRuntime{
 		cursors:        make(map[string]int),
 		activeAttempts: make(map[string]int),
+		attemptSince:   make(map[string]time.Time),
 		bindings:       make(map[string]routingSessionBinding),
 	}
 }
@@ -166,6 +168,13 @@ func (snapshot *routingSelectionSnapshot) Order() []string {
 		return nil
 	}
 	return snapshot.order
+}
+
+func (snapshot *routingSelectionSnapshot) Rank(key string) int {
+	if snapshot == nil {
+		return 0
+	}
+	return snapshot.layers[key].QualityRank
 }
 
 func (snapshot *routingSelectionSnapshot) Layer(key string) []Account {
@@ -282,7 +291,7 @@ func (index *routingSelectionIndex) BuildWithPolicy(accounts []Account, states m
 		groups[key] = append(groups[key], account)
 		if rank == 0 && policy.Routing.Scoring.Enabled {
 			stats := selectionRoutingStats(routingStats, account)
-			scoreByAuth[account.ID] = accountRoutingScore(account, stats, policy, now)
+			scoreByAuth[account.ID] = accountRoutingScore(stats, policy, now)
 			lastProbeByAuth[account.ID] = routingLatestProbe(stats)
 		}
 	}
@@ -608,7 +617,7 @@ func (s *Service) refreshSelectionAccount(authID string) {
 	if index.NeedsUpsert(account, stateValue) {
 		policy := normalizeRoutingPolicy(s.env.Policy())
 		stats := s.routingStatsForAccount(account)
-		score := accountRoutingScore(account, stats, policy, time.Now().UTC())
+		score := accountRoutingScore(stats, policy, time.Now().UTC())
 		lastProbe := routingLatestProbe(stats)
 		index.buildMu.Lock()
 		if current := index.Load(); current != nil && index.NeedsUpsert(account, stateValue) {
@@ -622,7 +631,7 @@ func (s *Service) refreshSelectionAccount(authID string) {
 		return
 	}
 	stats := s.routingStatsForAccount(account)
-	score := accountRoutingScore(account, stats, policy, time.Now().UTC())
+	score := accountRoutingScore(stats, policy, time.Now().UTC())
 	if oldScore, ok := current.ScoreForAuth(account.ID); ok && math.Abs(oldScore-score) > 1e-9 {
 		index.markScoreChange(math.Abs(oldScore - score))
 	}
@@ -799,6 +808,9 @@ func (runtime *routingSelectionRuntime) ReserveAttempt(authID string) {
 	}
 	runtime.mu.Lock()
 	runtime.activeAttempts[authID]++
+	if _, exists := runtime.attemptSince[authID]; !exists {
+		runtime.attemptSince[authID] = time.Now().UTC()
+	}
 	runtime.mu.Unlock()
 }
 
@@ -812,6 +824,7 @@ func (runtime *routingSelectionRuntime) TryReserveIdle(authID string) bool {
 		return false
 	}
 	runtime.activeAttempts[authID] = 1
+	runtime.attemptSince[authID] = time.Now().UTC()
 	return true
 }
 
@@ -822,6 +835,7 @@ func (runtime *routingSelectionRuntime) ReleaseAttempt(authID string) {
 	runtime.mu.Lock()
 	if runtime.activeAttempts[authID] <= 1 {
 		delete(runtime.activeAttempts, authID)
+		delete(runtime.attemptSince, authID)
 	} else {
 		runtime.activeAttempts[authID]--
 	}
@@ -830,6 +844,23 @@ func (runtime *routingSelectionRuntime) ReleaseAttempt(authID string) {
 
 func (runtime *routingSelectionRuntime) TryReservePreferred(authID string) bool {
 	return runtime.TryReserveIdle(authID)
+}
+
+// pruneStaleAttempts releases reservations whose owner never returned. A
+// leaked reservation makes an account look busy forever.
+func (runtime *routingSelectionRuntime) pruneStaleAttempts(now time.Time, ttl time.Duration) {
+	if runtime == nil || ttl <= 0 {
+		return
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	for authID, since := range runtime.attemptSince {
+		if now.Sub(since) < ttl {
+			continue
+		}
+		delete(runtime.activeAttempts, authID)
+		delete(runtime.attemptSince, authID)
+	}
 }
 
 func (runtime *routingSelectionRuntime) Preferred() (string, time.Time) {

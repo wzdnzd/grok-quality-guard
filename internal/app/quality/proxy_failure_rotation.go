@@ -40,7 +40,7 @@ func (s *Service) finishProxyErrorRotation(ctx context.Context, authID string, v
 		return nil
 	}
 	if !s.env.AutoRotateAfterQualityFailure() {
-		return s.applyProxyErrorFallback(authID, verdict)
+		return nil
 	}
 	stateAccount, ok := s.env.StateAccount(authID)
 	if !ok {
@@ -52,21 +52,16 @@ func (s *Service) finishProxyErrorRotation(ctx context.Context, authID string, v
 	}
 	binding, managed := s.env.ProxyBindingForAccount(stateAccount)
 	if !managed {
-		return s.applyProxyErrorFallback(authID, verdict)
+		return nil
 	}
 	status, errRotate := s.env.RotateProxy(ctx, authID, string(binding.SourceKind))
 	if errRotate == nil && (status == "rotated" || status == "succeeded") {
 		return s.clearProxyFailureStrikes(ctx, authID)
 	}
+	// Transport failures already sit behind a short unreachable backoff. A
+	// failed rotation must not escalate them into a quality cooldown.
 	s.recordProxyRotationFailure(authID, verdict.Class, status, errRotate)
-	return s.applyProxyErrorFallback(authID, verdict)
-}
-
-func (s *Service) applyProxyErrorFallback(authID string, verdict QualityVerdict) error {
-	if s.env.Policy().AutoAction == "observe" {
-		return nil
-	}
-	return s.applyAutoCooldown(authID, verdict, "probe")
+	return nil
 }
 
 func (s *Service) recordProxyRotationFailure(authID, class, status string, errRotate error) {
@@ -145,7 +140,7 @@ func (s *Service) clearProxyFailureStrikes(ctx context.Context, authID string) e
 		if account.LastReason == ClassProbeError || account.LastReason == ClassProxyError {
 			account.LastReason = ""
 		}
-		if isIsolatedState(account.State) || account.State == StateSuspect || account.State == StateDegraded {
+		if isIsolatedState(account.State) || account.State == StateSuspect || account.State == StateDegraded || account.State == StateUnreachable {
 			account.State = StateUnknown
 		}
 		return &Event{

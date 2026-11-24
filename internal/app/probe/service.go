@@ -80,6 +80,7 @@ const (
 	StateHealthy            = appstate.StateHealthy
 	StateSuspect            = appstate.StateSuspect
 	StateDegraded           = appstate.StateDegraded
+	StateUnreachable        = appstate.StateUnreachable
 	StateCooling            = appstate.StateCooling
 	StateQuotaExhausted     = appstate.StateQuotaExhausted
 	StateCredentialInvalid  = appstate.StateCredentialInvalid

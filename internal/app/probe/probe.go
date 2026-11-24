@@ -132,7 +132,7 @@ func (s *probeScheduler) scanAndDispatch() {
 	policy := s.plugin.env.Policy()
 	now := time.Now().UTC()
 	s.plugin.cleanupProbeSkip(now)
-	if !policy.PassiveGuard && !policy.TransparentGuard {
+	if !policy.PassiveGuardEnabled() && !policy.TransparentGuardEnabled() {
 		s.dispatch()
 		return
 	}
@@ -489,7 +489,7 @@ func probeDueForProjected(account ProbeAccountState, okState bool, authID string
 			return true
 		}
 		return !now.Before(account.CooldownUntil)
-	case StateSuspect:
+	case StateSuspect, StateDegraded, StateUnreachable:
 		return account.ProbeBackoffUntil.IsZero() || !now.Before(account.ProbeBackoffUntil)
 	case StateUnknown:
 		if !account.ProbeBackoffUntil.IsZero() && now.Before(account.ProbeBackoffUntil) {
@@ -760,7 +760,7 @@ func (s *Service) markProbeSuccess(authID string, sig Signals) error {
 			sig.FirstTokenMS,
 			sig.TPS,
 			now,
-			appstate.RoutingSampleHalfLife(appstate.RoutingSourceProbe, s.env.Policy().Probe.HealthyIntervalHours),
+			appstate.RoutingSampleHalfLife(appstate.RoutingSourceProbe, s.env.Policy().Routing.Scoring.HalfLifeHours),
 		)
 		events := []Event{{
 			Time:      time.Now().UTC(),

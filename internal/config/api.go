@@ -13,6 +13,7 @@ const (
 	DefaultRoutingRefreshMinInterval   = defaultRoutingRefreshMinInterval
 	DefaultRoutingRefreshMaxAge        = defaultRoutingRefreshMaxAge
 	DefaultRoutingDriftThreshold       = defaultRoutingDriftThreshold
+	DefaultRoutingHalfLifeHours        = defaultRoutingHalfLifeHours
 )
 
 // Decode parses YAML over the built-in defaults and normalizes the result.

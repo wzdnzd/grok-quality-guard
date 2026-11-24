@@ -2390,7 +2390,7 @@ test('Internal error events show the sanitized diagnostic', () => {
   ui.state.eventQuery = 'i/o timeout';
   assert.equal(ui.eventMatches(ui.state.events[0]), true);
 });
-test('Account transport errors link to filtered probe events', async () => {
+test('Account transport errors link to filtered transport events', async () => {
   const { dashboard: ui, get, context, mock } = harness();
   mock('api', async () => ({}));
   const account = {
@@ -2401,22 +2401,22 @@ test('Account transport errors link to filtered probe events', async () => {
     last_observed_at: '2026-11-23T08:00:00Z'
   };
   const row = ui.accountRow(account);
-  assert.match(row, /href="#events\/auth-1\/probe_errors"/);
+  assert.match(row, /href="#events\/auth-1\/transport"/);
   assert.match(row, />探测传输错误<\/a>/);
   const localizedRow = ui.accountRow({ ...account, last_attempt: { ...account.last_attempt, reason: '探测传输错误' } });
-  assert.match(localizedRow, /href="#events\/auth-1\/probe_errors"/);
+  assert.match(localizedRow, /href="#events\/auth-1\/transport"/);
 
-  context.window.location.hash = '#events/auth-1/probe_errors';
+  context.window.location.hash = '#events/auth-1/transport';
   ui.applyLocationHash();
   assert.equal(ui.state.activeTab, 'events');
   assert.equal(ui.state.eventQuery, 'auth-1');
-  assert.equal(ui.state.eventType, 'probe_errors');
+  assert.equal(ui.state.eventType, 'transport');
   assert.equal(get('eventSearch').value, 'auth-1');
-  assert.equal(get('eventTypeFilter').value, 'probe_errors');
-  assert.equal(ui.eventMatches({ auth_id: 'auth-1', action: 'probe', class: 'probe_error' }), true);
-  assert.equal(ui.eventMatches({ auth_id: 'auth-1', action: 'internal_error' }), true);
+  assert.equal(get('eventTypeFilter').value, 'transport');
+  assert.equal(ui.eventMatches({ auth_id: 'auth-1', action: 'probe', class: 'probe_error', category: 'transport' }), true);
+  assert.equal(ui.eventMatches({ auth_id: 'auth-1', action: 'probe', class: 'missing_thinking', category: 'quality' }), false);
   assert.equal(ui.eventMatches({ auth_id: 'auth-1', action: 'probe', class: '' }), false);
-  assert.equal(ui.eventMatches({ auth_id: 'auth-2', action: 'probe', class: 'probe_error' }), false);
+  assert.equal(ui.eventMatches({ auth_id: 'auth-2', action: 'probe', class: 'probe_error', category: 'transport' }), false);
   await Promise.resolve();
 });
 for (const { name, run } of cases) {

@@ -12,7 +12,6 @@ type StateStore = state.Store
 type AccountState = state.AccountState
 type AccountStateSummary = state.AccountStateSummary
 type ResinLeaseDelete = state.ResinLeaseDelete
-type proxyAccountSummary = state.ProxyAccountSummary
 type ProxyCommit = state.ProxyCommit
 type ProxyAccountCommit = state.ProxyAccountCommit
 type proxyCommit = state.ProxyCommit

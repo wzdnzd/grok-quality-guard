@@ -14,6 +14,7 @@ const (
 	StateHealthy            = appstate.StateHealthy
 	StateSuspect            = appstate.StateSuspect
 	StateDegraded           = appstate.StateDegraded
+	StateUnreachable        = appstate.StateUnreachable
 	StateCooling            = appstate.StateCooling
 	StateQuotaExhausted     = appstate.StateQuotaExhausted
 	StateCredentialInvalid  = appstate.StateCredentialInvalid
@@ -22,10 +23,12 @@ const (
 )
 
 const (
-	ClassIgnored     = domain.ClassIgnored
-	ClassRateLimited = domain.ClassRateLimited
-	ClassProbeError  = domain.ClassProbeError
-	ClassProxyError  = domain.ClassProxyError
+	ClassIgnored           = domain.ClassIgnored
+	ClassRateLimited       = domain.ClassRateLimited
+	ClassProbeError        = domain.ClassProbeError
+	ClassProxyError        = domain.ClassProxyError
+	ClassCredentialInvalid = domain.ClassCredentialInvalid
+	ClassQuotaExhausted    = domain.ClassQuotaExhausted
 )
 
 func isGrokProvider(value string) bool { return auth.IsGrokProvider(value) }
@@ -47,9 +50,6 @@ func firstNonEmpty(values ...string) string {
 }
 func asString(value any) string                       { return domain.AsString(value) }
 func decodeRequestPayload(body []byte) map[string]any { return domain.DecodeRequestPayload(body) }
-func reasoningRequiredForModelPayload(name string, payload map[string]any) bool {
-	return domain.ReasoningRequiredForModelPayload(name, payload)
-}
 func reasoningRequiredForModelPayloadWithNonReasoning(name string, payload map[string]any, nonReasoning []string) bool {
 	return domain.ReasoningRequiredForModelPayloadWithNonReasoning(name, payload, nonReasoning)
 }

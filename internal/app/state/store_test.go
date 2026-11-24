@@ -209,18 +209,18 @@ func TestStateStorePersistsResinSnapshot(t *testing.T) {
 
 func TestStateStoreRejectsUnsupportedSchemaVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	raw := []byte("{\"schema_version\":2,\"updated_at\":\"2026-01-01T00:00:00Z\",\"policy\":{},\"accounts\":{},\"events\":[]}")
+	raw := []byte("{\"schema_version\":99,\"updated_at\":\"2026-01-01T00:00:00Z\",\"policy\":{},\"accounts\":{},\"events\":[]}")
 	if errWrite := os.WriteFile(path, raw, 0o600); errWrite != nil {
 		t.Fatal(errWrite)
 	}
-	if errLoad := NewStore(path).Load(config.PolicyFromConfig(config.DefaultConfig()), "revision"); errLoad == nil || !strings.Contains(errLoad.Error(), "unsupported state schema version 2") {
+	if errLoad := NewStore(path).Load(config.PolicyFromConfig(config.DefaultConfig()), "revision"); errLoad == nil || !strings.Contains(errLoad.Error(), "unsupported state schema version 99") {
 		t.Fatalf("unsupported schema load error = %v", errLoad)
 	}
 }
 
 func TestStateStoreRejectsUnknownFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	raw := []byte("{\"schema_version\":1,\"updated_at\":\"2026-01-01T00:00:00Z\",\"policy\":{},\"accounts\":{},\"events\":[],\"resin\":{}}")
+	raw := []byte("{\"schema_version\":2,\"updated_at\":\"2026-01-01T00:00:00Z\",\"policy\":{},\"accounts\":{},\"events\":[],\"resin\":{}}")
 	if errWrite := os.WriteFile(path, raw, 0o600); errWrite != nil {
 		t.Fatal(errWrite)
 	}

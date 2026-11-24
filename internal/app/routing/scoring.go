@@ -37,7 +37,7 @@ func normalizeRoutingPolicy(policy config.Policy) config.Policy {
 	return policy
 }
 
-func accountRoutingScore(account Account, stats appstate.RoutingStats, policy config.Policy, now time.Time) float64 {
+func accountRoutingScore(stats appstate.RoutingStats, policy config.Policy, now time.Time) float64 {
 	policy = normalizeRoutingPolicy(policy)
 	scoring := policy.Routing.Scoring
 	if !scoring.Enabled {
@@ -55,7 +55,7 @@ func accountRoutingScore(account Account, stats appstate.RoutingStats, policy co
 	}
 	weightedScore := 0.0
 	weightTotal := 0.0
-	halfLifeHours := policy.Probe.HealthyIntervalHours
+	halfLifeHours := policy.Routing.Scoring.HalfLifeHours
 	for _, source := range sources {
 		if source.weight <= 0 {
 			continue

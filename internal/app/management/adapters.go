@@ -6,10 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
-
 	"grok-quality-guard/internal/abi"
-	"grok-quality-guard/internal/app/auth"
 	proxyapp "grok-quality-guard/internal/app/proxy"
 	"grok-quality-guard/internal/app/redact"
 	appstate "grok-quality-guard/internal/app/state"
@@ -42,9 +39,6 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
-func authRawString(raw map[string]json.RawMessage, key string) string {
-	return auth.RawString(raw, key)
-}
 func maskAccountIdentity(value string) string { return proxyapp.MaskAccountIdentity(value) }
 func maskEmail(value string) string           { return proxyapp.MaskEmail(value) }
 func maskAuthID(value string) string          { return proxyapp.MaskAuthID(value) }
@@ -62,14 +56,10 @@ func runBoundedQueue[T any](ctx context.Context, values []T, queueSize, workers 
 	return tasks.RunBoundedQueue(ctx, values, queueSize, workers, fn)
 }
 
-func (s *Service) stateStore() *appstate.Store               { return s.env.Store() }
-func (s *Service) ensureCatalog(ctx context.Context) error   { return s.env.EnsureCatalog(ctx) }
-func (s *Service) RefreshCatalog(ctx context.Context) error  { return s.env.RefreshCatalog(ctx) }
-func (s *Service) catalogSnapshot() []Account                { return s.env.CatalogSnapshot() }
-func (s *Service) findAccount(authID string) (Account, bool) { return s.env.FindAccount(authID) }
-func (s *Service) resolveAuth(ctx context.Context, authID string) (Account, pluginapi.HostAuthGetResponse, map[string]json.RawMessage, error) {
-	return s.env.ResolveAuth(ctx, authID)
-}
+func (s *Service) stateStore() *appstate.Store                     { return s.env.Store() }
+func (s *Service) ensureCatalog(ctx context.Context) error         { return s.env.EnsureCatalog(ctx) }
+func (s *Service) RefreshCatalog(ctx context.Context) error        { return s.env.RefreshCatalog(ctx) }
+func (s *Service) findAccount(authID string) (Account, bool)       { return s.env.FindAccount(authID) }
 func (s *Service) stateAccount(authID string) (AccountState, bool) { return s.env.StateAccount(authID) }
 func (s *Service) startTask(kind string, authIDs []string, progress string, fn func(context.Context) (any, error)) Task {
 	return s.env.StartTask(kind, authIDs, progress, fn)

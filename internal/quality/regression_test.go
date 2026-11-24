@@ -155,7 +155,7 @@ func TestProbeThinkingGuardRequiresMinimumOutput(t *testing.T) {
 
 func TestFailClosedProbeClassification(t *testing.T) {
 	config := config.DefaultQualityConfig()
-	config.FailClosed = true
+	config.BurstGuard = true
 	burst := classifyProbeResult(Signals{Terminal: true, OutputTokens: 400, FirstTokenMS: 100, DurationMS: 600}, config, true, false)
 	if burst.Class != ClassBufferedBurst {
 		t.Fatalf("fail-closed burst class = %q", burst.Class)

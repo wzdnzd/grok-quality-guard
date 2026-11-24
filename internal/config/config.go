@@ -38,6 +38,7 @@ const (
 	defaultRoutingRefreshMinInterval   = 5 * time.Minute
 	defaultRoutingRefreshMaxAge        = 30 * time.Minute
 	defaultRoutingDriftThreshold       = 0.03
+	defaultRoutingHalfLifeHours        = 168
 	minRoutingRefreshInterval          = 10 * time.Second
 	maxRoutingRefreshAge               = 7 * 24 * time.Hour
 )
@@ -105,15 +106,14 @@ type QualityConfig struct {
 	StrikeDecayMinHealthy           int      `yaml:"strike_decay_min_healthy" json:"strike_decay_min_healthy"`
 	ThinkingGuard                   bool     `yaml:"thinking_guard" json:"thinking_guard"`
 	NonReasoningModels              []string `yaml:"non_reasoning_models" json:"non_reasoning_models"`
-	SoftCrossVerify                 bool     `yaml:"soft_cross_verify" json:"soft_cross_verify"`
-	ThinkingCrossVerify             bool     `yaml:"thinking_cross_verify" json:"thinking_cross_verify"`
+	CrossVerify                     string   `yaml:"cross_verify" json:"cross_verify"`
 	MinGenerationMS                 int64    `yaml:"min_generation_ms" json:"min_generation_ms"`
-	FailClosed                      bool     `yaml:"fail_closed" json:"fail_closed"`
+	BurstGuard                      bool     `yaml:"burst_guard" json:"burst_guard"`
 	MinPassiveOutputTokens          int64    `yaml:"min_passive_output_tokens" json:"min_passive_output_tokens"`
 	MinHoldOutputTokens             int64    `yaml:"min_hold_output_tokens" json:"min_hold_output_tokens"`
 	HoldTimeout                     Duration `yaml:"hold_timeout" json:"hold_timeout"`
-	StreamIdleTimeout               Duration `yaml:"stream_idle_timeout" json:"stream_idle_timeout"`
-	MaxHoldTotal                    Duration `yaml:"max_hold_total" json:"max_hold_total"`
+	AttemptTimeout                  Duration `yaml:"attempt_timeout" json:"attempt_timeout"`
+	RequestTimeout                  Duration `yaml:"request_timeout" json:"request_timeout"`
 	HoldKeepalive                   Duration `yaml:"hold_keepalive" json:"hold_keepalive"`
 	ShadowMode                      bool     `yaml:"shadow_mode" json:"shadow_mode"`
 	HoldMaxBufferBytes              int64    `yaml:"hold_max_buffer_bytes" json:"hold_max_buffer_bytes"`
@@ -173,6 +173,7 @@ type RoutingScoringRefreshConfig struct {
 type RoutingScoringConfig struct {
 	Enabled              bool                         `yaml:"enabled" json:"enabled"`
 	MaxAccountsPerBucket int                          `yaml:"max_accounts_per_bucket" json:"max_accounts_per_bucket"`
+	HalfLifeHours        int                          `yaml:"half_life_hours" json:"half_life_hours"`
 	Weights              RoutingScoringWeightsConfig  `yaml:"weights" json:"weights"`
 	Evidence             RoutingEvidenceWeightsConfig `yaml:"evidence" json:"evidence"`
 	Refresh              RoutingScoringRefreshConfig  `yaml:"refresh" json:"refresh"`
@@ -203,15 +204,14 @@ func DefaultTaskHistoryConfig() TaskHistoryConfig {
 }
 
 type Config struct {
-	Enabled          bool          `yaml:"enabled" json:"enabled"`
-	Priority         int           `yaml:"priority" json:"priority"`
-	PassiveGuard     bool          `yaml:"passive_guard" json:"passive_guard"`
-	TransparentGuard bool          `yaml:"transparent_guard" json:"transparent_guard"`
-	AutoAction       string        `yaml:"auto_action" json:"auto_action"`
-	ModelPrefixes    []string      `yaml:"model_prefixes" json:"model_prefixes"`
-	Routing          RoutingConfig `yaml:"routing" json:"routing"`
-	Quality          QualityConfig `yaml:"quality" json:"quality"`
-	Probe            ProbeConfig   `yaml:"probe" json:"probe"`
+	Enabled       bool          `yaml:"enabled" json:"enabled"`
+	Priority      int           `yaml:"priority" json:"priority"`
+	Guard         string        `yaml:"guard" json:"guard"`
+	AutoAction    string        `yaml:"auto_action" json:"auto_action"`
+	ModelPrefixes []string      `yaml:"model_prefixes" json:"model_prefixes"`
+	Routing       RoutingConfig `yaml:"routing" json:"routing"`
+	Quality       QualityConfig `yaml:"quality" json:"quality"`
+	Probe         ProbeConfig   `yaml:"probe" json:"probe"`
 
 	Proxy       ProxyConfig       `yaml:"proxy" json:"proxy"`
 	TaskHistory TaskHistoryConfig `yaml:"task_history" json:"task_history"`
@@ -225,17 +225,42 @@ type Config struct {
 
 // Policy is the runtime-editable subset persisted in state.json
 type Policy struct {
-	PassiveGuard     bool          `json:"passive_guard"`
-	TransparentGuard bool          `json:"transparent_guard"`
-	AutoAction       string        `json:"auto_action"`
-	ModelPrefixes    []string      `json:"model_prefixes"`
-	Routing          RoutingConfig `json:"routing"`
-	Quality          QualityConfig `json:"quality"`
-	Probe            ProbeConfig   `json:"probe"`
+	Guard         string        `json:"guard"`
+	AutoAction    string        `json:"auto_action"`
+	ModelPrefixes []string      `json:"model_prefixes"`
+	Routing       RoutingConfig `json:"routing"`
+	Quality       QualityConfig `json:"quality"`
+	Probe         ProbeConfig   `json:"probe"`
 
 	ProxyAutoRotateAfterQualityFail bool              `json:"proxy_auto_rotate_after_quality_failure"`
+	ProxyRotateAfterErrors          int               `json:"proxy_rotate_after_errors"`
 	TaskHistory                     TaskHistoryConfig `json:"task_history"`
 	EventsLimit                     int               `json:"events_limit"`
+}
+
+// PassiveGuardEnabled reports whether passive observation is active
+func (c Config) PassiveGuardEnabled() bool { return c.Guard == "passive" || c.Guard == "transparent" }
+
+// TransparentGuardEnabled reports whether the plugin takes over requests
+func (c Config) TransparentGuardEnabled() bool { return c.Guard == "transparent" }
+
+// PassiveGuardEnabled reports whether passive observation is active
+func (p Policy) PassiveGuardEnabled() bool { return p.Guard == "passive" || p.Guard == "transparent" }
+
+// TransparentGuardEnabled reports whether the plugin takes over requests
+func (p Policy) TransparentGuardEnabled() bool { return p.Guard == "transparent" }
+
+// ExhaustedDelivers reports whether the last buffered response is released
+func (q QualityConfig) ExhaustedDelivers() bool { return q.OnExhausted == "fail_unverified" }
+
+// CrossVerifySoft reports whether soft threshold hits are cross verified
+func (q QualityConfig) CrossVerifySoft() bool {
+	return q.CrossVerify == "soft" || q.CrossVerify == "all"
+}
+
+// CrossVerifyThinking reports whether missing thinking hits are cross verified
+func (q QualityConfig) CrossVerifyThinking() bool {
+	return q.CrossVerify == "thinking" || q.CrossVerify == "all"
 }
 
 func DefaultRoutingConfig() RoutingConfig {
@@ -252,6 +277,7 @@ func DefaultRoutingConfig() RoutingConfig {
 		Scoring: RoutingScoringConfig{
 			Enabled:              true,
 			MaxAccountsPerBucket: defaultRoutingMaxAccountsPerBucket,
+			HalfLifeHours:        defaultRoutingHalfLifeHours,
 			Weights: RoutingScoringWeightsConfig{
 				Success: 0.50,
 				TTFT:    0.30,
@@ -277,20 +303,19 @@ func DefaultQualityConfig() QualityConfig {
 		HardTPS:                         1000,
 		ConsecutiveSoft:                 2,
 		ConsecutiveErrors:               2,
-		ConsecutiveMissingThinking:      1,
+		ConsecutiveMissingThinking:      2,
 		StrikeDecayAfterHours:           48,
 		StrikeDecayMinHealthy:           10,
 		ThinkingGuard:                   true,
 		NonReasoningModels:              []string{},
-		SoftCrossVerify:                 false,
-		ThinkingCrossVerify:             false,
+		CrossVerify:                     "thinking",
 		MinGenerationMS:                 1000,
-		FailClosed:                      false,
+		BurstGuard:                      false,
 		MinPassiveOutputTokens:          32,
 		MinHoldOutputTokens:             8,
 		HoldTimeout:                     NewDuration(30 * time.Second),
-		StreamIdleTimeout:               NewDuration(90 * time.Second),
-		MaxHoldTotal:                    NewDuration(90 * time.Second),
+		AttemptTimeout:                  NewDuration(60 * time.Second),
+		RequestTimeout:                  NewDuration(120 * time.Second),
 		HoldKeepalive:                   NewDuration(5 * time.Second),
 		ShadowMode:                      false,
 		HoldMaxBufferBytes:              4 * 1024 * 1024,
@@ -298,8 +323,8 @@ func DefaultQualityConfig() QualityConfig {
 		EncryptedBytesPerReasoningToken: 2,
 		MissingThinkingCooldown:         NewDuration(12 * time.Hour),
 		EmptyStreamCooldown:             NewDuration(15 * time.Minute),
-		MaxAttempts:                     6,
-		OnExhausted:                     "fail_closed",
+		MaxAttempts:                     4,
+		OnExhausted:                     "fail_unverified",
 	}
 }
 
@@ -308,13 +333,13 @@ func DefaultProbeConfig() ProbeConfig {
 		Model:                "grok-4.5",
 		Timeout:              NewDuration(90 * time.Second),
 		MaxOutputTokens:      768,
-		Concurrency:          1,
+		Concurrency:          2,
 		QueueSize:            defaultProbeQueueSize,
 		ScanInterval:         NewDuration(defaultProbeScanInterval),
 		HealthyIntervalHours: defaultProbeHealthyIntervalHours,
 		UnknownDelay:         NewDuration(30 * time.Second),
 		UnknownJitter:        NewDuration(defaultProbeUnknownJitter),
-		SuspectBackoff:       NewDuration(15 * time.Minute),
+		SuspectBackoff:       NewDuration(2 * time.Minute),
 		MaxBackoff:           NewDuration(time.Hour),
 		EntryProtocol:        "codex",
 		ExitProtocol:         "codex",
@@ -323,17 +348,16 @@ func DefaultProbeConfig() ProbeConfig {
 
 func DefaultConfig() Config {
 	return Config{
-		Enabled:          true,
-		Priority:         10,
-		PassiveGuard:     true,
-		TransparentGuard: false,
-		AutoAction:       "observe",
-		ModelPrefixes:    []string{"grok-"},
-		Routing:          DefaultRoutingConfig(),
-		Quality:          DefaultQualityConfig(),
-		Probe:            DefaultProbeConfig(),
-		Proxy:            DefaultProxyConfig(),
-		TaskHistory:      DefaultTaskHistoryConfig(),
+		Enabled:       true,
+		Priority:      10,
+		Guard:         "passive",
+		AutoAction:    "observe",
+		ModelPrefixes: []string{"grok-"},
+		Routing:       DefaultRoutingConfig(),
+		Quality:       DefaultQualityConfig(),
+		Probe:         DefaultProbeConfig(),
+		Proxy:         DefaultProxyConfig(),
+		TaskHistory:   DefaultTaskHistoryConfig(),
 
 		EventsLimit: defaultEventsLimit,
 	}
@@ -357,6 +381,13 @@ func decodeConfig(raw []byte) (Config, error) {
 func normalizeConfig(cfg *Config) error {
 	if cfg == nil {
 		return errors.New("config is nil")
+	}
+	cfg.Guard = strings.ToLower(strings.TrimSpace(cfg.Guard))
+	if cfg.Guard == "" {
+		cfg.Guard = "passive"
+	}
+	if cfg.Guard != "off" && cfg.Guard != "passive" && cfg.Guard != "transparent" {
+		return fmt.Errorf("guard must be off, passive, or transparent")
 	}
 	if strings.TrimSpace(cfg.AutoAction) == "" {
 		cfg.AutoAction = "observe"
@@ -474,6 +505,12 @@ func normalizeRouting(r *RoutingConfig) error {
 	if r.Scoring.MaxAccountsPerBucket < minRoutingMaxAccountsPerBucket || r.Scoring.MaxAccountsPerBucket > maxRoutingMaxAccountsPerBucket {
 		return fmt.Errorf("routing.scoring.max_accounts_per_bucket must be between %d and %d", minRoutingMaxAccountsPerBucket, maxRoutingMaxAccountsPerBucket)
 	}
+	if r.Scoring.HalfLifeHours <= 0 {
+		r.Scoring.HalfLifeHours = defaults.Scoring.HalfLifeHours
+	}
+	if r.Scoring.HalfLifeHours < 1 || r.Scoring.HalfLifeHours > 8760 {
+		return fmt.Errorf("routing.scoring.half_life_hours must be between 1 and 8760")
+	}
 	if !validRoutingWeight(r.Scoring.Weights.Success) || !validRoutingWeight(r.Scoring.Weights.TTFT) || !validRoutingWeight(r.Scoring.Weights.TPS) {
 		return fmt.Errorf("routing.scoring.weights must be between 0 and 1")
 	}
@@ -511,22 +548,13 @@ func validRoutingWeight(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
 }
 
-// RoutingEWMAHalfLife keeps routing evidence on the same time scale as the
-// configured healthy-account probe cadence. All evidence sources share this
-// half-life so their scores remain comparable; source weights express how much
-// each source contributes rather than silently changing the meaning of time.
-func RoutingEWMAHalfLife(healthyIntervalHours int) time.Duration {
-	if healthyIntervalHours <= 0 {
-		return 168 * time.Hour
+// RoutingEWMAHalfLife converts routing.scoring.half_life_hours into the decay
+// window shared by every evidence source, so source weights stay comparable.
+func RoutingEWMAHalfLife(halfLifeHours int) time.Duration {
+	if halfLifeHours <= 0 {
+		halfLifeHours = defaultRoutingHalfLifeHours
 	}
-	hours := time.Duration(healthyIntervalHours) * time.Hour
-	if hours < 12*time.Hour {
-		return 12 * time.Hour
-	}
-	if hours > 168*time.Hour {
-		return 168 * time.Hour
-	}
-	return hours
+	return time.Duration(halfLifeHours) * time.Hour
 }
 
 func normalizeQuality(q *QualityConfig) error {
@@ -552,11 +580,20 @@ func normalizeQuality(q *QualityConfig) error {
 	if q.ConsecutiveMissingThinking <= 0 {
 		q.ConsecutiveMissingThinking = defaults.ConsecutiveMissingThinking
 	}
-	if q.StrikeDecayAfterHours < 0 {
-		return fmt.Errorf("quality.strike_decay_after must be >= 0")
+	for name, value := range map[string]int{
+		"quality.consecutive_soft":             q.ConsecutiveSoft,
+		"quality.consecutive_errors":           q.ConsecutiveErrors,
+		"quality.consecutive_missing_thinking": q.ConsecutiveMissingThinking,
+	} {
+		if value < 1 || value > 10 {
+			return fmt.Errorf("%s must be between 1 and 10", name)
+		}
 	}
-	if q.StrikeDecayMinHealthy < 0 {
-		return fmt.Errorf("quality.strike_decay_min_healthy must be >= 0")
+	if q.StrikeDecayAfterHours < 0 || q.StrikeDecayAfterHours > 8760 {
+		return fmt.Errorf("quality.strike_decay_after must be between 0 and 8760")
+	}
+	if q.StrikeDecayMinHealthy < 0 || q.StrikeDecayMinHealthy > 1000 {
+		return fmt.Errorf("quality.strike_decay_min_healthy must be between 0 and 1000")
 	}
 	if q.StrikeDecayMinHealthy == 0 {
 		q.StrikeDecayMinHealthy = defaults.StrikeDecayMinHealthy
@@ -564,49 +601,105 @@ func normalizeQuality(q *QualityConfig) error {
 	if q.MinGenerationMS <= 0 {
 		q.MinGenerationMS = defaults.MinGenerationMS
 	}
+	if q.MinGenerationMS < 100 || q.MinGenerationMS > 60000 {
+		return fmt.Errorf("quality.min_generation_ms must be between 100 and 60000")
+	}
 	if q.MinPassiveOutputTokens <= 0 {
 		q.MinPassiveOutputTokens = defaults.MinPassiveOutputTokens
+	}
+	if q.MinPassiveOutputTokens > 10000 {
+		return fmt.Errorf("quality.min_passive_output_tokens must be <= 10000")
 	}
 	if q.MinHoldOutputTokens <= 0 {
 		q.MinHoldOutputTokens = defaults.MinHoldOutputTokens
 	}
+	if q.MinHoldOutputTokens > 10000 {
+		return fmt.Errorf("quality.min_hold_output_tokens must be <= 10000")
+	}
 	if q.HoldTimeout.Duration <= 0 {
 		q.HoldTimeout = defaults.HoldTimeout
 	}
-	if q.StreamIdleTimeout.Duration <= 0 {
-		q.StreamIdleTimeout = defaults.StreamIdleTimeout
+	if q.HoldTimeout.Duration < 5*time.Second || q.HoldTimeout.Duration > 10*time.Minute {
+		return fmt.Errorf("quality.hold_timeout must be between 5s and 10m")
 	}
-	if q.MaxHoldTotal.Duration <= 0 {
-		q.MaxHoldTotal = defaults.MaxHoldTotal
+	if q.AttemptTimeout.Duration <= 0 {
+		q.AttemptTimeout = defaults.AttemptTimeout
+	}
+	if q.AttemptTimeout.Duration < q.HoldTimeout.Duration+10*time.Second {
+		return fmt.Errorf("quality.attempt_timeout must be at least hold_timeout plus 10s")
+	}
+	if q.AttemptTimeout.Duration > 10*time.Minute {
+		return fmt.Errorf("quality.attempt_timeout must be <= 10m")
+	}
+	if q.RequestTimeout.Duration <= 0 {
+		q.RequestTimeout = defaults.RequestTimeout
+	}
+	if q.RequestTimeout.Duration < q.AttemptTimeout.Duration {
+		return fmt.Errorf("quality.request_timeout must be >= attempt_timeout")
+	}
+	if q.RequestTimeout.Duration > 30*time.Minute {
+		return fmt.Errorf("quality.request_timeout must be <= 30m")
 	}
 	if q.HoldKeepalive.Duration <= 0 {
 		q.HoldKeepalive = defaults.HoldKeepalive
 	}
+	if q.HoldKeepalive.Duration < time.Second || q.HoldKeepalive.Duration > time.Minute {
+		return fmt.Errorf("quality.hold_keepalive must be between 1s and 1m")
+	}
 	if q.HoldMaxBufferBytes <= 0 {
 		q.HoldMaxBufferBytes = defaults.HoldMaxBufferBytes
+	}
+	if q.HoldMaxBufferBytes < 1<<20 || q.HoldMaxBufferBytes > 64<<20 {
+		return fmt.Errorf("quality.hold_max_buffer_bytes must be between 1MiB and 64MiB")
 	}
 	if q.MinEncryptedBytes <= 0 {
 		q.MinEncryptedBytes = defaults.MinEncryptedBytes
 	}
+	if q.MinEncryptedBytes < 64 || q.MinEncryptedBytes > 65536 {
+		return fmt.Errorf("quality.min_encrypted_bytes must be between 64 and 65536")
+	}
 	if q.EncryptedBytesPerReasoningToken <= 0 {
 		q.EncryptedBytesPerReasoningToken = defaults.EncryptedBytesPerReasoningToken
+	}
+	if q.EncryptedBytesPerReasoningToken > 64 {
+		return fmt.Errorf("quality.encrypted_bytes_per_reasoning_token must be <= 64")
 	}
 	q.NonReasoningModels = normalizeNonReasoningModels(q.NonReasoningModels)
 	if q.MissingThinkingCooldown.Duration <= 0 {
 		q.MissingThinkingCooldown = defaults.MissingThinkingCooldown
 	}
+	if q.MissingThinkingCooldown.Duration > 30*24*time.Hour {
+		return fmt.Errorf("quality.missing_thinking_cooldown must be <= 30d")
+	}
 	if q.EmptyStreamCooldown.Duration <= 0 {
 		q.EmptyStreamCooldown = defaults.EmptyStreamCooldown
+	}
+	if q.EmptyStreamCooldown.Duration > 24*time.Hour {
+		return fmt.Errorf("quality.empty_stream_cooldown must be <= 24h")
 	}
 	if q.MaxAttempts <= 0 {
 		q.MaxAttempts = defaults.MaxAttempts
 	}
+	if q.MaxAttempts > 8 {
+		return fmt.Errorf("quality.max_attempts must be <= 8")
+	}
+	q.CrossVerify = strings.ToLower(strings.TrimSpace(q.CrossVerify))
+	if q.CrossVerify == "" {
+		q.CrossVerify = defaults.CrossVerify
+	}
+	switch q.CrossVerify {
+	case "off", "soft", "thinking", "all":
+	default:
+		return fmt.Errorf("quality.cross_verify must be off, soft, thinking, or all")
+	}
 	q.OnExhausted = strings.ToLower(strings.TrimSpace(q.OnExhausted))
 	if q.OnExhausted == "" {
-		q.OnExhausted = "fail_closed"
+		q.OnExhausted = defaults.OnExhausted
 	}
-	if q.OnExhausted != "fail_closed" && q.OnExhausted != "fail_open" {
-		return fmt.Errorf("quality.on_exhausted must be fail_closed or fail_open")
+	switch q.OnExhausted {
+	case "fail_unverified", "fail_closed":
+	default:
+		return fmt.Errorf("quality.on_exhausted must be fail_unverified or fail_closed")
 	}
 	return nil
 }
@@ -696,15 +789,15 @@ func (p *Policy) UnmarshalJSON(data []byte) error {
 
 func PolicyFromConfig(cfg Config) Policy {
 	return Policy{
-		PassiveGuard:     cfg.PassiveGuard,
-		TransparentGuard: cfg.TransparentGuard,
-		AutoAction:       cfg.AutoAction,
-		ModelPrefixes:    append([]string(nil), cfg.ModelPrefixes...),
-		Routing:          cfg.Routing,
-		Quality:          cfg.Quality,
-		Probe:            cfg.Probe,
+		Guard:         cfg.Guard,
+		AutoAction:    cfg.AutoAction,
+		ModelPrefixes: append([]string(nil), cfg.ModelPrefixes...),
+		Routing:       cfg.Routing,
+		Quality:       cfg.Quality,
+		Probe:         cfg.Probe,
 
 		ProxyAutoRotateAfterQualityFail: cfg.Proxy.AutoRotateAfterQualityFailure,
+		ProxyRotateAfterErrors:          cfg.Proxy.RotateAfterErrors,
 		TaskHistory:                     cfg.TaskHistory,
 		EventsLimit:                     cfg.EventsLimit,
 	}
@@ -714,8 +807,7 @@ func ApplyPolicy(cfg *Config, policy Policy) error {
 	if cfg == nil {
 		return errors.New("config is nil")
 	}
-	cfg.PassiveGuard = policy.PassiveGuard
-	cfg.TransparentGuard = policy.TransparentGuard
+	cfg.Guard = policy.Guard
 	cfg.AutoAction = policy.AutoAction
 	cfg.ModelPrefixes = append([]string(nil), policy.ModelPrefixes...)
 	cfg.Routing = policy.Routing
@@ -723,6 +815,7 @@ func ApplyPolicy(cfg *Config, policy Policy) error {
 	cfg.Probe = policy.Probe
 
 	cfg.Proxy.AutoRotateAfterQualityFailure = policy.ProxyAutoRotateAfterQualityFail
+	cfg.Proxy.RotateAfterErrors = policy.ProxyRotateAfterErrors
 	cfg.TaskHistory = policy.TaskHistory
 	cfg.EventsLimit = policy.EventsLimit
 	return normalizeConfig(cfg)
@@ -730,8 +823,7 @@ func ApplyPolicy(cfg *Config, policy Policy) error {
 
 func normalizePolicy(policy Policy) (Policy, error) {
 	cfg := DefaultConfig()
-	cfg.PassiveGuard = policy.PassiveGuard
-	cfg.TransparentGuard = policy.TransparentGuard
+	cfg.Guard = policy.Guard
 	cfg.AutoAction = policy.AutoAction
 	cfg.ModelPrefixes = append([]string(nil), policy.ModelPrefixes...)
 	cfg.Routing = policy.Routing
@@ -739,6 +831,7 @@ func normalizePolicy(policy Policy) (Policy, error) {
 	cfg.Probe = policy.Probe
 
 	cfg.Proxy.AutoRotateAfterQualityFailure = policy.ProxyAutoRotateAfterQualityFail
+	cfg.Proxy.RotateAfterErrors = policy.ProxyRotateAfterErrors
 	cfg.TaskHistory = policy.TaskHistory
 	cfg.EventsLimit = policy.EventsLimit
 	if errNormalize := normalizeConfig(&cfg); errNormalize != nil {

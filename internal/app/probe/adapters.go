@@ -36,10 +36,7 @@ func (s *Service) resolveAuth(ctx context.Context, authID string) (Account, plug
 }
 func (s *Service) refreshCatalog(ctx context.Context) error        { return s.env.RefreshCatalog(ctx) }
 func (s *Service) stateAccount(authID string) (AccountState, bool) { return s.env.StateAccount(authID) }
-func (s *Service) saveAuth(name string, raw json.RawMessage) (pluginapi.HostAuthSaveResponse, error) {
-	return s.env.SaveAuth(name, raw)
-}
-func (s *Service) refreshSelectionAccount(authID string) { s.env.RefreshSelectionAccount(authID) }
+func (s *Service) refreshSelectionAccount(authID string)           { s.env.RefreshSelectionAccount(authID) }
 func (s *Service) executeModelStream(ctx context.Context, req pluginapi.HostModelExecutionRequest, callbackID string) (pluginapi.HostModelStreamResponse, error) {
 	return s.env.ExecuteModelStream(ctx, req, callbackID)
 }
@@ -61,9 +58,6 @@ func authDisabled(raw map[string]json.RawMessage) bool { return auth.Disabled(ra
 func authRawString(raw map[string]json.RawMessage, key string) string {
 	return auth.RawString(raw, key)
 }
-func setRawBool(raw map[string]json.RawMessage, key string, value bool) {
-	auth.SetRawBool(raw, key, value)
-}
 func isGrokAuth(raw map[string]json.RawMessage) bool {
 	for _, key := range []string{"type", "provider", "oauth_provider", "base_url"} {
 		if auth.IsGrokProvider(auth.RawString(raw, key)) {
@@ -71,9 +65,6 @@ func isGrokAuth(raw map[string]json.RawMessage) bool {
 		}
 	}
 	return false
-}
-func marshalRawMap(value map[string]json.RawMessage) (json.RawMessage, error) {
-	return json.Marshal(value)
 }
 func classifyTransportFailure(err error) (string, string) {
 	return execapp.ClassifyTransportFailure(err)

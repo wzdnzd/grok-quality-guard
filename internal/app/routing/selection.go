@@ -36,6 +36,9 @@ type transparentSelection struct {
 	busyPass           bool
 	tried              map[string]struct{}
 	totalCandidates    int
+	unknownAttempts    int
+	unknownLimit       int
+	currentLayerRank   int
 }
 
 type transparentCandidateAttempt struct {
@@ -74,6 +77,7 @@ func (s *Service) newTransparentSelectionWithSession(sessionKey string) (*transp
 	if errEnsure := s.ensureSelectionIndex(); errEnsure != nil {
 		return nil, errEnsure
 	}
+	s.selectionRuntime.pruneStaleAttempts(time.Now().UTC(), 10*time.Minute)
 	s.maybeRefreshSelectionIndex(time.Now().UTC())
 	policy := normalizeRoutingPolicy(s.env.Policy())
 	snapshot := s.selectionIndex.Load()
@@ -95,6 +99,11 @@ func (s *Service) newTransparentSelectionWithSession(sessionKey string) (*transp
 			selection.topLayerKey = key
 			break
 		}
+	}
+	// With verified accounts available, one unverified account per request is
+	// enough exposure. An all-unknown pool keeps normal failover.
+	if selection.topLayerKey != "" && snapshot.Rank(selection.topLayerKey) == 0 {
+		selection.unknownLimit = 1
 	}
 	if selection.routing.Affinity.Enabled {
 		selection.sessionKey = sessionKey
@@ -154,6 +163,7 @@ func (selection *transparentSelection) Next(ctx context.Context) (transparentCan
 				continue
 			}
 			selection.currentLayerKey = key
+			selection.currentLayerRank = selection.snapshot.Rank(key)
 			selection.currentBuckets = buckets
 			selection.currentBucketIndex = 0
 			selection.busyPass = false
@@ -235,6 +245,14 @@ func (selection *transparentSelection) tryNormalCandidate(ctx context.Context, b
 			selection.tried[candidate.ID] = struct{}{}
 			selection.plugin.refreshSelectionAccount(candidate.ID)
 			continue
+		}
+		if selection.currentLayerRank > 0 && selection.unknownLimit > 0 {
+			if selection.unknownAttempts >= selection.unknownLimit {
+				selection.tried[candidate.ID] = struct{}{}
+				selection.plugin.selectionRuntime.ReleaseAttempt(candidate.ID)
+				continue
+			}
+			selection.unknownAttempts++
 		}
 		attempt := transparentCandidateAttempt{
 			selection: selection,
@@ -440,17 +458,15 @@ func (selection *transparentSelection) MarkFailure(authID, _ string, class strin
 }
 
 func isTransparentSelectionHardFailure(class string) bool {
+	// Only authoritative account failures break stickiness. A single quality
+	// miss, a rate limit or a transport blip must not move the whole
+	// conversation to another account; selection re-checks eligibility and
+	// drops the binding when the account really leaves the pool.
 	switch class {
-	case "", ClassIgnored, ClassRateLimited:
-		return false
-	case ClassProbeError, ClassProxyError:
-		// Transport/proxy failures invalidate the sticky session binding so the
-		// next request can move to another account instead of repeatedly
-		// selecting the same unreachable auth. Rate limits remain sticky because
-		// they can be a short-lived per-model condition.
+	case ClassCredentialInvalid, ClassQuotaExhausted:
 		return true
 	default:
-		return true
+		return false
 	}
 }
 

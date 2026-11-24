@@ -89,11 +89,11 @@ func TestAccountRoutingScoreFadesStaleEvidenceTowardNeutral(t *testing.T) {
 	policy := config.PolicyFromConfig(config.DefaultConfig())
 	now := time.Now().UTC()
 	fresh := scoreStats(0.95, 250, 900)
-	freshScore := accountRoutingScore(Account{ID: "fresh", Provider: "xai"}, fresh, policy, now)
+	freshScore := accountRoutingScore(fresh, policy, now)
 
 	stale := scoreStats(0.95, 250, 900)
 	stale.Probe.Reasoning.LastObservedMS = now.Add(-30 * 24 * time.Hour).UnixMilli()
-	staleScore := accountRoutingScore(Account{ID: "stale", Provider: "xai"}, stale, policy, now)
+	staleScore := accountRoutingScore(stale, policy, now)
 
 	if freshScore <= 0.8 {
 		t.Fatalf("fresh high-quality score = %f, want > 0.8", freshScore)

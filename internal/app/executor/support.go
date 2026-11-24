@@ -61,7 +61,11 @@ func (info attemptInfo) decorate(sig domain.Signals) domain.Signals {
 	return sig
 }
 
-const defaultTransparentStreamIdleTimeout = 90 * time.Second
+const defaultTransparentAttemptTimeout = 60 * time.Second
+const defaultTransparentRequestTimeout = 120 * time.Second
+
+// maxVerifyWindow caps the shortest hold that can still produce a verdict
+const maxVerifyWindow = 3 * time.Second
 
 func transparentMaxAttempts(policy Policy) int {
 	maxAttempts := policy.Quality.MaxAttempts
@@ -71,11 +75,18 @@ func transparentMaxAttempts(policy Policy) int {
 	return maxAttempts
 }
 
-func transparentStreamIdleTimeout(cfg QualityConfig) time.Duration {
-	if cfg.StreamIdleTimeout.Duration > 0 {
-		return cfg.StreamIdleTimeout.Duration
+func transparentAttemptTimeout(cfg QualityConfig) time.Duration {
+	if cfg.AttemptTimeout.Duration > 0 {
+		return cfg.AttemptTimeout.Duration
 	}
-	return defaultTransparentStreamIdleTimeout
+	return defaultTransparentAttemptTimeout
+}
+
+func transparentRequestTimeout(cfg QualityConfig) time.Duration {
+	if cfg.RequestTimeout.Duration > 0 {
+		return cfg.RequestTimeout.Duration
+	}
+	return defaultTransparentRequestTimeout
 }
 
 func transparentFailureCanFailover(replayable, emitted, preResponse bool, class string) bool {
@@ -289,7 +300,7 @@ func (s *Service) rotateAfterFailure(ctx context.Context, authID, class string) 
 		return false, nil
 	}
 	stateAccount, _ := s.env.StateAccount(authID)
-	if proxyFailureReachedRotationThreshold(class, stateAccount.ErrorStrikes, s.env.Policy().Quality.ConsecutiveErrors) {
+	if proxyFailureReachedRotationThreshold(class, stateAccount.ErrorStrikes, s.env.Policy().ProxyRotateAfterErrors) {
 		// Proxy failures rotate only after the same consecutive-error threshold
 		// used by account quality handling.
 	} else if class != ClassMissingThinking && class != ClassCipherDrool && class != ClassFakeEncryptedDump && class != ClassBufferedBurst {
@@ -391,20 +402,33 @@ func (s *Service) settleTransparentFailure(authID string, verdict QualityVerdict
 	})
 }
 
-// transparentHoldLimit bounds one visible hold by the per-request withhold
-// budget so several degraded attempts cannot exceed the client timeout.
-func transparentHoldLimit(cfg QualityConfig, deadline time.Time) time.Duration {
+// transparentHoldLimit bounds one visible hold by the request budget shared
+// across accounts. attempt_timeout is an inactivity timer enforced by the
+// stream reader, so it does not shorten the hold. A hold that cannot last
+// minVerifyWindow cannot produce a quality verdict, so the caller must stop
+// instead of classifying the stream.
+func transparentHoldLimit(cfg QualityConfig, requestDeadline time.Time) (time.Duration, bool) {
 	limit := cfg.HoldTimeout.Duration
 	if limit <= 0 {
 		limit = 30 * time.Second
 	}
-	if !deadline.IsZero() {
-		if remaining := time.Until(deadline); remaining < limit {
+	if !requestDeadline.IsZero() {
+		if remaining := time.Until(requestDeadline); remaining < limit {
 			limit = remaining
 		}
 	}
-	if limit <= 0 {
-		limit = time.Millisecond
+	if limit < minVerifyWindow(cfg) {
+		return 0, false
 	}
-	return limit
+	return limit, true
+}
+
+// minVerifyWindow is the shortest hold that can still tell a healthy stream
+// from a degraded one: half the configured hold, capped at maxVerifyWindow.
+func minVerifyWindow(cfg QualityConfig) time.Duration {
+	window := cfg.HoldTimeout.Duration / 2
+	if window <= 0 || window > maxVerifyWindow {
+		return maxVerifyWindow
+	}
+	return window
 }

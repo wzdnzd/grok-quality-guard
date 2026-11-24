@@ -153,7 +153,7 @@ func (e *taskCenterQueuesOnlyEnvironment) TaskCenter(filter taskapp.TaskCenterFi
 
 func TestTaskCenterQueuesActionDoesNotLoadTaskHistory(t *testing.T) {
 	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
-	policy.TransparentGuard = true
+	policy.Guard = "transparent"
 	env := &taskCenterQueuesOnlyEnvironment{
 		taskCenterQueueTestEnvironment: taskCenterQueueTestEnvironment{
 			store:   appstate.NewStore(""),
@@ -185,7 +185,7 @@ func TestTaskCenterQueuesActionDoesNotLoadTaskHistory(t *testing.T) {
 }
 func TestTaskCenterShowsQualityProbeQueueWithoutProxy(t *testing.T) {
 	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
-	policy.TransparentGuard = true
+	policy.Guard = "transparent"
 	now := time.Now().UTC()
 	service := NewService(taskCenterQueueTestEnvironment{
 		store:   appstate.NewStore(""),
@@ -219,7 +219,7 @@ func TestTaskCenterShowsQualityProbeQueueWithoutProxy(t *testing.T) {
 
 func TestTaskCenterResidentQueueMetadataIsLocalized(t *testing.T) {
 	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
-	policy.TransparentGuard = true
+	policy.Guard = "transparent"
 	service := NewService(taskCenterQueueTestEnvironment{
 		store:   appstate.NewStore(""),
 		policy:  policy,
@@ -251,7 +251,7 @@ func TestQualityProbeQueueVisibility(t *testing.T) {
 }
 func TestQualityProbeQueueDoesNotReportIdleBeforeSchedulerStarts(t *testing.T) {
 	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
-	policy.TransparentGuard = true
+	policy.Guard = "transparent"
 	service := NewService(taskCenterQueueTestEnvironment{
 		store:      appstate.NewStore(""),
 		policy:     policy,
@@ -318,7 +318,7 @@ func TestResidentQueueCardsUseLiveProxyWorkCounts(t *testing.T) {
 
 func TestResidentQueueCopyHasNoTerminalPunctuation(t *testing.T) {
 	policy := appconfig.PolicyFromConfig(appconfig.DefaultConfig())
-	policy.TransparentGuard = true
+	policy.Guard = "transparent"
 	store := appstate.NewStore("")
 	store.UpdateStateForTest(func(value *appstate.State) {
 		value.Proxy.AutoBind.Enabled = true
