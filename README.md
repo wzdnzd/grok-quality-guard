@@ -271,6 +271,7 @@ plugins:
         request_timeout: "120s"        # 单次请求跨账号共享的总预算，>= attempt_timeout
         hold_keepalive: "5s"
         shadow_mode: false
+        debug_logging: false             # 开启后每次判定额外写入诊断事件
         hold_max_buffer_bytes: 4194304
         min_encrypted_bytes: 256
         encrypted_bytes_per_reasoning_token: 2
@@ -353,6 +354,7 @@ plugins:
 - `ignored`、`probe_error`、`proxy_error` 不覆盖上一次真实质量指标；详情页会分别展示最近尝试和最近质量证据
 - `cross_verify`：`off`、`soft`（仅速度异常）、`thinking`（仅缺少思考，默认）、`all`；命中类型的非探测样本达到阈值后先启动后台主动探测，由探测结果确认后再处置
 - `shadow_mode=true`：透明模式只记录质量结论，不扣留响应也不处置账号，用于上线前评估误判；默认关闭
+- `debug_logging=true`：每次透明判定额外写入一条 `quality_debug` 事件，包含原因码与可见/输出/推理 Token、密文与下限、生成窗口、首 Token 与 TPS，用于排查误判；默认关闭
 - 任一健康样本会清零 `soft_strikes`、`error_strikes`、`thinking_strikes`，与旧插件的连续计数语义一致
 
 主动探测调度器在插件启动后立即建立并执行第一次扫描，不再等待状态修复完成；之后按 `probe.scan_interval` 定时扫描（默认 `15s`，允许 `1s..24h`），先过滤出当前到期账号，再放入有界队列。`probe.healthy_interval_hours` 为健康账号的周期探测间隔，单位小时，默认 `0`（不主动探测）；配置为大于 `0` 的整数后，健康账号距上次主动探测达到该间隔时也会进入同一队列，尚无 `last_probe_at` 的健康账号在启用后视为到期。等待中和执行中的账号优先按 auth 文件里的 OAuth `sub`/`subject` 去重，缺失时才回退到宿主 auth ID，因此同一 OAuth 账号不会重复入队。`probe.queue_size` 默认 `10000`，最大 `1000000`；`probe.concurrency` 控制探测以及批量账号操作实际使用的 worker 数。`probe.unknown_jitter` 为 `unknown` 账号的首次探测增加稳定抖动，避免大量账号在同一时刻到期。
@@ -455,7 +457,7 @@ plugins:
 - `category`：`quality`（质量降智）、`transport`（传输错误）、`account`（凭据失效、额度耗尽、限流）、`inconclusive`（预算不足未定论）、`ignored`（非质量信号）
 - `decision`：`deliver`（放行）、`retry`（换号重试）、`quarantine`（隔离观察）、`cooldown`（冷却）、`disable`（禁用）、`observe`（仅记录）
 
-管理页设置按“运行模式与处置 / 透明鉴权选择与会话亲和 / 健康账号评分 / 质量阈值与思考证据 / 透明保护 / 主动探测 / 任务中心与历史记录”分组，每个字段通过 i 图标提示说明含义
+管理页设置按“运行模式与处置 / 透明鉴权选择与会话亲和 / 健康账号评分 / 质量阈值与思考证据 / 透明保护 / 主动探测 / 任务中心与历史记录”分组，每个字段通过 i 图标提示说明含义。字段区间由 `internal/config/schema.go` 唯一定义，加载校验与设置页共用同一份规格（`GET /settings/schema`）
 
 ## 通用代理节点、模板与 Resin
 
@@ -577,6 +579,7 @@ curl -X POST \
 | `policy.reset` | 重置为 YAML 初始值 |
 | `state_file.update` | 写入并切换状态文件路径；目标文件必须不存在 |
 | `events.list` | 查看事件日志；每条事件带 `category`、`code`、`decision` |
+| `GET /settings/schema` | 返回全部可编辑字段的规格、默认值与区间，供设置页渲染与校验共用 |
 | `tasks.center.list` | 按类型、状态、关键词和分页查询任务中心 |
 | `tasks.center.queue` | 按 `queue_id` 分页读取质量检测、自动绑定和代理健康检查队列的执行中与等待项 |
 | `tasks.center.get` | 按页懒加载任务逐项明细；历史任务从归档读取 |
