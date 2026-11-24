@@ -1383,15 +1383,62 @@
     }
 
     .settings-layout {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 276px;
-      align-items: start;
-      gap: 12px;
+      display: block;
+    }
+
+    .policy-summary-card {
+      padding: 12px 13px;
+      margin-bottom: 10px;
+    }
+
+    .policy-summary-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 9px;
+    }
+
+    .policy-summary-head .section-title {
+      margin: 0;
+    }
+
+    .policy-summary-note {
+      margin-left: auto;
+      color: var(--subtle);
+      font-size: 10px;
+    }
+
+    .policy-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .policy-chip {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 6px;
+      padding: 4px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .policy-chip-label {
+      color: var(--subtle);
+      font-weight: 600;
+    }
+
+    .policy-chip-value {
+      color: var(--text);
+      font-weight: 600;
     }
 
     .policy-settings-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: minmax(0, 1fr);
       align-items: stretch;
       gap: 10px;
     }
@@ -1405,68 +1452,89 @@
       box-shadow: var(--shadow);
     }
 
-    .policy-group-quality,
-    .policy-group-probe,
-    .policy-group-scoring {
-      grid-column: 1 / -1;
-    }
-
     .policy-group>.section-title {
       min-height: 16px;
-      margin: 0 0 9px;
+      margin: 0 0 10px;
       color: var(--muted);
       font-size: 11px;
       font-weight: 650;
     }
 
     .policy-group .field-grid {
-      gap: 9px 10px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px 12px;
+      align-items: start;
+    }
+
+    .policy-group.columns-3 .field-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .policy-group .field {
       gap: 4px;
     }
 
-    .policy-group .field>label:not(.check-row),
-    .policy-group .field>.hint {
-      min-height: 0;
+    .policy-group .field.span-2 {
+      grid-column: span 2;
     }
 
-    .policy-group-scoring .field>.hint {
-      white-space: nowrap;
+    .policy-group .field.full {
+      grid-column: 1 / -1;
+    }
+
+    .field-head {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      min-height: 16px;
+      min-width: 0;
+    }
+
+    .field-head>label {
+      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 600;
     }
 
-    .policy-group-quality .field-grid,
-    .policy-group-probe .field-grid {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+    .toggle-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 22px;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
     }
 
-    .policy-group-scoring .field-grid {
-      grid-template-columns: repeat(6, minmax(0, 1fr));
-    }
-
-    .policy-group-scoring .field.score-toggle,
-    .policy-group-scoring .field.full,
-    .policy-group-scoring .field.score-bucket {
-      grid-column: span 3;
-    }
-
-    .policy-group-scoring .field.score-metric,
-    .policy-group-scoring .field.score-refresh {
-      grid-column: span 2;
-    }
-
-    .policy-group-quality .check-card {
-      grid-column: span 2;
-      align-self: start;
-    }
-
-    .policy-group .check-card {
-      padding: 8px 9px;
+    .toggle-row {
+      display: inline-flex;
+      align-items: center;
       gap: 7px;
-      background: var(--surface);
+      min-height: 26px;
+      padding: 2px 0;
+      cursor: pointer;
+    }
+
+    .toggle-title {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      min-width: 0;
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .toggle-row input[type="checkbox"] {
+      width: 15px;
+      height: 15px;
+      margin: 0;
+      flex: 0 0 auto;
+      accent-color: var(--primary);
+      cursor: pointer;
     }
 
 
@@ -1474,23 +1542,6 @@
       grid-column: 1 / -1;
       padding: 10px 2px 1px;
       border-top: 1px solid var(--line);
-    }
-
-    .settings-summary-card .card-header {
-      padding: 12px 13px;
-    }
-
-    .settings-summary-card .card-body {
-      padding: 12px 13px;
-    }
-
-    .settings-summary-card .summary-grid {
-      gap: 10px 12px;
-    }
-
-    .sticky-card {
-      position: sticky;
-      top: 18px;
     }
 
     .form-section {
@@ -1523,32 +1574,10 @@
       grid-column: 1 / -1;
     }
 
-    .policy-group-quality .quality-non-reasoning-models,
-    .policy-group-quality .quality-thinking-toggle {
-      grid-column: span 2;
-    }
-
     .field label {
       color: var(--text);
       font-size: 11px;
       font-weight: 600;
-    }
-
-    .field>label:not(.check-row) {
-      min-height: 15px;
-      line-height: 15px;
-    }
-
-    .field>.check-row:first-child {
-      margin-top: 20px;
-    }
-
-    .policy-group-quality .quality-thinking-toggle>.check-row:first-child {
-      margin-top: 19px;
-    }
-
-    .field>.hint {
-      min-height: 15px;
     }
 
     .field input,
@@ -1579,15 +1608,24 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      margin-left: 6px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
       color: var(--subtle);
       cursor: help;
-      vertical-align: middle;
+    }
+
+    .hint-icon:hover,
+    .hint-icon:focus-visible {
+      color: var(--text);
+      background: var(--surface-hover);
+      outline: none;
     }
 
     .hint-icon .icon {
-      width: 14px;
-      height: 14px;
+      width: 12px;
+      height: 12px;
+      stroke-width: 2.2;
     }
 
     .field-grid {
@@ -1600,7 +1638,11 @@
     }
 
     .verdict-card {
+      padding: 10px 12px;
+      border: 1px solid var(--line);
       border-left: 3px solid var(--line-strong);
+      border-radius: 7px;
+      background: var(--card);
     }
 
     .verdict-card.bad { border-left-color: var(--bad); }
@@ -1614,7 +1656,8 @@
     }
 
     .verdict-code {
-      font-weight: 600;
+      font-size: 13px;
+      font-weight: 650;
     }
 
     .verdict-time {
@@ -1639,9 +1682,14 @@
     }
 
     .verdict-detail {
-      margin-top: 8px;
-      color: var(--subtle);
+      margin-top: 6px;
+      color: var(--muted);
       font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .verdict-evidence:empty {
+      display: none;
     }
 
     .verdict-dot {
@@ -1656,6 +1704,8 @@
     .verdict-dot.bad { background: var(--bad); }
     .verdict-dot.warn { background: var(--warn); }
     .verdict-dot.info { background: var(--info); }
+    .verdict-dot.good { background: var(--good); }
+    .verdict-card.good { border-left-color: var(--good); }
 
     .field>.field-error {
       color: var(--bad);
@@ -1907,20 +1957,6 @@
       grid-column: 1 / -1;
       padding: 10px 2px 1px;
       border-top: 1px solid var(--line);
-    }
-
-    .policy-group-task-history {
-      grid-column: 1 / -1;
-    }
-
-    .policy-group-task-history .field-grid {
-      grid-template-columns: minmax(180px, 1.15fr) repeat(4, minmax(120px, 1fr));
-    }
-
-    .policy-group-task-history .field > .check-row,
-    .policy-group-task-history .field > input {
-      height: 33px;
-      min-height: 33px;
     }
 
     .task-center-grid {
@@ -2871,6 +2907,27 @@
       grid-column: 1 / -1;
     }
 
+    .evidence-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .flag-chip {
+      display: inline-flex;
+      margin: 0 6px 6px 0;
+      padding: 2px 8px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .flag-chip.on {
+      border-color: color-mix(in srgb, var(--good) 30%, var(--line));
+      background: var(--good-soft);
+      color: var(--good);
+    }
+
     .detail-value-wrap {
       overflow-wrap: anywhere;
       word-break: break-word;
@@ -3145,19 +3202,6 @@
       overflow: hidden;
     }
 
-    @media (max-width: 1180px) {
-      .settings-layout {
-        grid-template-columns: 1fr;
-      }
-
-      .settings-summary-card {
-        position: static;
-      }
-
-      .settings-summary-card .summary-grid {
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-      }
-    }
 
     @media (max-width: 1080px) {
       .metric-grid {
@@ -3172,13 +3216,13 @@
         border-bottom: 1px solid var(--line);
       }
 
-      .overview-grid,
-      .settings-layout {
+      .overview-grid {
         grid-template-columns: 1fr;
       }
 
-      .sticky-card {
-        position: static;
+      .policy-group .field-grid,
+      .policy-group.columns-3 .field-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
 
       .stats-grid {
@@ -3211,52 +3255,8 @@
         grid-column: auto;
       }
 
-      .policy-settings-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .policy-group-quality,
-      .policy-group-probe,
-      .policy-group-scoring,
-      .policy-actions {
-        grid-column: auto;
-      }
-
-      .policy-group-quality .field-grid,
-      .policy-group-probe .field-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .policy-group-scoring .field-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .policy-group-scoring .field.score-toggle,
-      .policy-group-scoring .field.full,
-      .policy-group-scoring .field.score-bucket {
-        grid-column: 1 / -1;
-      }
-
-      .policy-group-scoring .field.score-metric,
-      .policy-group-scoring .field.score-refresh {
-        grid-column: auto;
-      }
-
-      .policy-group-quality .check-card {
-        grid-column: auto;
-      }
-
-      .policy-group-quality .quality-non-reasoning-models,
-      .policy-group-quality .quality-thinking-toggle {
-        grid-column: auto;
-      }
-
-      .policy-group-task-history,
-      .policy-group-task-history .field-grid {
-        grid-column: auto;
-      }
-
-      .policy-group-task-history .field-grid {
+      .policy-group .field-grid,
+      .policy-group.columns-3 .field-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
@@ -3297,12 +3297,8 @@
 
       .auto-bind-form .settings-group .field-grid,
       .auto-bind-form .settings-group .retry-grid,
-      .policy-group-quality .field-grid,
-      .policy-group-probe .field-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .settings-summary-card .summary-grid {
+      .policy-group .field-grid,
+      .policy-group.columns-3 .field-grid {
         grid-template-columns: 1fr;
       }
 
@@ -3370,6 +3366,7 @@
       .summary-grid,
       .field-grid,
       .detail-grid,
+      .evidence-grid,
       .policy-preview {
         grid-template-columns: 1fr;
       }
@@ -4945,217 +4942,156 @@
             </div>
           </section>
           <form id="policyForm" class="settings-layout policy-settings-form" novalidate>
+            <section class="card policy-summary-card">
+              <div class="policy-summary-head">
+                <h2 class="section-title"><svg class="icon">
+                    <use href="#i-sliders"></use>
+                  </svg>ui.policy_summary</h2>
+                <span class="badge info" id="policyModeBadge">action.observe</span>
+                <span class="policy-summary-note">ui.hot_reloads_immediately_after_saving</span>
+              </div>
+              <div class="policy-chips" id="settingsPolicySummary"></div>
+            </section>
             <div class="policy-settings-grid">
-              <section class="policy-group policy-group-mode">
+              <section class="policy-group columns-3">
                 <h3 class="section-title"><svg class="icon">
                     <use href="#i-shield"></use>
                   </svg>ui.operating_mode_and_actions</h3>
                 <div class="field-grid">
-                  <div class="field"><label for="p_guard">ui.operating_mode</label><select id="p_guard">
+                  <div class="field"><span class="field-head"><label for="p_guard">ui.operating_mode</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.guard_hint" title="ui.guard_hint"><svg class="icon"><use href="#i-info"></use></svg></span></span><select id="p_guard">
                       <option value="off">ui.guard_off</option>
                       <option value="passive">ui.guard_passive</option>
                       <option value="transparent">ui.guard_transparent</option>
-                    </select><span class="hint">ui.guard_hint</span></div>
-                  <div class="field"><label for="p_auto_action">action.guard_disable</label><select id="p_auto_action">
+                    </select></div>
+                  <div class="field"><span class="field-head"><label for="p_auto_action">action.guard_disable</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.observe_only_by_default_never_write_to_oauth_files" title="ui.observe_only_by_default_never_write_to_oauth_files"><svg class="icon"><use href="#i-info"></use></svg></span></span><select id="p_auto_action">
                       <option value="cooldown_only">ui.cooldown</option>
                       <option value="observe">ui.observe_only</option>
                       <option value="cooldown_then_disable">ui.cool_down_then_permanently_disable</option>
-                    </select><span class="hint">ui.observe_only_by_default_never_write_to_oauth_files</span></div>
-                  <div class="field"><label for="p_model_prefixes">ui.model_prefixes</label><input id="p_model_prefixes" type="text"
-                      autocomplete="off" placeholder="grok-"><span class="hint">ui.identifies_custom_model_aliases_that_do_not_contain_grok</span></div>
-                  <div class="field"><label for="p_events_limit">ui.event_retention_limit</label><input id="p_events_limit" type="number"
-                      min="1" max="10000"><span class="hint">ui.trim_the_oldest_events_when_the_limit_is_exceeded</span></div>
-                  <div class="field full"><label for="p_state_file">ui.state_file_path</label><input id="p_state_file" type="text"
-                      autocomplete="off" spellcheck="false"
-                      placeholder="/CLIProxyAPI/plugins/data/grok-quality-guard/state.json"><span class="hint">ui.the_yaml_state_file_is_the_bootstrap_path_saving</span></div>
+                    </select></div>
+                  <div class="field"><span class="field-head"><label for="p_events_limit">ui.event_retention_limit</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.trim_the_oldest_events_when_the_limit_is_exceeded" title="ui.trim_the_oldest_events_when_the_limit_is_exceeded"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_events_limit" type="number" min="1" max="10000"></div>
+                  <div class="field full"><span class="field-head"><label for="p_model_prefixes">ui.model_prefixes</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.identifies_custom_model_aliases_that_do_not_contain_grok" title="ui.identifies_custom_model_aliases_that_do_not_contain_grok"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_model_prefixes" type="text" autocomplete="off" placeholder="grok-"></div>
+                  <div class="field full"><span class="field-head"><label for="p_state_file">ui.state_file_path</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.the_yaml_state_file_is_the_bootstrap_path_saving" title="ui.the_yaml_state_file_is_the_bootstrap_path_saving"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_state_file" type="text" autocomplete="off" spellcheck="false" placeholder="/CLIProxyAPI/plugins/data/grok-quality-guard/state.json"></div>
                 </div>
               </section>
-              <section class="policy-group policy-group-routing">
+              <section class="policy-group columns-3">
                 <h3 class="section-title"><svg class="icon">
                     <use href="#i-link"></use>
                   </svg>ui.transparent_auth_selection_and_session_affinity</h3>
                 <div class="field-grid">
-                  <div class="field"><label for="p_selection_strategy">ui.intra_tier_selection_strategy</label><select id="p_selection_strategy">
+                  <div class="field"><span class="field-head"><label for="p_selection_strategy">ui.intra_tier_selection_strategy</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.applies_only_within_the_same_quality_priority_tier" title="ui.applies_only_within_the_same_quality_priority_tier"><svg class="icon"><use href="#i-info"></use></svg></span></span><select id="p_selection_strategy">
                       <option value="round_robin">ui.round_robin</option>
                       <option value="random">ui.random</option>
                       <option value="fill_first">ui.fill_in_order</option>
-                    </select><span class="hint">ui.applies_only_within_the_same_quality_priority_tier</span></div>
-                  <div class="field"><label for="p_session_affinity_ttl">ui.session_affinity_ttl</label><input
-                      id="p_session_affinity_ttl" type="text" placeholder="1h"><span class="hint">ui.refresh_after_a_successful_request</span></div>
-                  <label class="check-card"><input id="p_prefer_last_success" type="checkbox"><span
-                      class="check-copy"><span class="check-title">ui.prefer_the_last_successful_account</span><span
-                        class="check-desc">ui.use_it_only_when_healthy_and_idle_spread_concurrent</span></span></label>
-                  <label class="check-card"><input id="p_session_affinity" type="checkbox"><span
-                      class="check-copy"><span class="check-title">ui.enable_session_affinity</span><span
-                        class="check-desc">ui.keep_a_session_on_the_same_auth_while_the</span></span></label>
-                  <div class="field"><label for="p_session_affinity_max_entries">ui.session_binding_limit</label><input
-                      id="p_session_affinity_max_entries" type="number" min="1" max="100000"></div>
+                    </select></div>
+                  <div class="field"><span class="field-head"><label for="p_session_affinity_ttl">ui.session_affinity_ttl</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.refresh_after_a_successful_request" title="ui.refresh_after_a_successful_request"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_session_affinity_ttl" type="text" placeholder="1h"></div>
+                  <div class="field"><span class="field-head"><label for="p_session_affinity_max_entries">ui.session_binding_limit</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.session_entries_help" title="ui.session_entries_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_session_affinity_max_entries" type="number" min="1" max="100000"></div>
+                </div>
+                <div class="toggle-list">
+                  <label class="toggle-row"><input id="p_prefer_last_success" type="checkbox"><span class="toggle-title">ui.prefer_the_last_successful_account<span class="hint-icon" tabindex="0" role="img" aria-label="ui.use_it_only_when_healthy_and_idle_spread_concurrent" title="ui.use_it_only_when_healthy_and_idle_spread_concurrent"><svg class="icon"><use href="#i-info"></use></svg></span></span></label>
+                  <label class="toggle-row"><input id="p_session_affinity" type="checkbox"><span class="toggle-title">ui.enable_session_affinity<span class="hint-icon" tabindex="0" role="img" aria-label="ui.keep_a_session_on_the_same_auth_while_the" title="ui.keep_a_session_on_the_same_auth_while_the"><svg class="icon"><use href="#i-info"></use></svg></span></span></label>
                 </div>
               </section>
-              <section class="policy-group policy-group-routing policy-group-scoring">
+              <section class="policy-group columns-3">
                 <h3 class="section-title"><svg class="icon">
                     <use href="#i-gauge"></use>
                   </svg>ui.ewma_health_ranking</h3>
                 <div class="field-grid">
-                  <div class="field score-toggle"><label for="p_scoring_enabled">ui.score_toggle_label</label>
-                    <label class="check-row"><input id="p_scoring_enabled" type="checkbox"><span>ui.enable_health_scoring</span></label>
-                    <span class="hint">ui.score_enabled_hint</span></div>
-                  <div class="field score-bucket"><label for="p_max_accounts_per_bucket">ui.score_bucket_limit</label><input
-                      id="p_max_accounts_per_bucket" type="number" min="16" max="4096" value="512"><span
-                        class="hint">ui.score_bucket_range_hint</span></div>
-                  <div class="field score-metric"><label for="p_score_success_weight">ui.score_success_weight</label><input
-                      id="p_score_success_weight" type="number" min="0" max="1" step="0.01" value="0.5"><span
-                        class="hint">ui.score_success_hint</span></div>
-                  <div class="field score-metric"><label for="p_score_ttft_weight">ui.score_ttft_weight</label><input
-                      id="p_score_ttft_weight" type="number" min="0" max="1" step="0.01" value="0.3"><span
-                        class="hint">ui.score_ttft_hint</span></div>
-                  <div class="field score-metric"><label for="p_score_tps_weight">ui.score_tps_weight</label><input
-                      id="p_score_tps_weight" type="number" min="0" max="1" step="0.01" value="0.2"><span
-                        class="hint">ui.score_tps_hint</span></div>
-                  <div class="field score-metric"><label for="p_score_probe_weight">ui.score_probe_weight</label><input
-                      id="p_score_probe_weight" type="number" min="0" max="1" step="0.01" value="0.65"><span
-                        class="hint">ui.score_probe_hint</span></div>
-                  <div class="field score-metric"><label for="p_score_transparent_weight">ui.score_transparent_weight</label><input
-                      id="p_score_transparent_weight" type="number" min="0" max="1" step="0.01" value="0.35"><span
-                        class="hint">ui.score_transparent_hint</span></div>
-                  <div class="field score-metric"><label for="p_score_passive_weight">ui.score_passive_weight</label><input
-                      id="p_score_passive_weight" type="number" min="0" max="1" step="0.01" value="0"><span
-                        class="hint">ui.score_passive_hint</span></div>
-                  <div class="field score-refresh"><label for="p_score_min_interval">ui.score_min_interval</label><input
-                      id="p_score_min_interval" type="text" placeholder="5m"><span
-                        class="hint">ui.score_min_interval_hint</span></div>
-                  <div class="field score-refresh"><label for="p_score_max_age">ui.score_max_age</label><input
-                      id="p_score_max_age" type="text" placeholder="30m"><span class="hint">ui.score_refresh_hint</span></div>
-                  <div class="field score-refresh"><label for="p_score_drift_threshold">ui.score_drift_threshold</label><input
-                      id="p_score_drift_threshold" type="number" min="0" max="1" step="0.01" value="0.03"><span
-                        class="hint">ui.score_drift_hint</span></div>
-                  <div class="field score-refresh"><label for="p_score_half_life">ui.score_half_life</label><input
-                      id="p_score_half_life" type="number" min="1" max="8760" value="168"><span
-                        class="hint">ui.score_half_life_help</span></div>
+                  <div class="field"><span class="field-head"><label for="p_max_accounts_per_bucket">ui.score_bucket_limit</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.score_bucket_range_hint" title="ui.score_bucket_range_hint"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_max_accounts_per_bucket" type="number" min="16" max="4096" value="512"></div>
+                  <div class="field"><span class="field-head"><label for="p_score_half_life">ui.score_half_life</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.score_half_life_help" title="ui.score_half_life_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_score_half_life" type="number" min="1" max="8760" value="168"></div>
+                  <div class="field"><span class="field-head"><label for="p_score_drift_threshold">ui.score_drift_threshold</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.score_drift_hint" title="ui.score_drift_hint"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_score_drift_threshold" type="number" min="0" max="1" step="0.01" value="0.03"></div>
+                  <div class="field"><span class="field-head"><label for="p_score_success_weight">ui.score_success_weight</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.score_success_hint" title="ui.score_success_hint"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_score_success_weight" type="number" min="0" max="1" step="0.01" value="0.5"></div>
+                  <div class="field"><span class="field-head"><label for="p_score_ttft_weight">ui.score_ttft_weight</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.score_ttft_hint" title="ui.score_ttft_hint"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_score_ttft_weight" type="number" min="0" max="1" step="0.01" value="0.3"></div>
+                  <div class="field"><span class="field-head"><label for="p_score_tps_weight">ui.score_tps_weight</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.score_tps_hint" title="ui.score_tps_hint"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_score_tps_weight" type="number" min="0" max="1" step="0.01" value="0.2"></div>
+                  <div class="field"><span class="field-head"><label for="p_score_probe_weight">ui.score_probe_weight</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.score_probe_hint" title="ui.score_probe_hint"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_score_probe_weight" type="number" min="0" max="1" step="0.01" value="0.65"></div>
+                  <div class="field"><span class="field-head"><label for="p_score_transparent_weight">ui.score_transparent_weight</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.score_transparent_hint" title="ui.score_transparent_hint"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_score_transparent_weight" type="number" min="0" max="1" step="0.01" value="0.35"></div>
+                  <div class="field"><span class="field-head"><label for="p_score_passive_weight">ui.score_passive_weight</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.score_passive_hint" title="ui.score_passive_hint"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_score_passive_weight" type="number" min="0" max="1" step="0.01" value="0"></div>
+                  <div class="field"><span class="field-head"><label for="p_score_min_interval">ui.score_min_interval</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.score_min_interval_hint" title="ui.score_min_interval_hint"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_score_min_interval" type="text" placeholder="5m"></div>
+                  <div class="field"><span class="field-head"><label for="p_score_max_age">ui.score_max_age</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.score_refresh_hint" title="ui.score_refresh_hint"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_score_max_age" type="text" placeholder="30m"></div>
+                </div>
+                <div class="toggle-list">
+                  <label class="toggle-row"><input id="p_scoring_enabled" type="checkbox"><span class="toggle-title">ui.enable_health_scoring<span class="hint-icon" tabindex="0" role="img" aria-label="ui.score_enabled_hint" title="ui.score_enabled_hint"><svg class="icon"><use href="#i-info"></use></svg></span></span></label>
                 </div>
               </section>
-              <section class="policy-group policy-group-task-history">
-                <h3 class="section-title"><svg class="icon"><use href="#i-terminal"></use></svg>ui.task_center_and_history</h3>
-                <div class="field-grid">
-                  <div class="field task-history-field">
-                    <label for="p_task_history_enabled">ui.task_history_toggle_label</label>
-                    <label class="check-row"><input id="p_task_history_enabled" type="checkbox"><span>ui.save_task_history</span></label>
-                    <span class="hint">ui.stop_saving_new_task_records_when_disabled</span>
-                  </div>
-                  <div class="field"><label for="p_task_history_retention_days">ui.retention_days</label><input
-                      id="p_task_history_retention_days" type="number" min="1" max="365"><span
-                      class="hint">ui.counted_from_task_completion_default_3_days</span></div>
-                  <div class="field"><label for="p_task_history_max_records">ui.maximum_records</label><input
-                      id="p_task_history_max_records" type="number" min="1" max="10000"><span
-                      class="hint">ui.evict_the_oldest_tasks_first_when_exceeded_default_500</span></div>
-                  <div class="field"><label for="p_task_history_max_bytes_mib">ui.history_archive_size_limit</label><input
-                      id="p_task_history_max_bytes_mib" type="number" min="1" max="4096"><span
-                      class="hint">ui.compressed_disk_usage_of_completed_task_archives_in_mib</span></div>
-                  <div class="field"><label for="p_task_history_max_items">ui.per_task_item_limit</label><input
-                      id="p_task_history_max_items" type="number" min="1" max="100000"><span
-                      class="hint">ui.keep_the_summary_and_mark_item_details_as_truncated</span></div>
-                </div>
-              </section>
-
-              <section class="policy-group policy-group-quality">
+              <section class="policy-group columns-3">
                 <h3 class="section-title"><svg class="icon">
                     <use href="#i-gauge"></use>
                   </svg>ui.quality_thresholds_and_reasoning_evidence</h3>
                 <div class="field-grid">
-                  <div class="field"><label for="p_soft_tps">ui.soft_tps_threshold</label><input id="p_soft_tps" type="number"
-                      min="1" step="0.1"><span class="hint">ui.mark_as_suspicious_when_reached</span></div>
-                  <div class="field"><label for="p_hard_tps">ui.hard_tps_threshold</label><input id="p_hard_tps" type="number"
-                      min="1" step="0.1"><span class="hint">ui.must_be_greater_than_the_soft_threshold</span></div>
-                  <div class="field"><label for="p_consecutive_soft">ui.consecutive_soft_threshold_hits</label><input id="p_consecutive_soft"
-                      type="number" min="1"><span class="hint">ui.take_action_or_cross_verify_only_after_this_many</span></div>
-                  <div class="field"><label for="p_consecutive_errors">ui.consecutive_errors</label><input id="p_consecutive_errors"
-                      type="number" min="1"><span class="hint">ui.take_action_after_this_many_probe_or_proxy_errors</span></div>
-                  <div class="field"><label for="p_consecutive_missing_thinking">ui.consecutive_missing_reasoning_hits</label><input
-                      id="p_consecutive_missing_thinking" type="number" min="1"><span
-                      class="hint">ui.trigger_action_or_cross_verification_after_this_many_responses</span></div>
-                  <div class="field"><label for="p_strike_decay_after">ui.missing_reasoning_strike_decay_window</label><input
-                      id="p_strike_decay_after" type="number" min="0"><span class="hint">ui.hours_default_48_set_to_0_to_disable_automatic</span>
-                  </div>
-                  <div class="field"><label for="p_strike_decay_min_healthy">ui.healthy_samples_required_for_decay</label><input
-                      id="p_strike_decay_min_healthy" type="number" min="0"><span
-                      class="hint">ui.consecutive_healthy_observations_probes_required_within_the_window_default</span></div>
-                  <div class="field"><label for="p_min_generation_ms">ui.minimum_generation_window</label><input id="p_min_generation_ms"
-                      type="number" min="1"><span class="hint">ui.milliseconds</span></div>
-                  <div class="field quality-non-reasoning-models"><label for="p_non_reasoning_models">ui.non_reasoning_models</label><input id="p_non_reasoning_models"
-                      type="text" autocomplete="off"><span class="hint">ui.non_reasoning_models_help</span></div>
-                  <div class="field quality-thinking-toggle">
-                    <label class="check-row" for="p_thinking_guard"><input id="p_thinking_guard"
-                        type="checkbox"><span>ui.enable_missing_reasoning_detection</span></label>
-                    <span class="hint">ui.when_disabled_only_tps_empty_stream_and_similar_quality</span>
-                  </div>
-                  <div class="field"><label for="p_cross_verify">ui.cross_verify</label><select id="p_cross_verify">
+                  <div class="field"><span class="field-head"><label for="p_soft_tps">ui.soft_tps_threshold</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.mark_as_suspicious_when_reached" title="ui.mark_as_suspicious_when_reached"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_soft_tps" type="number" min="1" step="0.1"></div>
+                  <div class="field"><span class="field-head"><label for="p_hard_tps">ui.hard_tps_threshold</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.must_be_greater_than_the_soft_threshold" title="ui.must_be_greater_than_the_soft_threshold"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_hard_tps" type="number" min="1" step="0.1"></div>
+                  <div class="field"><span class="field-head"><label for="p_min_generation_ms">ui.minimum_generation_window</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.min_generation_ms_help" title="ui.min_generation_ms_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_min_generation_ms" type="number" min="1"></div>
+                  <div class="field"><span class="field-head"><label for="p_consecutive_soft">ui.consecutive_soft_threshold_hits</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.take_action_or_cross_verify_only_after_this_many" title="ui.take_action_or_cross_verify_only_after_this_many"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_consecutive_soft" type="number" min="1"></div>
+                  <div class="field"><span class="field-head"><label for="p_consecutive_errors">ui.consecutive_errors</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.take_action_after_this_many_probe_or_proxy_errors" title="ui.take_action_after_this_many_probe_or_proxy_errors"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_consecutive_errors" type="number" min="1"></div>
+                  <div class="field"><span class="field-head"><label for="p_consecutive_missing_thinking">ui.consecutive_missing_reasoning_hits</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.trigger_action_or_cross_verification_after_this_many_responses" title="ui.trigger_action_or_cross_verification_after_this_many_responses"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_consecutive_missing_thinking" type="number" min="1"></div>
+                  <div class="field"><span class="field-head"><label for="p_strike_decay_after">ui.missing_reasoning_strike_decay_window</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.hours_default_48_set_to_0_to_disable_automatic" title="ui.hours_default_48_set_to_0_to_disable_automatic"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_strike_decay_after" type="number" min="0"></div>
+                  <div class="field"><span class="field-head"><label for="p_strike_decay_min_healthy">ui.healthy_samples_required_for_decay</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.consecutive_healthy_observations_probes_required_within_the_window_default" title="ui.consecutive_healthy_observations_probes_required_within_the_window_default"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_strike_decay_min_healthy" type="number" min="0"></div>
+                  <div class="field"><span class="field-head"><label for="p_cross_verify">ui.cross_verify</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.cross_verify_help" title="ui.cross_verify_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><select id="p_cross_verify">
                       <option value="off">ui.cross_verify_off</option>
                       <option value="soft">ui.cross_verify_soft</option>
                       <option value="thinking">ui.cross_verify_thinking</option>
                       <option value="all">ui.cross_verify_all</option>
-                    </select><span class="hint">ui.cross_verify_help</span></div>
-                  <label class="check-card"><input id="p_burst_guard" type="checkbox"><span class="check-copy"><span
-                        class="check-title">ui.strict_short_window_detection</span><span class="check-desc">ui.when_enabled_a_very_short_generation_window_with_tps</span></span></label>
-                  <label class="check-card"><input id="p_shadow_mode" type="checkbox"><span class="check-copy"><span
-                        class="check-title">ui.shadow_mode</span><span class="check-desc">ui.shadow_mode_quality_observations_only</span></span></label>
-                  <div class="field"><label for="p_min_passive_output">ui.minimum_output_tokens_for_passive_audit</label><input
-                      id="p_min_passive_output" type="number" min="1"></div>
-                  <div class="field"><label for="p_min_encrypted_bytes">ui.minimum_encrypted_reasoning_bytes</label><input
-                      id="p_min_encrypted_bytes" type="number" min="1"></div>
-                  <div class="field"><label for="p_encrypted_per_token">ui.ciphertext_bytes_per_reasoning_token</label><input
-                      id="p_encrypted_per_token" type="number" min="1"></div>
-                  <div class="field"><label for="p_missing_cooldown">ui.missing_reasoning_cooldown</label><input id="p_missing_cooldown"
-                      type="text" placeholder="12h"></div>
-                  <div class="field"><label for="p_empty_cooldown">ui.empty_stream_cooldown</label><input id="p_empty_cooldown" type="text"
-                      placeholder="15m"></div>
+                    </select></div>
+                  <div class="field"><span class="field-head"><label for="p_min_passive_output">ui.minimum_output_tokens_for_passive_audit</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.min_passive_output_help" title="ui.min_passive_output_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_min_passive_output" type="number" min="1"></div>
+                  <div class="field"><span class="field-head"><label for="p_min_encrypted_bytes">ui.minimum_encrypted_reasoning_bytes</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.min_encrypted_bytes_help" title="ui.min_encrypted_bytes_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_min_encrypted_bytes" type="number" min="1"></div>
+                  <div class="field"><span class="field-head"><label for="p_encrypted_per_token">ui.ciphertext_bytes_per_reasoning_token</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.encrypted_per_token_help" title="ui.encrypted_per_token_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_encrypted_per_token" type="number" min="1"></div>
+                  <div class="field"><span class="field-head"><label for="p_missing_cooldown">ui.missing_reasoning_cooldown</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.missing_cooldown_help" title="ui.missing_cooldown_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_missing_cooldown" type="text" placeholder="12h"></div>
+                  <div class="field"><span class="field-head"><label for="p_empty_cooldown">ui.empty_stream_cooldown</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.empty_cooldown_help" title="ui.empty_cooldown_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_empty_cooldown" type="text" placeholder="15m"></div>
+                  <div class="field full"><span class="field-head"><label for="p_non_reasoning_models">ui.non_reasoning_models</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.non_reasoning_models_help" title="ui.non_reasoning_models_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_non_reasoning_models" type="text" autocomplete="off"></div>
+                </div>
+                <div class="toggle-list">
+                  <label class="toggle-row"><input id="p_thinking_guard" type="checkbox"><span class="toggle-title">ui.enable_missing_reasoning_detection<span class="hint-icon" tabindex="0" role="img" aria-label="ui.when_disabled_only_tps_empty_stream_and_similar_quality" title="ui.when_disabled_only_tps_empty_stream_and_similar_quality"><svg class="icon"><use href="#i-info"></use></svg></span></span></label>
+                  <label class="toggle-row"><input id="p_burst_guard" type="checkbox"><span class="toggle-title">ui.strict_short_window_detection<span class="hint-icon" tabindex="0" role="img" aria-label="ui.when_enabled_a_very_short_generation_window_with_tps" title="ui.when_enabled_a_very_short_generation_window_with_tps"><svg class="icon"><use href="#i-info"></use></svg></span></span></label>
+                  <label class="toggle-row"><input id="p_shadow_mode" type="checkbox"><span class="toggle-title">ui.shadow_mode<span class="hint-icon" tabindex="0" role="img" aria-label="ui.shadow_mode_quality_observations_only" title="ui.shadow_mode_quality_observations_only"><svg class="icon"><use href="#i-info"></use></svg></span></span></label>
                 </div>
               </section>
-              <section class="policy-group policy-group-probe">
+              <section class="policy-group">
                 <h3 class="section-title"><svg class="icon">
                     <use href="#i-eye"></use>
-                  </svg>ui.transparent_stream_protection_and_active_probes</h3>
+                  </svg>ui.transparent_stream_protection</h3>
                 <div class="field-grid">
-                  <div class="field"><label for="p_min_hold_output">ui.minimum_buffered_output_tokens</label><input id="p_min_hold_output"
-                      type="number" min="1"></div>
-                  <div class="field"><label for="p_hold_timeout">ui.buffer_timeout</label><input id="p_hold_timeout" type="text"
-                      placeholder="30s"></div>
-                  <div class="field"><label for="p_attempt_timeout">ui.attempt_timeout</label><input id="p_attempt_timeout"
-                      type="text" placeholder="60s"><span class="hint">ui.attempt_timeout_help</span></div>
-                  <div class="field"><label for="p_request_timeout">ui.request_timeout</label><input
-                      id="p_request_timeout" type="text" placeholder="120s"><span class="hint">ui.request_timeout_help</span></div>
-                  <div class="field"><label for="p_hold_keepalive">ui.hold_keepalive_interval</label><input id="p_hold_keepalive"
-                      type="text" placeholder="5s"></div>
-                  <div class="field"><label for="p_hold_max_bytes">ui.maximum_buffer_bytes</label><input id="p_hold_max_bytes"
-                      type="number" min="1"></div>
-                  <div class="field"><label for="p_max_attempts">ui.maximum_attempts_in_transparent_mode</label><input id="p_max_attempts"
-                      type="number" min="1"></div>
-                  <div class="field"><label for="p_on_exhausted">ui.behavior_when_candidates_are_exhausted</label><select id="p_on_exhausted">
+                  <div class="field"><span class="field-head"><label for="p_min_hold_output">ui.minimum_buffered_output_tokens</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.min_hold_output_help" title="ui.min_hold_output_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_min_hold_output" type="number" min="1"></div>
+                  <div class="field"><span class="field-head"><label for="p_hold_timeout">ui.buffer_timeout</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.hold_timeout_help" title="ui.hold_timeout_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_hold_timeout" type="text" placeholder="30s"></div>
+                  <div class="field"><span class="field-head"><label for="p_attempt_timeout">ui.attempt_timeout</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.attempt_timeout_help" title="ui.attempt_timeout_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_attempt_timeout" type="text" placeholder="60s"></div>
+                  <div class="field"><span class="field-head"><label for="p_request_timeout">ui.request_timeout</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.request_timeout_help" title="ui.request_timeout_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_request_timeout" type="text" placeholder="120s"></div>
+                  <div class="field"><span class="field-head"><label for="p_hold_keepalive">ui.hold_keepalive_interval</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.hold_keepalive_help" title="ui.hold_keepalive_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_hold_keepalive" type="text" placeholder="5s"></div>
+                  <div class="field"><span class="field-head"><label for="p_hold_max_bytes">ui.maximum_buffer_bytes</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.hold_max_bytes_help" title="ui.hold_max_bytes_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_hold_max_bytes" type="number" min="1"></div>
+                  <div class="field"><span class="field-head"><label for="p_max_attempts">ui.maximum_attempts_in_transparent_mode</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.max_attempts_help" title="ui.max_attempts_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_max_attempts" type="number" min="1"></div>
+                  <div class="field"><span class="field-head"><label for="p_on_exhausted">ui.behavior_when_candidates_are_exhausted</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.on_exhausted_help" title="ui.on_exhausted_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><select id="p_on_exhausted">
                       <option value="fail_unverified">ui.exhausted_fail_unverified</option>
                       <option value="fail_closed">ui.exhausted_fail_closed</option>
                     </select></div>
-                  <div class="field"><label for="p_probe_healthy_interval_hours">ui.healthy_account_probe_interval</label><input
-                      id="p_probe_healthy_interval_hours" type="number" min="0" step="1" placeholder="0"><span
-                      class="hint">ui.hours_zero_disables_active_healthy_probes</span></div>
-                  <div class="field"><label for="p_probe_model">ui.probe_model</label><input id="p_probe_model" type="text"
-                      autocomplete="off" placeholder="grok-4.5"></div>
-                  <div class="field"><label for="p_probe_timeout">ui.probe_timeout</label><input id="p_probe_timeout" type="text"
-                      placeholder="90s"></div>
-                  <div class="field"><label for="p_probe_max_output">ui.maximum_probe_output_tokens</label><input id="p_probe_max_output"
-                      type="number" min="1"></div>
-                  <div class="field"><label for="p_probe_concurrency">ui.probe_batch_concurrency</label><input id="p_probe_concurrency"
-                      type="number" min="1"></div>
-                  <div class="field"><label for="p_probe_queue_size">ui.probe_batch_queue_capacity</label><input id="p_probe_queue_size"
-                      type="number" min="1" max="1000000"></div>
-                  <div class="field"><label for="p_probe_scan_interval">ui.scan_interval</label><input id="p_probe_scan_interval"
-                      type="text" placeholder="15s"></div>
-                  <div class="field"><label for="p_probe_unknown_delay">ui.pending_check_delay</label><input id="p_probe_unknown_delay"
-                      type="text" placeholder="30s"></div>
-                  <div class="field"><label for="p_probe_unknown_jitter">ui.pending_check_jitter</label><input id="p_probe_unknown_jitter"
-                      type="text" placeholder="30s"></div>
-                  <div class="field"><label for="p_probe_suspect_backoff">ui.suspicious_state_backoff</label><input
-                      id="p_probe_suspect_backoff" type="text" placeholder="15m"></div>
-                  <div class="field"><label for="p_probe_max_backoff">ui.maximum_backoff</label><input id="p_probe_max_backoff"
-                      type="text" placeholder="1h"></div>
+                </div>
+              </section>
+              <section class="policy-group">
+                <h3 class="section-title"><svg class="icon">
+                    <use href="#i-activity"></use>
+                  </svg>ui.active_probes</h3>
+                <div class="field-grid">
+                  <div class="field"><span class="field-head"><label for="p_probe_healthy_interval_hours">ui.healthy_account_probe_interval</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.hours_zero_disables_active_healthy_probes" title="ui.hours_zero_disables_active_healthy_probes"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_probe_healthy_interval_hours" type="number" min="0" step="1" placeholder="0"></div>
+                  <div class="field"><span class="field-head"><label for="p_probe_model">ui.probe_model</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.probe_model_help" title="ui.probe_model_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_probe_model" type="text" autocomplete="off" placeholder="grok-4.5"></div>
+                  <div class="field"><span class="field-head"><label for="p_probe_timeout">ui.probe_timeout</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.probe_timeout_help" title="ui.probe_timeout_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_probe_timeout" type="text" placeholder="90s"></div>
+                  <div class="field"><span class="field-head"><label for="p_probe_max_output">ui.maximum_probe_output_tokens</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.probe_max_output_help" title="ui.probe_max_output_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_probe_max_output" type="number" min="1"></div>
+                  <div class="field"><span class="field-head"><label for="p_probe_concurrency">ui.probe_batch_concurrency</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.probe_concurrency_help" title="ui.probe_concurrency_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_probe_concurrency" type="number" min="1"></div>
+                  <div class="field"><span class="field-head"><label for="p_probe_queue_size">ui.probe_batch_queue_capacity</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.probe_queue_help" title="ui.probe_queue_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_probe_queue_size" type="number" min="1" max="1000000"></div>
+                  <div class="field"><span class="field-head"><label for="p_probe_scan_interval">ui.scan_interval</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.probe_scan_help" title="ui.probe_scan_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_probe_scan_interval" type="text" placeholder="15s"></div>
+                  <div class="field"><span class="field-head"><label for="p_probe_unknown_delay">ui.pending_check_delay</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.probe_unknown_delay_help" title="ui.probe_unknown_delay_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_probe_unknown_delay" type="text" placeholder="30s"></div>
+                  <div class="field"><span class="field-head"><label for="p_probe_unknown_jitter">ui.pending_check_jitter</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.probe_jitter_help" title="ui.probe_jitter_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_probe_unknown_jitter" type="text" placeholder="30s"></div>
+                  <div class="field"><span class="field-head"><label for="p_probe_suspect_backoff">ui.suspicious_state_backoff</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.probe_backoff_help" title="ui.probe_backoff_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_probe_suspect_backoff" type="text" placeholder="15m"></div>
+                  <div class="field"><span class="field-head"><label for="p_probe_max_backoff">ui.maximum_backoff</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.probe_max_backoff_help" title="ui.probe_max_backoff_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_probe_max_backoff" type="text" placeholder="1h"></div>
+                </div>
+              </section>
+              <section class="policy-group">
+                <h3 class="section-title"><svg class="icon">
+                    <use href="#i-terminal"></use>
+                  </svg>ui.task_center_and_history</h3>
+                <div class="field-grid">
+                  <div class="field"><span class="field-head"><label for="p_task_history_retention_days">ui.retention_days</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.counted_from_task_completion_default_3_days" title="ui.counted_from_task_completion_default_3_days"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_task_history_retention_days" type="number" min="1" max="365"></div>
+                  <div class="field"><span class="field-head"><label for="p_task_history_max_records">ui.maximum_records</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.evict_the_oldest_tasks_first_when_exceeded_default_500" title="ui.evict_the_oldest_tasks_first_when_exceeded_default_500"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_task_history_max_records" type="number" min="1" max="10000"></div>
+                  <div class="field"><span class="field-head"><label for="p_task_history_max_bytes_mib">ui.history_archive_size_limit</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.compressed_disk_usage_of_completed_task_archives_in_mib" title="ui.compressed_disk_usage_of_completed_task_archives_in_mib"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_task_history_max_bytes_mib" type="number" min="1" max="4096"></div>
+                  <div class="field"><span class="field-head"><label for="p_task_history_max_items">ui.per_task_item_limit</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.keep_the_summary_and_mark_item_details_as_truncated" title="ui.keep_the_summary_and_mark_item_details_as_truncated"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_task_history_max_items" type="number" min="1" max="100000"></div>
+                </div>
+                <div class="toggle-list">
+                  <label class="toggle-row"><input id="p_task_history_enabled" type="checkbox"><span class="toggle-title">ui.save_task_history<span class="hint-icon" tabindex="0" role="img" aria-label="ui.stop_saving_new_task_records_when_disabled" title="ui.stop_saving_new_task_records_when_disabled"><svg class="icon"><use href="#i-info"></use></svg></span></span></label>
                 </div>
               </section>
               <div class="form-actions policy-actions">
@@ -5168,19 +5104,6 @@
                 <span class="status-line" id="policyStatus">ui.changes_take_effect_on_save_no_cpa_restart_required</span>
               </div>
             </div>
-            <aside class="card sticky-card settings-summary-card">
-              <div class="card-header compact">
-                <div>
-                  <h2 class="section-title"><svg class="icon">
-                      <use href="#i-sliders"></use>
-                    </svg>ui.policy_summary</h2>
-                  <p>ui.hot_reloads_immediately_after_saving</p>
-                </div><span class="badge info" id="policyModeBadge">action.observe</span>
-              </div>
-              <div class="card-body">
-                <div class="summary-grid" id="settingsPolicySummary"></div>
-              </div>
-            </aside>
           </form>
         </div>
       </section>
@@ -5764,7 +5687,11 @@
       return raw;
     };
     const VERDICT_TONES = { quality: 'bad', transport: 'warn', account: 'warn', inconclusive: 'info', ignored: '' };
-    const verdictTone = (verdict) => (verdict && VERDICT_TONES[verdict.category]) || '';
+    const verdictTone = (verdict) => {
+      if (!verdict) return '';
+      if (verdict.decision === 'deliver' && !verdict.code) return 'good';
+      return VERDICT_TONES[verdict.category] || '';
+    };
     const verdictCategoryLabel = (value) => i18n.t('verdict.category.' + (value || 'ignored'));
     const verdictDecisionLabel = (value) => i18n.t('verdict.decision.' + (value || 'observe'));
     const verdictCodeLabel = (value) => value ? reasonLabel(value) : i18n.t('reason.none');
@@ -5772,28 +5699,51 @@
       if (!verdict) return '';
       const evidence = verdict.evidence || {};
       const chips = [];
-      if (evidence.encrypted_bytes > 0) chips.push(i18n.t('verdict.evidence.encrypted', { bytes: formatBytes(evidence.encrypted_bytes), floor: formatBytes(evidence.encrypted_floor) }));
-      if (evidence.reasoning_tokens > 0) chips.push(i18n.t('verdict.evidence.reasoning', { tokens: num(evidence.reasoning_tokens) }));
-      if (evidence.visible_tokens > 0) chips.push(i18n.t('verdict.evidence.visible', { tokens: num(evidence.visible_tokens) }));
-      if (evidence.first_token_ms > 0) chips.push(i18n.t('verdict.evidence.ttft', { value: num(evidence.first_token_ms) }));
-      if (evidence.tps > 0) chips.push(i18n.t('verdict.evidence.tps', { value: num(evidence.tps, 1) }));
+      if (!evidence.encrypted_bytes && !evidence.has_thinking && !evidence.reasoning_tokens && verdict.category === 'quality') chips.push(i18n.t('verdict.evidence.no_ciphertext'));
       if (evidence.hold_expired) chips.push(i18n.t('verdict.evidence.hold_expired'));
       if (evidence.strikes > 0) chips.push(i18n.t('verdict.evidence.strikes', { strikes: num(evidence.strikes) }));
       return chips.map((chip) => '<span class="verdict-chip">' + esc(chip) + '</span>').join('');
     };
-    const verdictSummaryLine = (verdict) => verdict
-      ? '<span class="verdict-dot ' + esc(verdictTone(verdict)) + '"></span>' + esc(verdictDecisionLabel(verdict.decision)) + i18n.t('ui.meta_separator') + esc(verdictCodeLabel(verdict.code))
-      : '';
+    const verdictSummaryLine = (verdict) => {
+      if (!verdict) return '';
+      const decision = verdictDecisionLabel(verdict.decision);
+      return verdict.code ? decision + i18n.t('ui.meta_separator') + verdictCodeLabel(verdict.code) : decision;
+    };
+    const verdictSummaryHTML = (verdict, fallback) => {
+      const text = verdict ? verdictSummaryLine(verdict) : fallback;
+      const dot = verdict ? '<span class="verdict-dot ' + esc(verdictTone(verdict)) + '"></span>' : '';
+      return { html: dot + esc(text), text };
+    };
+    // Row evidence keeps only the values that explain the decision. TPS is a
+    // dedicated column and the source/time live in the timeline cell, so they
+    // are deliberately absent here.
+    const verdictRowEvidence = (verdict) => {
+      const evidence = verdict && verdict.evidence;
+      if (!evidence) return '';
+      const parts = [];
+      if (evidence.encrypted_bytes > 0) {
+        parts.push(i18n.t('verdict.evidence.encrypted', { bytes: formatBytes(evidence.encrypted_bytes), floor: formatBytes(evidence.encrypted_floor) }));
+      } else if (verdict.category === 'quality' && !evidence.has_thinking && !evidence.reasoning_tokens) {
+        parts.push(i18n.t('verdict.evidence.no_ciphertext'));
+      }
+      if (evidence.reasoning_tokens > 0) parts.push(i18n.t('verdict.evidence.reasoning', { tokens: num(evidence.reasoning_tokens) }));
+      if (evidence.visible_tokens > 0) parts.push(i18n.t('verdict.evidence.visible', { tokens: num(evidence.visible_tokens) }));
+      if (evidence.hold_expired) parts.push(i18n.t('verdict.evidence.hold_expired'));
+      if (evidence.strikes > 0) parts.push(i18n.t('verdict.evidence.strikes', { strikes: num(evidence.strikes) }));
+      return parts.slice(0, 4).join(i18n.t('ui.meta_separator'));
+    };
     const verdictCard = (verdict) => {
       if (!verdict) return '';
       const tone = verdictTone(verdict);
       const detail = verdict.detail ? reasonText(verdict.detail) : '';
+      const code = verdict.code ? verdictCodeLabel(verdict.code) : '';
+      const showDetail = detail && detail !== code;
       return '<div class="drawer-section verdict-card ' + esc(tone) + '">' +
         '<div class="verdict-head">' + badge(verdictDecisionLabel(verdict.decision), tone) +
-        '<span class="verdict-code">' + esc(verdictCodeLabel(verdict.code)) + '</span>' +
-        '<span class="verdict-time">' + esc(formatFullTime(verdict.at)) + '</span></div>' +
+        (code ? '<span class="verdict-code">' + esc(code) + '</span>' : '') +
+        '<span class="verdict-time">' + esc(relativeTime(verdict.at)) + ' · ' + esc(formatFullTime(verdict.at)) + '</span></div>' +
+        (showDetail ? '<div class="verdict-detail">' + esc(detail) + '</div>' : '') +
         '<div class="verdict-evidence">' + verdictEvidenceChips(verdict) + '</div>' +
-        (detail ? '<div class="verdict-detail">' + esc(detail) + '</div>' : '') +
         '</div>';
     };
     const sourceLabel = (value) => {
@@ -5889,6 +5839,22 @@
       if (Number.isNaN(date.getTime()) || date.getFullYear() < 2000) return '-';
       return new Intl.DateTimeFormat(i18n.intlLocale, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(date);
     };
+    const relativeTime = (value) => {
+      if (!value) return '-';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime()) || date.getFullYear() < 2000) return '-';
+      try {
+        const formatter = new Intl.RelativeTimeFormat(i18n.intlLocale, { numeric: 'auto', style: 'short' });
+        const seconds = Math.round((date.getTime() - Date.now()) / 1000);
+        const abs = Math.abs(seconds);
+        if (abs < 60) return formatter.format(seconds, 'second');
+        if (abs < 3600) return formatter.format(Math.round(seconds / 60), 'minute');
+        if (abs < 86400) return formatter.format(Math.round(seconds / 3600), 'hour');
+        return formatter.format(Math.round(seconds / 86400), 'day');
+      } catch (_) {
+        return formatTime(value);
+      }
+    };
     const formatBytes = (value) => {
       const bytes = Number(value || 0);
       if (bytes < 1024) return num(bytes) + ' B';
@@ -5897,33 +5863,40 @@
     };
     const yesNo = (value) => i18n.t(value ? 'ui.yes' : 'ui.no');
     const evidenceCell = (label, value) => '<div class="detail-cell"><div class="detail-label">' + esc(label) + '</div><div class="detail-value">' + esc(value) + '</div></div>';
+    // evidenceSection renders only values that are not already obvious from the
+    // verdict card above it: one metric per cell so every row has a stable,
+    // scannable height.
+    const evidenceCellWideHTML = (label, html) => '<div class="detail-cell detail-cell-wide"><div class="detail-label">' + esc(label) + '</div><div class="detail-value detail-value-wrap">' + html + '</div></div>';
     const evidenceSection = (evidence) => {
       if (!evidence) return '';
       const classText = evidence.class ? reasonLabel(evidence.class) : i18n.t('reason.passed');
       const actionText = qualityActionLabel(evidence.action) || i18n.t('quality.action.unknown');
       const protocolText = protocolLabel(evidence.protocol);
+      const ms = (value) => i18n.t('ui.duration_milliseconds', { value: num(value) });
       const flags = [
-        i18n.t('ui.genuine_reasoning', { value: yesNo(evidence.has_thinking) }),
-        i18n.t('ui.plaintext_reasoning', { value: yesNo(evidence.has_reasoning_delta) }),
-        i18n.t('ui.reasoning_required', { value: yesNo(evidence.reasoning_required) }),
-        i18n.t('ui.reasoning_started', { value: yesNo(evidence.reasoning_started) }),
-        i18n.t('ui.semantic_output', { value: yesNo(evidence.semantic_output) }),
-        i18n.t('ui.usage_reported', { value: yesNo(evidence.usage_reported) })
-      ].join(i18n.t('ui.meta_separator'));
+        ['ui.genuine_reasoning', evidence.has_thinking],
+        ['ui.plaintext_reasoning', evidence.has_reasoning_delta],
+        ['ui.reasoning_required', evidence.reasoning_required],
+        ['ui.reasoning_started', evidence.reasoning_started],
+        ['ui.semantic_output', evidence.semantic_output],
+        ['ui.usage_reported', evidence.usage_reported]
+      ].map(([key, value]) => '<span class="flag-chip ' + (value ? 'on' : '') + '">' + esc(i18n.t(key, { value: yesNo(value) })) + '</span>').join('');
       return [
-        '<div class="drawer-section"><h3>' + i18n.t('ui.quality_verdict_evidence') + '</h3><div class="detail-grid">',
-        evidenceCell(i18n.t('ui.verdict_source'), sourceLabel(evidence.source) + i18n.t('ui.meta_separator') + formatFullTime(evidence.at)),
+        '<div class="drawer-section"><h3>' + i18n.t('ui.quality_verdict_evidence') + '</h3><div class="detail-grid evidence-grid">',
+        evidenceCell(i18n.t('ui.verdict_source'), sourceLabel(evidence.source)),
         evidenceCell(i18n.t('ui.verdict_result'), classText + i18n.t('ui.meta_separator') + actionText),
-        evidenceCell(i18n.t('ui.verdict_explanation'), reasonText(evidence.reason) || '-'),
-      evidenceCell(i18n.t('ui.protocol_mode'), protocolText + i18n.t('ui.meta_separator') + i18n.t(evidence.streaming ? 'ui.streaming' : 'ui.non_streaming')),
-        evidenceCell(i18n.t('ui.terminal_timeout'), i18n.t('ui.terminal_timed_out', { terminal: yesNo(evidence.terminal), timeout: yesNo(evidence.hold_expired) })),
-        evidenceCell(i18n.t('ui.visible_output_reasoning'), i18n.t('ui.visible_output_reasoning_2', { visible: num(evidence.visible_tokens), output: num(evidence.output_tokens), reasoning: num(evidence.reasoning_tokens) })),
-        evidenceCell(i18n.t('ui.ciphertext_minimum'), i18n.t('ui.ciphertext_minimum_2', { cipher: formatBytes(evidence.encrypted_bytes), floor: formatBytes(evidence.encrypted_floor) })),
-        evidenceCell(i18n.t('ui.first_token_total_time'), i18n.t('ui.first_token_ms_total_time_ms', { first: num(evidence.first_token_ms), total: num(evidence.duration_ms) })),
-        evidenceCell(i18n.t('ui.generation_window_visible_output_delay'), i18n.t('ui.generation_window_ms_visible_output_delay_ms', { window: num(evidence.generation_ms), delay: num(evidence.visible_flush_ms) })),
+        evidenceCell(i18n.t('ui.protocol_mode'), protocolText + i18n.t('ui.meta_separator') + i18n.t(evidence.streaming ? 'ui.streaming' : 'ui.non_streaming')),
+        evidenceCell(i18n.t('ui.visible_tokens'), num(evidence.visible_tokens)),
+        evidenceCell(i18n.t('ui.output_tokens'), num(evidence.output_tokens)),
+        evidenceCell(i18n.t('ui.reasoning_tokens'), num(evidence.reasoning_tokens)),
+        evidenceCell(i18n.t('ui.ciphertext_minimum'), formatBytes(evidence.encrypted_bytes) + i18n.t('ui.meta_separator') + formatBytes(evidence.encrypted_floor)),
+        evidenceCell(i18n.t('ui.first_token'), ms(evidence.first_token_ms)),
+        evidenceCell(i18n.t('ui.total_duration'), ms(evidence.duration_ms)),
+        evidenceCell(i18n.t('ui.generation_window'), ms(evidence.generation_ms)),
         evidenceCell(i18n.t('ui.output_speed'), num(evidence.tps, 1) + ' TPS'),
-        evidenceCell(i18n.t('ui.reasoning_evidence_state'), flags),
-        evidenceCell(i18n.t('ui.parse_statistics'), i18n.t('ui.chunks_bytes_events_unknown_parse_failures', { chunks: num(evidence.chunk_count), bytes: formatBytes(evidence.byte_count), events: num(evidence.event_count), unknown: num(evidence.unknown_events), failed: num(evidence.parse_failures) })),
+        evidenceCell(i18n.t('ui.terminal_timeout'), i18n.t('ui.terminal_timed_out', { terminal: yesNo(evidence.terminal), timeout: yesNo(evidence.hold_expired) })),
+        evidenceCellWideHTML(i18n.t('ui.reasoning_evidence_state'), flags),
+        evidenceCellWideHTML(i18n.t('ui.parse_statistics'), esc(i18n.t('ui.chunks_bytes_events_unknown_parse_failures', { chunks: num(evidence.chunk_count), bytes: formatBytes(evidence.byte_count), events: num(evidence.event_count), unknown: num(evidence.unknown_events), failed: num(evidence.parse_failures) }))),
         '</div><p class="hint" style="margin-top:9px">' + i18n.t('ui.preview_privacy_note') + '</p></div>'
       ].join('');
     };
@@ -6790,6 +6763,9 @@
     function statCard(iconName, value, label, detail) {
       return '<div class="stat-cell"><span class="stat-icon">' + icon(iconName) + '</span><div><p class="stat-label">' + esc(label) + '</p><p class="stat-value">' + esc(value) + '</p><p class="stat-detail">' + esc(detail || '') + '</p></div></div>';
     }
+    function policyChip(label, value) {
+      return '<span class="policy-chip"><span class="policy-chip-label">' + esc(label) + '</span><span class="policy-chip-value">' + esc(value) + '</span></span>';
+    }
     function summaryItem(label, value, options) {
       const settings = options || {};
       const valueClass = settings.truncate ? 'summary-value truncate' : 'summary-value';
@@ -6911,7 +6887,15 @@
         summaryItem(i18n.t('ui.event_retention'), esc(num(policy.events_limit || 0)))
       ].join('');
       document.getElementById('policySummary').innerHTML = policyHTML;
-      document.getElementById('settingsPolicySummary').innerHTML = policyHTML;
+      const probe = policy.probe || {};
+      document.getElementById('settingsPolicySummary').innerHTML = [
+        policyChip(i18n.t('ui.detection_mode'), modeLabel(policy)),
+        policyChip(i18n.t('ui.tps_thresholds'), i18n.t('ui.soft_hard_values', { soft: num(quality.soft_tps, 1), hard: num(quality.hard_tps, 1) })),
+        policyChip(i18n.t('ui.consecutive_thresholds'), i18n.t('ui.soft_error_missing_thinking_values', { soft: num(quality.consecutive_soft || 2), errors: num(quality.consecutive_errors || 2), thinking: num(quality.consecutive_missing_thinking || 2) })),
+        policyChip(i18n.t('ui.cross_verify'), i18n.t('ui.cross_verify_' + (quality.cross_verify || 'thinking'))),
+        policyChip(i18n.t('ui.transparent_stream_protection'), i18n.t('ui.transparent_budget_values', { hold: quality.hold_timeout || '30s', attempt: quality.attempt_timeout || '60s', request: quality.request_timeout || '120s', attempts: num(quality.max_attempts || 4) })),
+        policyChip(i18n.t('ui.active_probes'), i18n.t('ui.scan_concurrency_queue_values', { scan: String(probe.scan_interval || '15s'), concurrency: num(probe.concurrency || 1), queue: num(probe.queue_size || 10000) }))
+      ].join('');
       document.getElementById('policyModeBadge').textContent = modeLabel(policy);
       const proxySummary = state.proxy || {};
       const proxyCounts = proxySummaryCounts(proxySummary);
@@ -7016,16 +7000,20 @@
       const isolatedByGuard = ['cooling', 'quota_exhausted', 'credential_invalid', 'disabled_by_guard'].includes(account.state);
       const disableReason = account.disable_reason ? reasonLabel(account.disable_reason) : '';
       const verdict = account.verdict || null;
-      const reasonSummary = isolatedByGuard ? i18n.t('ui.account_disabled') : (verdict ? verdictSummaryLine(verdict) : reasonLabel(account.last_reason));
-      const evidenceSummary = verdict && verdict.evidence ? verdictEvidenceChips(verdict) : '';
-      const attemptDetail = evidenceSummary || (account.last_attempt ? i18n.t('ui.last_attempt', { value: attemptLabel(account.last_attempt, { includeTime: false }) }) : i18n.t('ui.last_observed', { time: formatTime(account.last_observed_at) }));
-      const attemptDetailContent = evidenceSummary ? evidenceSummary : attemptDetailHTML(account, attemptDetail);
+      const reasonSummary = verdict
+        ? verdictSummaryHTML(verdict, '')
+        : verdictSummaryHTML(null, isolatedByGuard ? i18n.t('ui.account_disabled') : reasonLabel(account.last_reason));
+      const evidenceSummary = verdictRowEvidence(verdict);
+      const attemptDetail = evidenceSummary || (account.last_attempt ? attemptLabel(account.last_attempt, { includeTime: false }) : i18n.t('ui.last_observed', { time: formatTime(account.last_observed_at) }));
+      const attemptDetailContent = evidenceSummary ? esc(evidenceSummary) : attemptDetailHTML(account, attemptDetail);
+      const observedAt = account.last_observed_at ? i18n.t('ui.observed_ago', { time: relativeTime(account.last_observed_at) }) : '';
+      const observedLine = observedAt ? '<div class="subline truncate-line" title="' + esc(formatFullTime(account.last_observed_at)) + '">' + esc(observedAt) + '</div>' : '';
       const reasonTextValue = disableReason ? i18n.t('ui.disable_reason', { reason: disableReason }) : '';
       const disableReasonDetail = reasonTextValue ? '<div class="subline truncate-line" title="' + esc(reasonTextValue) + '">' + esc(reasonTextValue) + '</div>' : '';
       const displayName = account.display_full || account.display || account.label || i18n.t('ui.unnamed_account');
       const displayID = account.auth_id_display || account.auth_id;
       return '<tr><td class="select-cell"><input type="checkbox" data-account-select="' + authID + '" aria-label="' + i18n.t('ui.select_account') + '" ' + (selected ? 'checked' : '') + '></td>' +
-        '<td><div class="account-name truncate-line" title="' + esc(displayName) + '">' + esc(account.display || account.label || i18n.t('ui.unnamed_account')) + '</div><div class="subline truncate-line" title="' + esc(account.auth_id) + '">' + esc(displayID) + '</div></td><td class="status-cell nowrap">' + badge(stateLabel(account.state), stateTone(account.state)) + '</td><td><div class="truncate-line" title="' + esc(reasonSummary) + '">' + esc(reasonSummary) + '</div><div class="subline truncate-line" title="' + esc(attemptDetail) + '">' + attemptDetailContent + '</div>' + disableReasonDetail + '</td><td><div class="metric-inline"><strong>' + esc(num(account.tps, 1)) + '</strong><span class="muted">TPS</span></div><div class="subline truncate-line" title="' + esc(metricDetail) + '">' + esc(metricDetail) + '</div></td><td class="proxy-cell">' + proxyCell + '</td><td class="time-cell"><div class="cell-primary truncate-line" title="' + esc(cooldown) + '">' + esc(cooldown) + '</div></td>' + '<td class="actions-cell"><div class="actions"><button class="btn btn-xs" type="button" data-account-action="accounts.probe" data-auth="' + authID + '">' + icon('play') + esc(i18n.t('ui.probe')) + '</button><button class="btn btn-xs" type="button" data-open-account="' + authID + '">' + icon('eye') + esc(i18n.t('ui.details')) + '</button></div></td></tr>';
+        '<td><div class="account-name truncate-line" title="' + esc(displayName) + '">' + esc(account.display || account.label || i18n.t('ui.unnamed_account')) + '</div><div class="subline truncate-line" title="' + esc(account.auth_id) + '">' + esc(displayID) + '</div></td><td class="status-cell nowrap">' + badge(stateLabel(account.state), stateTone(account.state)) + '</td><td><div class="truncate-line verdict-line" title="' + esc(reasonSummary.text) + '">' + reasonSummary.html + '</div><div class="subline truncate-line" title="' + esc(attemptDetail) + '">' + attemptDetailContent + '</div>' + disableReasonDetail + '</td><td><div class="metric-inline"><strong>' + esc(num(account.tps, 1)) + '</strong><span class="muted">TPS</span></div><div class="subline truncate-line" title="' + esc(metricDetail) + '">' + esc(metricDetail) + '</div></td><td class="proxy-cell">' + proxyCell + '</td><td class="time-cell"><div class="cell-primary truncate-line" title="' + esc(cooldown) + '">' + esc(cooldown) + '</div>' + observedLine + '</td>' + '<td class="actions-cell"><div class="actions"><button class="btn btn-xs" type="button" data-account-action="accounts.probe" data-auth="' + authID + '">' + icon('play') + esc(i18n.t('ui.probe')) + '</button><button class="btn btn-xs" type="button" data-open-account="' + authID + '">' + icon('eye') + esc(i18n.t('ui.details')) + '</button></div></td></tr>';
     }
 
     function leaseStatus(account) {
@@ -9844,33 +9832,19 @@
       document.getElementById('eventRows').innerHTML = result.items.map((event) => {
         const category = event.category || 'ignored';
         const tone = VERDICT_TONES[category] || '';
-        const title = actionLabel(event.action);
-        const eventResult = event.result ? resultLabel(event.result) : '';
         const code = event.code || event.class || '';
         const codeLabel = code ? verdictCodeLabel(code) : '';
+        const action = actionLabel(event.action);
+        const title = codeLabel || action;
         const detailText = localizeDetail(event.detail);
-        const showCode = codeLabel && !detailText.includes(codeLabel);
-        const meta = [showCode ? esc(codeLabel) : '', eventDetailHTML(event, detailText)].filter(Boolean).join(i18n.t('ui.meta_separator'));
-        const decision = event.decision ? badge(verdictDecisionLabel(event.decision), tone) : '';
-        return '<div class="event-item"><span class="event-dot ' + esc(tone) + '"></span><div style="min-width:0"><div class="event-title"><span>' + esc(title) + '</span>' + decision + (eventResult ? badge(eventResult, tone === 'good' ? 'good' : '') : '') + '</div><div class="event-meta">' + esc(event.auth_id || i18n.t('ui.system_event')) + (meta ? i18n.t('ui.meta_separator') + meta : '') + '</div></div><time class="recent-time">' + esc(formatFullTime(event.time)) + '</time></div>';
+        const detail = detailText && detailText !== codeLabel ? eventDetailHTML(event, detailText) : '';
+        const meta = [codeLabel ? esc(action) : '', esc(event.auth_id || i18n.t('ui.system_event')), detail].filter(Boolean).join(i18n.t('ui.meta_separator'));
+        const decision = event.decision ? badge(verdictDecisionLabel(event.decision), tone) : (event.result ? badge(resultLabel(event.result), '') : '');
+        return '<div class="event-item"><span class="event-dot ' + esc(tone) + '"></span><div style="min-width:0"><div class="event-title"><span>' + esc(title) + '</span>' + decision + '</div><div class="event-meta">' + meta + '</div></div><time class="recent-time" title="' + esc(formatFullTime(event.time)) + '">' + esc(relativeTime(event.time)) + '</time></div>';
       }).join('');
       document.getElementById('eventsEmpty').hidden = result.total > 0;
       document.getElementById('eventsCount').textContent = i18n.t('ui.filter_events_summary', { filtered: result.total, total: state.events.length });
       renderPager('events', result);
-    }
-    function upgradeHints() {
-      document.querySelectorAll('.policy-settings-form .field > .hint').forEach((hint) => {
-        const text = String(hint.textContent || '').trim();
-        if (!text) { hint.remove(); return; }
-        const icon = document.createElement('span');
-        icon.className = 'hint-icon';
-        icon.tabIndex = 0;
-        icon.setAttribute('role', 'img');
-        icon.setAttribute('aria-label', text);
-        icon.title = text;
-        icon.innerHTML = '<svg class="icon"><use href="#i-info"></use></svg>';
-        hint.replaceWith(icon);
-      });
     }
     function setValue(id, value) { const el = document.getElementById(id); if (el) el.value = value == null ? '' : String(value); }
     function setChecked(id, value) { const el = document.getElementById(id); if (el) el.checked = Boolean(value); }
@@ -10348,12 +10322,10 @@
         verdictCard(account.verdict),
         '<div class="drawer-section"><div class="detail-grid">',
         disableReasonCell,
-        '<div class="detail-cell"><div class="detail-label">' + i18n.t('ui.output_speed') + '</div><div class="detail-value">' + esc(num(account.tps, 1)) + ' TPS</div></div>',
-        '<div class="detail-cell"><div class="detail-label">' + i18n.t('ui.first_token') + '</div><div class="detail-value">' + i18n.t('ui.duration_milliseconds', { value: num(account.ttft_ms) }) + '</div></div>',
-        '<div class="detail-cell"><div class="detail-label">' + i18n.t('ui.output_reasoning') + '</div><div class="detail-value">' + esc(num(account.output_tokens)) + ' / ' + esc(num(account.reasoning_tokens)) + '</div></div>',
-        '<div class="detail-cell"><div class="detail-label">' + i18n.t('ui.visible_tokens') + '</div><div class="detail-value">' + esc(num(account.visible_tokens)) + '</div></div>',
-        '<div class="detail-cell"><div class="detail-label">' + i18n.t('ui.encrypted_thinking') + '</div><div class="detail-value">' + esc(formatBytes(account.encrypted_bytes)) + '</div></div>',
         '<div class="detail-cell"><div class="detail-label">' + i18n.t('ui.consecutive_counts') + '</div><div class="detail-value">' + i18n.t('ui.soft_error_thinking_counts', { soft: num(account.soft_strikes || 0), errors: num(account.error_strikes || 0), thinking: num(account.thinking_strikes || 0) }) + '</div></div>',
+        '<div class="detail-cell"><div class="detail-label">' + i18n.t('ui.healthy_streak') + '</div><div class="detail-value">' + esc(num(account.healthy_streak || 0)) + '</div></div>',
+        evidence ? '' : '<div class="detail-cell"><div class="detail-label">' + i18n.t('ui.output_speed') + '</div><div class="detail-value">' + esc(num(account.tps, 1)) + ' TPS</div></div>',
+        evidence ? '' : '<div class="detail-cell"><div class="detail-label">' + i18n.t('ui.output_reasoning') + '</div><div class="detail-value">' + esc(num(account.output_tokens)) + ' / ' + esc(num(account.reasoning_tokens)) + '</div></div>',
         '</div></div>',
         evidenceSection(evidence),
         '<div class="drawer-section"><h3>' + i18n.t('ui.account_information') + '</h3><div class="detail-grid">',
@@ -11213,7 +11185,6 @@
     }
     i18n.observe();
     i18n.applyLocale(i18n.locale);
-    upgradeHints();
     applyLocationHash();
   </script>
 </body>
