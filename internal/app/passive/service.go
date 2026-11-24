@@ -61,7 +61,7 @@ func (s *Service) InterceptResponse(request []byte) []byte {
 	if len(request) == 0 || json.Unmarshal(request, &req) != nil {
 		return raw
 	}
-	passiveGuard := s.env.Policy().PassiveGuard
+	passiveGuard := s.env.Policy().PassiveGuardEnabled()
 
 	if !passiveGuard || auth.IsProbeHeader(req.RequestHeaders) || !s.env.IsGrokRouteModel(firstNonEmpty(req.RequestedModel, req.Model)) {
 		return raw
@@ -98,7 +98,7 @@ func (s *Service) InterceptStreamChunk(request []byte) []byte {
 	if len(request) == 0 || json.Unmarshal(request, &req) != nil {
 		return raw
 	}
-	passiveGuard := s.env.Policy().PassiveGuard
+	passiveGuard := s.env.Policy().PassiveGuardEnabled()
 
 	if !passiveGuard || auth.IsProbeHeader(req.RequestHeaders) || !s.env.IsGrokRouteModel(firstNonEmpty(req.RequestedModel, req.Model)) {
 		return raw
@@ -157,7 +157,7 @@ func (s *Service) HandleUsage(request []byte) {
 	}
 	policy := s.env.Policy()
 
-	if !policy.PassiveGuard {
+	if !policy.PassiveGuardEnabled() {
 		return
 	}
 	if !s.env.IsGrokRouteModel(record.Model) && !auth.IsGrokProvider(record.Provider) {
@@ -170,7 +170,7 @@ func (s *Service) HandleUsage(request []byte) {
 	s.mu.Unlock()
 	// Transparent executions are audited by the executor before emission. Their
 	// usage records have no passive observation and must not be judged twice.
-	if pending == nil && policy.TransparentGuard {
+	if pending == nil && policy.TransparentGuardEnabled() {
 		return
 	}
 	// Probe usage is internal and has no passive observation. Real requests keep

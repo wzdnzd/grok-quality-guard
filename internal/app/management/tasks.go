@@ -223,7 +223,7 @@ func (s *Service) taskCenterResidentQueues(locales ...string) []map[string]any {
 	queues := make([]map[string]any, 0, 5)
 	policy := s.env.Policy()
 	probeQueue := s.env.ProbeQueueSnapshot()
-	guardEnabled := s.env.ConfigEnabled() && (policy.PassiveGuard || policy.TransparentGuard)
+	guardEnabled := s.env.ConfigEnabled() && (policy.PassiveGuardEnabled() || policy.TransparentGuardEnabled())
 	if shouldShowQualityProbeQueue(guardEnabled, probeQueue) {
 		completed := probeQueue.Succeeded + probeQueue.Failed
 		total := completed + probeQueue.Waiting + probeQueue.Active

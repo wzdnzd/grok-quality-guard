@@ -33,13 +33,13 @@ func TestObserveRoutingSampleDecaysByRealTime(t *testing.T) {
 	}
 }
 
-func TestRoutingSourceHalfLifeFollowsHealthyProbeCadence(t *testing.T) {
+func TestRoutingSourceHalfLifeFollowsScoringHalfLife(t *testing.T) {
 	for _, source := range []string{RoutingSourceProbe, RoutingSourceTransparent, RoutingSourcePassive} {
 		if got := RoutingSampleHalfLife(source, 24); got != 24*time.Hour {
 			t.Fatalf("%s half-life = %s, want 24h", source, got)
 		}
 		if got := RoutingSampleHalfLife(source, 0); got != 168*time.Hour {
-			t.Fatalf("%s disabled-probe half-life = %s, want 168h", source, got)
+			t.Fatalf("%s default half-life = %s, want 168h", source, got)
 		}
 	}
 }

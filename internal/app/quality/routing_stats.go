@@ -7,7 +7,7 @@ import (
 	"grok-quality-guard/internal/quality"
 )
 
-func observeRoutingVerdict(account *AccountState, source string, verdict QualityVerdict, now time.Time, healthyIntervalHours int) {
+func observeRoutingVerdict(account *AccountState, source string, verdict QualityVerdict, now time.Time, halfLifeHours int) {
 	if account == nil || verdict.Class == ClassIgnored {
 		return
 	}
@@ -21,6 +21,6 @@ func observeRoutingVerdict(account *AccountState, source string, verdict Quality
 		sig.FirstTokenMS,
 		sig.TPS,
 		now,
-		appstate.RoutingSampleHalfLife(source, healthyIntervalHours),
+		appstate.RoutingSampleHalfLife(source, halfLifeHours),
 	)
 }

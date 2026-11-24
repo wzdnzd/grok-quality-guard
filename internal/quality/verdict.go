@@ -484,7 +484,7 @@ func classifyFinal(sig Signals, cfg config.QualityConfig, reasoningRequired bool
 			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
 		}
 	}
-	class, speed, gen := classifyOutputSpeed(sig, cfg, cfg.FailClosed)
+	class, speed, gen := classifyOutputSpeed(sig, cfg, cfg.BurstGuard)
 	sig.GenerationMS = gen
 	sig.TPS = speed
 	if class != ClassNone {
@@ -537,10 +537,10 @@ func classifyProbeResult(sig Signals, cfg config.QualityConfig, expectedMatched,
 			return hold
 		}
 	}
-	class, speed, gen := classifyOutputSpeed(sig, cfg, cfg.FailClosed)
+	class, speed, gen := classifyOutputSpeed(sig, cfg, cfg.BurstGuard)
 	sig.GenerationMS = gen
 	sig.TPS = speed
-	if class == ClassNone && cfg.FailClosed && !qualitySpeedSkipped(sig) &&
+	if class == ClassNone && cfg.BurstGuard && !qualitySpeedSkipped(sig) &&
 		arrivalWindowMS(sig.DurationMS, sig.FirstTokenMS, sig.ReasoningTokens) < cfg.MinGenerationMS {
 		return QualityVerdict{Action: QualityActionWithhold, Class: ClassInsufficientGeneration, Reason: "reason.detail.insufficient_generation_window", Signals: sig}
 	}
@@ -571,7 +571,7 @@ func classifyPassiveAudit(sig Signals, cfg config.QualityConfig) QualityVerdict 
 	if thinkingEligible && !sig.HasThinking && !isSemanticOnly(sig) && qualityMissingThinkingConfirmed(sig) {
 		return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
 	}
-	class, speed, gen := classifyOutputSpeed(sig, cfg, cfg.FailClosed)
+	class, speed, gen := classifyOutputSpeed(sig, cfg, cfg.BurstGuard)
 	sig.GenerationMS = gen
 	sig.TPS = speed
 	if class == ClassNone {

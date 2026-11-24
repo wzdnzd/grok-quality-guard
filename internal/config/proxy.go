@@ -10,18 +10,26 @@ import (
 
 type ProxyConfig struct {
 	AutoRotateAfterQualityFailure bool                 `yaml:"auto_rotate_after_quality_failure" json:"auto_rotate_after_quality_failure"`
+	RotateAfterErrors             int                  `yaml:"rotate_after_errors" json:"rotate_after_errors"`
 	AutoBind                      proxy.AutoBindConfig `yaml:"auto_bind" json:"auto_bind"`
 }
 
 func DefaultProxyConfig() ProxyConfig {
 	return ProxyConfig{
 		AutoRotateAfterQualityFailure: true,
+		RotateAfterErrors:             2,
 		AutoBind:                      proxy.DefaultAutoBindConfig(),
 	}
 }
 func normalizeProxyConfig(cfg *ProxyConfig) error {
 	if cfg == nil {
 		return errors.New("proxy config is nil")
+	}
+	if cfg.RotateAfterErrors <= 0 {
+		cfg.RotateAfterErrors = DefaultProxyConfig().RotateAfterErrors
+	}
+	if cfg.RotateAfterErrors > 10 {
+		return fmt.Errorf("proxy.rotate_after_errors must be <= 10")
 	}
 	autoBind, errNormalize := cfg.AutoBind.Normalize()
 	if errNormalize != nil {

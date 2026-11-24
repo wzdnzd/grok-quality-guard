@@ -26,7 +26,7 @@ func (s *Service) RouteModel(request []byte) ([]byte, error) {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false, Reason: "invalid_route_request"})
 	}
 	policy := s.env.Policy()
-	if !policy.TransparentGuard {
+	if !policy.TransparentGuardEnabled() {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false, Reason: "transparent_guard_disabled"})
 	}
 	if isProbeHeader(req.Headers) {

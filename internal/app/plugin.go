@@ -144,7 +144,7 @@ func (p *Plugin) Configure(raw []byte) error {
 	p.yamlPolicy = appconfig.PolicyFromConfig(cfg)
 	p.yamlRevision = revision
 	statePolicy := p.store.PolicySnapshot()
-	if statePolicy.PassiveGuard || statePolicy.EventsLimit > 0 || statePolicy.AutoAction != "" {
+	if statePolicy.Guard != "" || statePolicy.EventsLimit > 0 || statePolicy.AutoAction != "" {
 		p.policy = statePolicy
 	} else {
 		p.policy = p.yamlPolicy

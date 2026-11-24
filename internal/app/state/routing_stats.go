@@ -67,8 +67,8 @@ func NormalizeRoutingSource(source string) string {
 	}
 }
 
-func RoutingSampleHalfLife(_ string, healthyIntervalHours int) time.Duration {
-	return config.RoutingEWMAHalfLife(healthyIntervalHours)
+func RoutingSampleHalfLife(_ string, halfLifeHours int) time.Duration {
+	return config.RoutingEWMAHalfLife(halfLifeHours)
 }
 
 // ObserveRoutingSample updates the source-specific EWMA in real time. The old

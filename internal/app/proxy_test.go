@@ -1552,7 +1552,7 @@ func TestProbeProxyErrorsRotateManagedProxyAtThreshold(t *testing.T) {
 		t.Fatalf("probe used %d upstream calls, want 2", len(host.modelCalls))
 	}
 }
-func TestProbeProxyErrorsKeepCooldownWhenAutoRotateDisabled(t *testing.T) {
+func TestProbeProxyErrorsStayUnreachableWhenAutoRotateDisabled(t *testing.T) {
 	oldProxy := "socks5h://Default.grok-alice-old1:proxy-secret@resin:2260"
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{"proxy_url": oldProxy})
 	host := newMockHostCall(entries, auths)
@@ -1570,16 +1570,18 @@ func TestProbeProxyErrorsKeepCooldownWhenAutoRotateDisabled(t *testing.T) {
 	}
 
 	account, okAccount := plugin.stateAccount("auth-1")
-	if !okAccount || account.State != appstate.StateCooling || account.ErrorStrikes != 2 {
-		t.Fatalf("disabled auto-rotation did not keep the cooldown fallback: %#v", account)
+	// Transport failures never become a quality cooldown, so the auth file is
+	// left enabled and the account returns after a short backoff.
+	if !okAccount || account.State != appstate.StateUnreachable || account.ErrorStrikes != 2 || account.DisableKind != "" {
+		t.Fatalf("disabled auto-rotation escalated a transport failure: %#v", account)
 	}
 	for _, event := range plugin.stateStore().Snapshot().Events {
 		if event.Action == "proxy_rotate" || event.Action == "proxy_error_rotation" {
 			t.Fatalf("disabled auto-rotation still rotated the proxy: %#v", event)
 		}
 	}
-	if len(host.saves) != 1 {
-		t.Fatalf("cooldown fallback saved auth %d times, want 1", len(host.saves))
+	if len(host.saves) != 0 {
+		t.Fatalf("transport failure wrote the auth file %d times, want 0", len(host.saves))
 	}
 }
 
@@ -1597,8 +1599,16 @@ func TestTransparentProxyErrorRotatesManagedProxyAtThreshold(t *testing.T) {
 
 	plugin.runTransparentStreamBridge(context.Background(), streamRequestForTest(), "plugin-stream-proxy-rotation-1")
 	account, okAccount := plugin.stateAccount("auth-1")
-	if !okAccount || account.State != appstate.StateUnknown || account.ErrorStrikes != 1 {
-		t.Fatalf("first proxy failure should stay selectable: %#v", account)
+	if !okAccount || account.State != appstate.StateUnreachable || account.ErrorStrikes != 1 {
+		t.Fatalf("first proxy failure should back off as unreachable: %#v", account)
+	}
+	// The single-account pool has no alternative, so expire the transport
+	// backoff to let the second request reach the rotation threshold.
+	if errUpdate := plugin.updateStateAccount("auth-1", func(account *appstate.AccountState) error {
+		account.State = appstate.StateUnknown
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
 	}
 	if len(host.modelCalls) != 1 {
 		t.Fatalf("first transparent request used %d attempts, want 1", len(host.modelCalls))

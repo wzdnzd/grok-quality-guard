@@ -423,8 +423,7 @@ func (p *Plugin) YAMLPolicy() (appconfig.Policy, string) {
 func (p *Plugin) SetPolicy(policy appconfig.Policy) {
 	p.mu.Lock()
 	p.policy = policy
-	p.cfg.TransparentGuard = policy.TransparentGuard
-	p.cfg.PassiveGuard = policy.PassiveGuard
+	p.cfg.Guard = policy.Guard
 	p.cfg.AutoAction = policy.AutoAction
 	p.cfg.ModelPrefixes = append([]string(nil), policy.ModelPrefixes...)
 	p.cfg.Routing = policy.Routing

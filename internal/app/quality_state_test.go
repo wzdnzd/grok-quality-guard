@@ -7,8 +7,11 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
 	appauth "grok-quality-guard/internal/app/auth"
 	managementapp "grok-quality-guard/internal/app/management"
@@ -352,9 +355,14 @@ func TestCooldownOnlyRecoveryFailureKeepsCooling(t *testing.T) {
 func TestCooldownOnlyAppliesCooldownOnConfirmedAnomaly(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	host := newMockHostCall(entries, auths)
-	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) { cfg.AutoAction = "cooldown_only" })
-	if err := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassMissingThinking}, "passive", ""); err != nil {
-		t.Fatal(err)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.AutoAction = "cooldown_only"
+		cfg.Quality.CrossVerify = "off"
+	})
+	for range 2 {
+		if err := plugin.ApplyVerdict(context.Background(), "auth-1", qualitypkg.QualityVerdict{Class: qualitypkg.ClassMissingThinking}, "passive", ""); err != nil {
+			t.Fatal(err)
+		}
 	}
 	account, _ := plugin.stateAccount("auth-1")
 	if account.State != appstate.StateCooling || account.DisableKind != appstate.DisableKindCooldown {
@@ -388,24 +396,25 @@ func TestConsecutiveSoftTPSThreshold(t *testing.T) {
 	}
 }
 
-func TestConsecutiveErrorsThreshold(t *testing.T) {
+func TestTransportErrorsStayUnreachableWithoutCooldown(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	host := newMockHostCall(entries, auths)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) { cfg.AutoAction = "cooldown_only" })
 	verdict := qualitypkg.QualityVerdict{Class: qualitypkg.ClassProbeError}
-	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "probe", ""); errApply != nil {
-		t.Fatal(errApply)
-	}
-	account, _ := plugin.stateAccount("auth-1")
-	if account.State != appstate.StateSuspect || account.ErrorStrikes != 1 || len(host.saves) != 0 {
-		t.Fatalf("first error should only be suspect: %#v saves=%d", account, len(host.saves))
-	}
-	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "probe", ""); errApply != nil {
-		t.Fatal(errApply)
-	}
-	account, _ = plugin.stateAccount("auth-1")
-	if account.State != appstate.StateCooling || account.ErrorStrikes != 2 || len(host.saves) != 1 {
-		t.Fatalf("second error should trigger cooldown: %#v saves=%d", account, len(host.saves))
+	var previousBackoff time.Duration
+	for strike := 1; strike <= 3; strike++ {
+		if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "probe", ""); errApply != nil {
+			t.Fatal(errApply)
+		}
+		account, _ := plugin.stateAccount("auth-1")
+		if account.State != appstate.StateUnreachable || account.DisableKind != "" || len(host.saves) != 0 {
+			t.Fatalf("transport error %d escalated beyond unreachable: %#v saves=%d", strike, account, len(host.saves))
+		}
+		backoff := time.Until(account.ProbeBackoffUntil)
+		if backoff <= 0 || backoff > 10*time.Minute || backoff <= previousBackoff {
+			t.Fatalf("transport error %d backoff = %s, previous %s", strike, backoff, previousBackoff)
+		}
+		previousBackoff = backoff
 	}
 }
 
@@ -424,8 +433,8 @@ func TestProbeErrorStrikesStayBoundedAcrossRecoveryCooldowns(t *testing.T) {
 		}
 	}
 	account, _ := plugin.stateAccount("auth-1")
-	if account.State != appstate.StateCooling || account.ErrorStrikes != 2 {
-		t.Fatalf("initial error threshold state = %#v, want cooling with 2 strikes", account)
+	if account.State != appstate.StateUnreachable || account.ErrorStrikes != 2 {
+		t.Fatalf("initial error threshold state = %#v, want unreachable with 2 strikes", account)
 	}
 
 	// Each expired cooldown starts a recovery probe. A repeated transport error
@@ -455,6 +464,7 @@ func TestConsecutiveMissingThinkingThreshold(t *testing.T) {
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		cfg.AutoAction = "cooldown_then_disable"
 		cfg.Quality.ConsecutiveMissingThinking = 2
+		cfg.Quality.CrossVerify = "off"
 	})
 	verdict := qualitypkg.QualityVerdict{Class: qualitypkg.ClassMissingThinking}
 	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "passive", ""); errApply != nil {
@@ -504,7 +514,7 @@ func TestSoftCrossVerifySchedulesProbeBeforeAction(t *testing.T) {
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		cfg.AutoAction = "cooldown_then_disable"
 		cfg.Quality.ConsecutiveSoft = 1
-		cfg.Quality.SoftCrossVerify = true
+		cfg.Quality.CrossVerify = "soft"
 	})
 	verdict := qualitypkg.QualityVerdict{Class: qualitypkg.ClassSoftTPS, Signals: qualitypkg.Signals{OutputTokens: 40, TPS: 600}}
 	if errApply := plugin.ApplyVerdict(context.Background(), "auth-1", verdict, "passive", ""); errApply != nil {
@@ -549,8 +559,7 @@ func TestStateStorePersistsPolicyAndStrikes(t *testing.T) {
 	policy.Quality.ConsecutiveErrors = 3
 	policy.Quality.ConsecutiveMissingThinking = 3
 	policy.Quality.ThinkingGuard = false
-	policy.Quality.SoftCrossVerify = true
-	policy.Quality.ThinkingCrossVerify = true
+	policy.Quality.CrossVerify = "all"
 	if errLoad := store.Load(policy, "revision"); errLoad != nil {
 		t.Fatal(errLoad)
 	}
@@ -576,7 +585,7 @@ func TestStateStorePersistsPolicyAndStrikes(t *testing.T) {
 	if quality.ConsecutiveSoft != 4 || quality.ConsecutiveErrors != 3 || quality.ConsecutiveMissingThinking != 3 {
 		t.Fatalf("consecutive policy was not persisted: %#v", quality)
 	}
-	if quality.ThinkingGuard || !quality.SoftCrossVerify || !quality.ThinkingCrossVerify {
+	if quality.ThinkingGuard || quality.CrossVerify != "all" {
 		t.Fatalf("thinking policy was not persisted: %#v", quality)
 	}
 	account := snapshot.Accounts["auth-1"]
@@ -746,10 +755,16 @@ func TestRateLimitedDoesNotResetConsecutiveCounters(t *testing.T) {
 func TestBufferOverflowDoesNotRecordHealthyVerdict(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "a1@example.com", nil)
 	host := newMockHostCall(entries, auths)
-	host.scriptStream("auth-1", badStreamScript()...)
+	// The buffer floor is 1MiB, so the scripted stream must exceed it.
+	oversized := strings.Repeat("overflow ", (1<<20)/9+1)
+	host.scriptStream("auth-1",
+		streamData("data: {\"choices\":[{\"delta\":{\"content\":\""+oversized+"\"}}]}\n\n"),
+		streamData("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"),
+		pluginapi.HostModelStreamReadResponse{Done: true},
+	)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
-		cfg.Quality.HoldMaxBufferBytes = 1
+		cfg.Quality.HoldMaxBufferBytes = 1 << 20
 	})
 	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
 		account := plugin.ensureStateAccount(state, "auth-1")

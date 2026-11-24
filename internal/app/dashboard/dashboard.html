@@ -1575,6 +1575,88 @@
       line-height: 1.45;
     }
 
+    .hint-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-left: 6px;
+      color: var(--subtle);
+      cursor: help;
+      vertical-align: middle;
+    }
+
+    .hint-icon .icon {
+      width: 14px;
+      height: 14px;
+    }
+
+    .field-grid {
+      align-items: end;
+    }
+
+    .field input,
+    .field select {
+      min-height: 36px;
+    }
+
+    .verdict-card {
+      border-left: 3px solid var(--line-strong);
+    }
+
+    .verdict-card.bad { border-left-color: var(--bad); }
+    .verdict-card.warn { border-left-color: var(--warn); }
+    .verdict-card.info { border-left-color: var(--info); }
+
+    .verdict-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .verdict-code {
+      font-weight: 600;
+    }
+
+    .verdict-time {
+      margin-left: auto;
+      color: var(--subtle);
+      font-size: 11px;
+    }
+
+    .verdict-evidence {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .verdict-chip {
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(127, 127, 127, 0.14);
+      font-size: 10px;
+      color: var(--subtle);
+    }
+
+    .verdict-detail {
+      margin-top: 8px;
+      color: var(--subtle);
+      font-size: 11px;
+    }
+
+    .verdict-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      margin-right: 6px;
+      border-radius: 50%;
+      background: var(--subtle);
+    }
+
+    .verdict-dot.bad { background: var(--bad); }
+    .verdict-dot.warn { background: var(--warn); }
+    .verdict-dot.info { background: var(--info); }
+
     .field>.field-error {
       color: var(--bad);
       font-size: 10px;
@@ -4824,12 +4906,13 @@
                 </svg><input id="eventSearch" type="search" placeholder="ui.search_accounts_categories_actions_or_details" autocomplete="off"></label>
               <select class="control" id="eventTypeFilter" aria-label="ui.filter_event_type">
                 <option value="all">ui.all_events</option>
-                <option value="anomaly">ui.anomaly_verdicts</option>
-                <option value="probe">action.probe</option>
-                <option value="probe_errors">ui.probe_errors</option>
-                <option value="guard">action.guard_disable</option>
-                <option value="restore">ui.restore</option>
+                <option value="quality">verdict.category.quality</option>
+                <option value="transport">verdict.category.transport</option>
+                <option value="account">verdict.category.account</option>
+                <option value="inconclusive">verdict.category.inconclusive</option>
+                <option value="ignored">verdict.category.ignored</option>
                 <option value="proxy">action.proxy_operation</option>
+                <option value="task">ui.tasks</option>
               </select>
             </div>
             <div class="toolbar-right"><button class="btn btn-xs" type="button" id="eventRefreshBtn"><svg class="icon">
@@ -4868,10 +4951,11 @@
                     <use href="#i-shield"></use>
                   </svg>ui.operating_mode_and_actions</h3>
                 <div class="field-grid">
-                  <label class="check-card"><input id="p_passive" type="checkbox"><span class="check-copy"><span
-                        class="check-title">action.observe</span><span class="check-desc">ui.analyze_responses_and_streaming_chunks_from_real_requests_without</span></span></label>
-                  <label class="check-card"><input id="p_transparent" type="checkbox"><span class="check-copy"><span
-                        class="check-title">source.transparent</span><span class="check-desc">ui.intercept_every_grok_xai_oauth_request_and_complete_the</span></span></label>
+                  <div class="field"><label for="p_guard">ui.operating_mode</label><select id="p_guard">
+                      <option value="off">ui.guard_off</option>
+                      <option value="passive">ui.guard_passive</option>
+                      <option value="transparent">ui.guard_transparent</option>
+                    </select><span class="hint">ui.guard_hint</span></div>
                   <div class="field"><label for="p_auto_action">action.guard_disable</label><select id="p_auto_action">
                       <option value="cooldown_only">ui.cooldown</option>
                       <option value="observe">ui.observe_only</option>
@@ -4945,6 +5029,9 @@
                   <div class="field score-refresh"><label for="p_score_drift_threshold">ui.score_drift_threshold</label><input
                       id="p_score_drift_threshold" type="number" min="0" max="1" step="0.01" value="0.03"><span
                         class="hint">ui.score_drift_hint</span></div>
+                  <div class="field score-refresh"><label for="p_score_half_life">ui.score_half_life</label><input
+                      id="p_score_half_life" type="number" min="1" max="8760" value="168"><span
+                        class="hint">ui.score_half_life_help</span></div>
                 </div>
               </section>
               <section class="policy-group policy-group-task-history">
@@ -5001,12 +5088,13 @@
                         type="checkbox"><span>ui.enable_missing_reasoning_detection</span></label>
                     <span class="hint">ui.when_disabled_only_tps_empty_stream_and_similar_quality</span>
                   </div>
-                  <label class="check-card"><input id="p_soft_cross_verify" type="checkbox"><span
-                      class="check-copy"><span class="check-title">ui.soft_threshold_cross_verification</span><span class="check-desc">ui.after_consecutive_soft_tps_hits_run_an_asynchronous_probe</span></span></label>
-                  <label class="check-card"><input id="p_thinking_cross_verify" type="checkbox"><span
-                      class="check-copy"><span class="check-title">ui.missing_reasoning_cross_verification</span><span
-                        class="check-desc">ui.after_consecutive_missing_reasoning_hits_run_an_asynchronous_probe</span></span></label>
-                  <label class="check-card"><input id="p_fail_closed" type="checkbox"><span class="check-copy"><span
+                  <div class="field"><label for="p_cross_verify">ui.cross_verify</label><select id="p_cross_verify">
+                      <option value="off">ui.cross_verify_off</option>
+                      <option value="soft">ui.cross_verify_soft</option>
+                      <option value="thinking">ui.cross_verify_thinking</option>
+                      <option value="all">ui.cross_verify_all</option>
+                    </select><span class="hint">ui.cross_verify_help</span></div>
+                  <label class="check-card"><input id="p_burst_guard" type="checkbox"><span class="check-copy"><span
                         class="check-title">ui.strict_short_window_detection</span><span class="check-desc">ui.when_enabled_a_very_short_generation_window_with_tps</span></span></label>
                   <label class="check-card"><input id="p_shadow_mode" type="checkbox"><span class="check-copy"><span
                         class="check-title">ui.shadow_mode</span><span class="check-desc">ui.shadow_mode_quality_observations_only</span></span></label>
@@ -5031,10 +5119,10 @@
                       type="number" min="1"></div>
                   <div class="field"><label for="p_hold_timeout">ui.buffer_timeout</label><input id="p_hold_timeout" type="text"
                       placeholder="30s"></div>
-                  <div class="field"><label for="p_stream_idle_timeout">ui.stream_idle_timeout</label><input id="p_stream_idle_timeout"
-                      type="text" placeholder="90s"></div>
-                  <div class="field"><label for="p_max_hold_total">ui.maximum_withhold_time_across_attempts</label><input
-                      id="p_max_hold_total" type="text" placeholder="90s"></div>
+                  <div class="field"><label for="p_attempt_timeout">ui.attempt_timeout</label><input id="p_attempt_timeout"
+                      type="text" placeholder="60s"><span class="hint">ui.attempt_timeout_help</span></div>
+                  <div class="field"><label for="p_request_timeout">ui.request_timeout</label><input
+                      id="p_request_timeout" type="text" placeholder="120s"><span class="hint">ui.request_timeout_help</span></div>
                   <div class="field"><label for="p_hold_keepalive">ui.hold_keepalive_interval</label><input id="p_hold_keepalive"
                       type="text" placeholder="5s"></div>
                   <div class="field"><label for="p_hold_max_bytes">ui.maximum_buffer_bytes</label><input id="p_hold_max_bytes"
@@ -5042,8 +5130,8 @@
                   <div class="field"><label for="p_max_attempts">ui.maximum_attempts_in_transparent_mode</label><input id="p_max_attempts"
                       type="number" min="1"></div>
                   <div class="field"><label for="p_on_exhausted">ui.behavior_when_candidates_are_exhausted</label><select id="p_on_exhausted">
-                      <option value="fail_closed">ui.fail_closed</option>
-                      <option value="fail_open">ui.fail_open</option>
+                      <option value="fail_unverified">ui.exhausted_fail_unverified</option>
+                      <option value="fail_closed">ui.exhausted_fail_closed</option>
                     </select></div>
                   <div class="field"><label for="p_probe_healthy_interval_hours">ui.healthy_account_probe_interval</label><input
                       id="p_probe_healthy_interval_hours" type="number" min="0" step="1" placeholder="0"><span
@@ -5675,6 +5763,39 @@
       if (/^[a-z][a-z0-9_.-]*$/i.test(raw)) return i18n.t('reason.other');
       return raw;
     };
+    const VERDICT_TONES = { quality: 'bad', transport: 'warn', account: 'warn', inconclusive: 'info', ignored: '' };
+    const verdictTone = (verdict) => (verdict && VERDICT_TONES[verdict.category]) || '';
+    const verdictCategoryLabel = (value) => i18n.t('verdict.category.' + (value || 'ignored'));
+    const verdictDecisionLabel = (value) => i18n.t('verdict.decision.' + (value || 'observe'));
+    const verdictCodeLabel = (value) => value ? reasonLabel(value) : i18n.t('reason.none');
+    const verdictEvidenceChips = (verdict) => {
+      if (!verdict) return '';
+      const evidence = verdict.evidence || {};
+      const chips = [];
+      if (evidence.encrypted_bytes > 0) chips.push(i18n.t('verdict.evidence.encrypted', { bytes: formatBytes(evidence.encrypted_bytes), floor: formatBytes(evidence.encrypted_floor) }));
+      if (evidence.reasoning_tokens > 0) chips.push(i18n.t('verdict.evidence.reasoning', { tokens: num(evidence.reasoning_tokens) }));
+      if (evidence.visible_tokens > 0) chips.push(i18n.t('verdict.evidence.visible', { tokens: num(evidence.visible_tokens) }));
+      if (evidence.first_token_ms > 0) chips.push(i18n.t('verdict.evidence.ttft', { value: num(evidence.first_token_ms) }));
+      if (evidence.tps > 0) chips.push(i18n.t('verdict.evidence.tps', { value: num(evidence.tps, 1) }));
+      if (evidence.hold_expired) chips.push(i18n.t('verdict.evidence.hold_expired'));
+      if (evidence.strikes > 0) chips.push(i18n.t('verdict.evidence.strikes', { strikes: num(evidence.strikes) }));
+      return chips.map((chip) => '<span class="verdict-chip">' + esc(chip) + '</span>').join('');
+    };
+    const verdictSummaryLine = (verdict) => verdict
+      ? '<span class="verdict-dot ' + esc(verdictTone(verdict)) + '"></span>' + esc(verdictDecisionLabel(verdict.decision)) + i18n.t('ui.meta_separator') + esc(verdictCodeLabel(verdict.code))
+      : '';
+    const verdictCard = (verdict) => {
+      if (!verdict) return '';
+      const tone = verdictTone(verdict);
+      const detail = verdict.detail ? reasonText(verdict.detail) : '';
+      return '<div class="drawer-section verdict-card ' + esc(tone) + '">' +
+        '<div class="verdict-head">' + badge(verdictDecisionLabel(verdict.decision), tone) +
+        '<span class="verdict-code">' + esc(verdictCodeLabel(verdict.code)) + '</span>' +
+        '<span class="verdict-time">' + esc(formatFullTime(verdict.at)) + '</span></div>' +
+        '<div class="verdict-evidence">' + verdictEvidenceChips(verdict) + '</div>' +
+        (detail ? '<div class="verdict-detail">' + esc(detail) + '</div>' : '') +
+        '</div>';
+    };
     const sourceLabel = (value) => {
       const raw = String(value == null ? '' : value).trim();
       const key = catalogKey('source.', raw);
@@ -5751,9 +5872,8 @@
     const badge = (text, tone) => '<span class="badge ' + esc(tone || '') + '">' + esc(text) + '</span>';
     const modeLabel = (policy) => {
       if (!policy) return i18n.t('ui.unknown');
-      if (policy.transparent_guard && policy.passive_guard) return i18n.t('ui.hybrid_mode');
-      if (policy.transparent_guard) return i18n.t('ui.transparent_protection');
-      if (policy.passive_guard) return i18n.t('ui.passive_observation');
+      if (policy.guard === 'transparent') return i18n.t('ui.transparent_protection');
+      if (policy.guard === 'passive') return i18n.t('ui.passive_observation');
       return i18n.t('ui.management_only');
     };
     const autoActionLabel = (value) => value === 'cooldown_then_disable' ? i18n.t('ui.cool_down_then_permanently_disable') : (value === 'cooldown_only' ? i18n.t('ui.cooldown') : i18n.t('ui.observe_only'));
@@ -6746,7 +6866,7 @@
       const enabled = overview.enabled !== false;
       document.getElementById('overviewMetrics').innerHTML = [
         metricCard(enabled ? 'shield' : 'power', i18n.t(enabled ? 'ui.running_service' : 'ui.stopped'), i18n.t(enabled ? 'ui.guard_service' : 'ui.plugin_disabled'), i18n.t(enabled ? 'ui.receiving_quality_events' : 'ui.enable_plugin_in_cpa_config'), enabled ? 'good' : 'bad'),
-        metricCard('activity', modeLabel(policy), i18n.t('ui.detection_mode'), i18n.t(policy.transparent_guard ? 'ui.switch_before_first_visible_chunk' : (policy.passive_guard ? 'ui.observe_real_requests_only' : 'ui.manage_accounts_and_proxies_only'))),
+        metricCard('activity', modeLabel(policy), i18n.t('ui.detection_mode'), i18n.t(policy.guard === 'transparent' ? 'ui.switch_before_first_visible_chunk' : (policy.guard === 'passive' ? 'ui.observe_real_requests_only' : 'ui.manage_accounts_and_proxies_only'))),
         metricCard('users', num(total), i18n.t('ui.managed_accounts'), i18n.t('ui.healthy_accounts_count', { count: num(healthy) }), 'info'),
         metricCard('alert', num(attention), i18n.t('ui.accounts_needing_attention'), i18n.t('ui.quarantined_count', { count: num(quarantined) }), attention ? 'warn' : 'good')
       ].join('');
@@ -6784,7 +6904,7 @@
         summaryItem(i18n.t('ui.automatic_actions'), esc(autoActionLabel(policy.auto_action))),
         summaryItem(i18n.t('ui.missing_thinking_cooldown'), esc(quality.missing_thinking_cooldown || '-')),
         summaryItem(i18n.t('ui.strike_decay'), esc(i18n.t('ui.strike_decay_value', { hours: String(quality.strike_decay_after ?? 48), healthy: String(quality.strike_decay_min_healthy ?? 10) }))),
-        summaryItem(i18n.t('ui.detection_and_verification'), esc(i18n.t('ui.thinking_detection_cross_verification', { thinking: i18n.t(quality.thinking_guard !== false ? 'ui.on' : 'ui.off'), cross: i18n.t((quality.soft_cross_verify || quality.thinking_cross_verify) ? 'ui.partially_enabled' : 'ui.off') }))),
+        summaryItem(i18n.t('ui.detection_and_verification'), esc(i18n.t('ui.thinking_detection_cross_verification', { thinking: i18n.t(quality.thinking_guard !== false ? 'ui.on' : 'ui.off'), cross: i18n.t((quality.cross_verify && quality.cross_verify !== 'off') ? 'ui.partially_enabled' : 'ui.off') }))),
         summaryItem(i18n.t('ui.probe_model'), esc(policy.probe && policy.probe.model || '-')),
         summaryItem(i18n.t('ui.task_scan_and_concurrency'), esc(i18n.t('ui.scan_concurrency_queue_values', { scan: String(policy.probe && policy.probe.scan_interval || '15s'), concurrency: num(policy.probe && policy.probe.concurrency || 1), queue: num(policy.probe && policy.probe.queue_size || 10000) }))),
         summaryItem(i18n.t('ui.state_file'), esc(overview.state_file || '-'), { truncate: true, title: overview.state_file || '-' }),
@@ -6873,7 +6993,7 @@
       if (reasonText(attempt.reason, '') !== transportLabel) return esc(detail);
       const linkIndex = detail.indexOf(transportLabel);
       if (linkIndex < 0) return esc(detail);
-      const href = eventFilterHash(account.auth_id, 'probe_errors');
+      const href = eventFilterHash(account.auth_id, 'transport');
       const link = '<a class="event-log-link" href="' + esc(href) + '">' + esc(transportLabel) + '</a>';
       return esc(detail.slice(0, linkIndex)) + link + esc(detail.slice(linkIndex + transportLabel.length));
     }
@@ -6895,9 +7015,11 @@
       const metricDetail = i18n.t('ui.output_reasoning_ciphertext', { output: num(account.output_tokens), reasoning: num(account.reasoning_tokens), cipher: formatBytes(account.encrypted_bytes) });
       const isolatedByGuard = ['cooling', 'quota_exhausted', 'credential_invalid', 'disabled_by_guard'].includes(account.state);
       const disableReason = account.disable_reason ? reasonLabel(account.disable_reason) : '';
-      const reasonSummary = isolatedByGuard ? i18n.t('ui.account_disabled') : reasonLabel(account.last_reason);
-      const attemptDetail = account.last_attempt ? i18n.t('ui.last_attempt', { value: attemptLabel(account.last_attempt, { includeTime: false }) }) : i18n.t('ui.last_observed', { time: formatTime(account.last_observed_at) });
-      const attemptDetailContent = attemptDetailHTML(account, attemptDetail);
+      const verdict = account.verdict || null;
+      const reasonSummary = isolatedByGuard ? i18n.t('ui.account_disabled') : (verdict ? verdictSummaryLine(verdict) : reasonLabel(account.last_reason));
+      const evidenceSummary = verdict && verdict.evidence ? verdictEvidenceChips(verdict) : '';
+      const attemptDetail = evidenceSummary || (account.last_attempt ? i18n.t('ui.last_attempt', { value: attemptLabel(account.last_attempt, { includeTime: false }) }) : i18n.t('ui.last_observed', { time: formatTime(account.last_observed_at) }));
+      const attemptDetailContent = evidenceSummary ? evidenceSummary : attemptDetailHTML(account, attemptDetail);
       const reasonTextValue = disableReason ? i18n.t('ui.disable_reason', { reason: disableReason }) : '';
       const disableReasonDetail = reasonTextValue ? '<div class="subline truncate-line" title="' + esc(reasonTextValue) + '">' + esc(reasonTextValue) + '</div>' : '';
       const displayName = account.display_full || account.display || account.label || i18n.t('ui.unnamed_account');
@@ -9699,12 +9821,9 @@
       const query = state.eventQuery.toLowerCase().trim();
       const text = [event.auth_id, event.class, event.action, event.result, event.detail, event.detail_raw].join(' ').toLowerCase();
       if (query && !text.includes(query)) return false;
-      if (state.eventType === 'anomaly') return Boolean(event.class);
-      if (state.eventType === 'probe') return event.action === 'probe';
-      if (state.eventType === 'probe_errors') return event.action === 'internal_error' || (event.action === 'probe' && ['probe_error', 'proxy_error', 'credential_invalid', 'quota_exhausted', 'rate_limited'].includes(event.class));
-      if (state.eventType === 'guard') return event.action === 'guard_disable' || event.action === 'external_disable';
-      if (state.eventType === 'restore') return event.action === 'restore';
+      if (['quality', 'transport', 'account', 'inconclusive', 'ignored'].includes(state.eventType)) return (event.category || 'ignored') === state.eventType;
       if (state.eventType === 'proxy') return /^(proxy|resin)_/.test(String(event.action || ''));
+      if (state.eventType === 'task') return /^task\./.test(String(event.action || '')) || String(event.action || '') === 'cross_verify_schedule';
       return true;
     }
     function eventDetailHTML(event, text) {
@@ -9723,15 +9842,35 @@
     function renderEvents() {
       const result = pagedItems('events');
       document.getElementById('eventRows').innerHTML = result.items.map((event) => {
-        const tone = event.class ? 'bad' : (event.action === 'restore' ? 'good' : (/^(proxy|resin)_/.test(String(event.action || '')) ? 'info' : ''));
+        const category = event.category || 'ignored';
+        const tone = VERDICT_TONES[category] || '';
         const title = actionLabel(event.action);
         const eventResult = event.result ? resultLabel(event.result) : '';
-        const meta = [event.class ? esc(reasonLabel(event.class)) : '', eventDetailHTML(event, localizeDetail(event.detail))].filter(Boolean).join(i18n.t('ui.meta_separator'));
-        return '<div class="event-item"><span class="event-dot ' + esc(tone) + '"></span><div style="min-width:0"><div class="event-title"><span>' + esc(title) + '</span>' + (eventResult ? badge(eventResult, tone === 'good' ? 'good' : '') : '') + '</div><div class="event-meta">' + esc(event.auth_id || i18n.t('ui.system_event')) + (meta ? i18n.t('ui.meta_separator') + meta : '') + '</div></div><time class="recent-time">' + esc(formatFullTime(event.time)) + '</time></div>';
+        const code = event.code || event.class || '';
+        const codeLabel = code ? verdictCodeLabel(code) : '';
+        const detailText = localizeDetail(event.detail);
+        const showCode = codeLabel && !detailText.includes(codeLabel);
+        const meta = [showCode ? esc(codeLabel) : '', eventDetailHTML(event, detailText)].filter(Boolean).join(i18n.t('ui.meta_separator'));
+        const decision = event.decision ? badge(verdictDecisionLabel(event.decision), tone) : '';
+        return '<div class="event-item"><span class="event-dot ' + esc(tone) + '"></span><div style="min-width:0"><div class="event-title"><span>' + esc(title) + '</span>' + decision + (eventResult ? badge(eventResult, tone === 'good' ? 'good' : '') : '') + '</div><div class="event-meta">' + esc(event.auth_id || i18n.t('ui.system_event')) + (meta ? i18n.t('ui.meta_separator') + meta : '') + '</div></div><time class="recent-time">' + esc(formatFullTime(event.time)) + '</time></div>';
       }).join('');
       document.getElementById('eventsEmpty').hidden = result.total > 0;
       document.getElementById('eventsCount').textContent = i18n.t('ui.filter_events_summary', { filtered: result.total, total: state.events.length });
       renderPager('events', result);
+    }
+    function upgradeHints() {
+      document.querySelectorAll('.policy-settings-form .field > .hint').forEach((hint) => {
+        const text = String(hint.textContent || '').trim();
+        if (!text) { hint.remove(); return; }
+        const icon = document.createElement('span');
+        icon.className = 'hint-icon';
+        icon.tabIndex = 0;
+        icon.setAttribute('role', 'img');
+        icon.setAttribute('aria-label', text);
+        icon.title = text;
+        icon.innerHTML = '<svg class="icon"><use href="#i-info"></use></svg>';
+        hint.replaceWith(icon);
+      });
     }
     function setValue(id, value) { const el = document.getElementById(id); if (el) el.value = value == null ? '' : String(value); }
     function setChecked(id, value) { const el = document.getElementById(id); if (el) el.checked = Boolean(value); }
@@ -9746,8 +9885,8 @@
       'p_missing_cooldown',
       'p_empty_cooldown',
       'p_hold_timeout',
-      'p_stream_idle_timeout',
-      'p_max_hold_total',
+      'p_attempt_timeout',
+      'p_request_timeout',
       'p_hold_keepalive',
       'p_probe_timeout',
       'p_probe_scan_interval',
@@ -9946,8 +10085,7 @@
       const evidenceWeights = scoring.evidence || {};
       const scoreRefresh = scoring.refresh || {};
       const taskHistory = policy.task_history || {};
-      setChecked('p_passive', policy.passive_guard !== false);
-      setChecked('p_transparent', policy.transparent_guard === true);
+      setValue('p_guard', policy.guard || 'passive');
       setValue('p_auto_action', policy.auto_action || 'observe');
       setValue('p_model_prefixes', (policy.model_prefixes || ['grok-']).join(', '));
       setValue('p_events_limit', policy.events_limit || 1000);
@@ -9973,6 +10111,7 @@
       setValue('p_score_min_interval', scoreRefresh.min_interval || '5m');
       setValue('p_score_max_age', scoreRefresh.max_age || '30m');
       setValue('p_score_drift_threshold', scoreRefresh.drift_threshold ?? 0.03);
+      setValue('p_score_half_life', scoring.half_life_hours || 168);
       setValue('p_soft_tps', quality.soft_tps || 500);
       setValue('p_non_reasoning_models', (quality.non_reasoning_models || []).join(', '));
       setValue('p_hard_tps', quality.hard_tps || 1000);
@@ -9982,15 +10121,14 @@
       setValue('p_strike_decay_after', quality.strike_decay_after ?? 48);
       setValue('p_strike_decay_min_healthy', quality.strike_decay_min_healthy ?? 10);
       setChecked('p_thinking_guard', quality.thinking_guard !== false);
-      setChecked('p_soft_cross_verify', quality.soft_cross_verify === true);
-      setChecked('p_thinking_cross_verify', quality.thinking_cross_verify === true);
+      setValue('p_cross_verify', quality.cross_verify || 'thinking');
       setValue('p_min_generation_ms', quality.min_generation_ms || 1000);
-      setChecked('p_fail_closed', quality.fail_closed === true);
+      setChecked('p_burst_guard', quality.burst_guard === true);
       setValue('p_min_passive_output', quality.min_passive_output_tokens || 32);
       setValue('p_min_hold_output', quality.min_hold_output_tokens || 8);
       setValue('p_hold_timeout', quality.hold_timeout || '30s');
-      setValue('p_stream_idle_timeout', quality.stream_idle_timeout || '90s');
-      setValue('p_max_hold_total', quality.max_hold_total || '90s');
+      setValue('p_attempt_timeout', quality.attempt_timeout || '60s');
+      setValue('p_request_timeout', quality.request_timeout || '120s');
       setValue('p_hold_keepalive', quality.hold_keepalive || '5s');
       setChecked('p_shadow_mode', quality.shadow_mode === true);
       setValue('p_hold_max_bytes', quality.hold_max_buffer_bytes || 4194304);
@@ -9998,8 +10136,8 @@
       setValue('p_encrypted_per_token', quality.encrypted_bytes_per_reasoning_token || 2);
       setValue('p_missing_cooldown', quality.missing_thinking_cooldown || '12h');
       setValue('p_empty_cooldown', quality.empty_stream_cooldown || '15m');
-      setValue('p_max_attempts', quality.max_attempts || 6);
-      setValue('p_on_exhausted', quality.on_exhausted || 'fail_closed');
+      setValue('p_max_attempts', quality.max_attempts || 4);
+      setValue('p_on_exhausted', quality.on_exhausted || 'fail_unverified');
       setValue('p_probe_healthy_interval_hours', probe.healthy_interval_hours ?? 0);
       setValue('p_probe_model', probe.model || 'grok-4.5');
       setValue('p_probe_timeout', probe.timeout || '90s');
@@ -10015,8 +10153,7 @@
     }
     function collectPolicy() {
       const policy = JSON.parse(JSON.stringify(state.policy || {}));
-      policy.passive_guard = document.getElementById('p_passive').checked;
-      policy.transparent_guard = document.getElementById('p_transparent').checked;
+      policy.guard = valueOf('p_guard');
       policy.auto_action = valueOf('p_auto_action');
       policy.model_prefixes = (valueOf('p_model_prefixes') || '').split(',').map((item) => item.trim()).filter(Boolean);
       policy.events_limit = numberValue('p_events_limit', 1000);
@@ -10049,6 +10186,7 @@
       policy.routing.scoring.refresh.min_interval = valueOf('p_score_min_interval');
       policy.routing.scoring.refresh.max_age = valueOf('p_score_max_age');
       policy.routing.scoring.refresh.drift_threshold = signedNumberValue('p_score_drift_threshold', 0.03);
+      policy.routing.scoring.half_life_hours = numberValue('p_score_half_life', 168);
       policy.quality = policy.quality || {};
       policy.quality.soft_tps = numberValue('p_soft_tps', 500);
       policy.quality.non_reasoning_models = (valueOf('p_non_reasoning_models') || '').split(',').map((item) => item.trim()).filter(Boolean);
@@ -10059,15 +10197,14 @@
       policy.quality.strike_decay_after = numberValue('p_strike_decay_after', 48);
       policy.quality.strike_decay_min_healthy = numberValue('p_strike_decay_min_healthy', 10);
       policy.quality.thinking_guard = document.getElementById('p_thinking_guard').checked;
-      policy.quality.soft_cross_verify = document.getElementById('p_soft_cross_verify').checked;
-      policy.quality.thinking_cross_verify = document.getElementById('p_thinking_cross_verify').checked;
+      policy.quality.cross_verify = valueOf('p_cross_verify');
       policy.quality.min_generation_ms = numberValue('p_min_generation_ms', 1000);
-      policy.quality.fail_closed = document.getElementById('p_fail_closed').checked;
+      policy.quality.burst_guard = document.getElementById('p_burst_guard').checked;
       policy.quality.min_passive_output_tokens = numberValue('p_min_passive_output', 32);
       policy.quality.min_hold_output_tokens = numberValue('p_min_hold_output', 8);
       policy.quality.hold_timeout = valueOf('p_hold_timeout');
-      policy.quality.stream_idle_timeout = valueOf('p_stream_idle_timeout');
-      policy.quality.max_hold_total = valueOf('p_max_hold_total');
+      policy.quality.attempt_timeout = valueOf('p_attempt_timeout');
+      policy.quality.request_timeout = valueOf('p_request_timeout');
       policy.quality.hold_keepalive = valueOf('p_hold_keepalive');
       policy.quality.shadow_mode = document.getElementById('p_shadow_mode').checked;
       policy.quality.hold_max_buffer_bytes = numberValue('p_hold_max_bytes', 4194304);
@@ -10075,7 +10212,7 @@
       policy.quality.encrypted_bytes_per_reasoning_token = numberValue('p_encrypted_per_token', 2);
       policy.quality.missing_thinking_cooldown = valueOf('p_missing_cooldown');
       policy.quality.empty_stream_cooldown = valueOf('p_empty_cooldown');
-      policy.quality.max_attempts = numberValue('p_max_attempts', 6);
+      policy.quality.max_attempts = numberValue('p_max_attempts', 4);
       policy.quality.on_exhausted = valueOf('p_on_exhausted');
       policy.probe = policy.probe || {};
       policy.probe.healthy_interval_hours = nonNegativeIntegerValue('p_probe_healthy_interval_hours', 0);
@@ -10208,9 +10345,8 @@
       actionButtons.push('<button class="btn btn-ghost" type="button" data-proxy-action="' + (account.auto_bind_excluded ? 'resume-auto' : 'pause-auto') + '" data-auth="' + esc(account.auth_id) + '">' + (account.auto_bind_excluded ? esc(i18n.t('ui.resume_auto_bind')) : esc(i18n.t('ui.pause_auto_bind'))) + '</button>');
       document.getElementById('drawerBody').innerHTML = [
         '<div class="drawer-badge-row">' + badge(stateLabel(account.state), stateTone(account.state)) + proxyStatusBadge + (account.strike_missing_thinking ? badge(i18n.t("ui.thinking_strike_marker"), 'warn') : '') + ignoredAttempt + '</div>',
+        verdictCard(account.verdict),
         '<div class="drawer-section"><div class="detail-grid">',
-        '<div class="detail-cell"><div class="detail-label">' + i18n.t('ui.last_attempt_label') + '</div><div class="detail-value">' + esc(attemptLabel(account.last_attempt)) + '</div></div>',
-        '<div class="detail-cell"><div class="detail-label">' + i18n.t('ui.last_quality_verdict') + '</div><div class="detail-value">' + esc(reasonLabel(account.last_reason)) + '</div></div>',
         disableReasonCell,
         '<div class="detail-cell"><div class="detail-label">' + i18n.t('ui.output_speed') + '</div><div class="detail-value">' + esc(num(account.tps, 1)) + ' TPS</div></div>',
         '<div class="detail-cell"><div class="detail-label">' + i18n.t('ui.first_token') + '</div><div class="detail-value">' + i18n.t('ui.duration_milliseconds', { value: num(account.ttft_ms) }) + '</div></div>',
@@ -11016,7 +11152,7 @@
         let eventType = 'all';
         try { authID = decodeURIComponent(segments[0] || ''); } catch (_) {}
         try { eventType = decodeURIComponent(segments[1] || 'all'); } catch (_) {}
-        if (!['all', 'anomaly', 'probe', 'probe_errors', 'guard', 'restore', 'proxy'].includes(eventType)) eventType = 'all';
+        if (!['all', 'quality', 'transport', 'account', 'inconclusive', 'ignored', 'proxy', 'task'].includes(eventType)) eventType = 'all';
         state.eventQuery = authID;
         state.eventType = eventType;
         state.eventPage = 1;
@@ -11077,6 +11213,7 @@
     }
     i18n.observe();
     i18n.applyLocale(i18n.locale);
+    upgradeHints();
     applyLocationHash();
   </script>
 </body>

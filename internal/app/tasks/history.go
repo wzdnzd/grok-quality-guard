@@ -988,10 +988,6 @@ func taskCenterMatchesFilter(task Task, category, status, query string) bool {
 	return strings.Contains(text, query)
 }
 
-func forEachMergedTask(memory []Task, entries []historyEntry, visit func(Task)) {
-	_ = forEachMergedTaskContext(context.Background(), memory, entries, visit)
-}
-
 func forEachMergedTaskContext(ctx context.Context, memory []Task, entries []historyEntry, visit func(Task)) error {
 	if ctx == nil {
 		ctx = context.Background()

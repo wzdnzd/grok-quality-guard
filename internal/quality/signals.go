@@ -15,6 +15,7 @@ const (
 	ClassQuotaExhausted            = "quota_exhausted"
 	ClassRateLimited               = "rate_limited"
 	ClassIgnored                   = "ignored"
+	ClassInconclusive              = "inconclusive"
 	ClassInsufficientOutput        = "insufficient_output_tokens"
 	ClassInsufficientGeneration    = "insufficient_generation_window"
 	ClassExpectedMarkerMissing     = "expected_marker_missing"
@@ -55,27 +56,29 @@ const (
 )
 
 type Signals struct {
-	Protocol          string
-	HasThinking       bool
-	HasReasoningDelta bool
-	ReasoningStarted  bool
-	VisibleTokens     int64
-	VisibleRunes      int64
-	ReasoningTokens   int64
-	OutputTokens      int64
-	EncryptedBytes    int64
-	EncryptedFloor    int64
-	UsageReported     bool
-	FirstVisible      bool
-	VisibleFlushMS    int64
-	VisibleSpanMS     int64
-	VisibleChunks     int
-	VisibleGapMaxMS   int64
-	VisibleGapMedMS   int64
-	ProgressEvents    int
-	Terminal          bool
-	HoldExpired       bool
-	SemanticOutput    bool
+	Protocol           string
+	HasThinking        bool
+	HasReasoningDelta  bool
+	ReasoningStarted   bool
+	VisibleTokens      int64
+	VisibleRunes       int64
+	ReasoningTokens    int64
+	OutputTokens       int64
+	EncryptedBytes     int64
+	EncryptedBytesMax  int64
+	EncryptedItemCount int
+	EncryptedFloor     int64
+	UsageReported      bool
+	FirstVisible       bool
+	VisibleFlushMS     int64
+	VisibleSpanMS      int64
+	VisibleChunks      int
+	VisibleGapMaxMS    int64
+	VisibleGapMedMS    int64
+	ProgressEvents     int
+	Terminal           bool
+	HoldExpired        bool
+	SemanticOutput     bool
 	// HasToolCall marks a turn that emits a tool call. Its visible text is a
 	// preamble rather than the answer, and healthy accounts deliver tool
 	// arguments in one burst, so visible-window dump timing does not apply.

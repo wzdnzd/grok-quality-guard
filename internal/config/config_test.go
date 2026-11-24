@@ -19,8 +19,8 @@ func TestDecodeConfigPartialKeepsDefaults(t *testing.T) {
 	if errDecode != nil {
 		t.Fatalf("Decode() error = %v", errDecode)
 	}
-	if !cfg.PassiveGuard || cfg.TransparentGuard {
-		t.Fatalf("unexpected guard defaults: passive=%v transparent=%v", cfg.PassiveGuard, cfg.TransparentGuard)
+	if cfg.Guard != "passive" {
+		t.Fatalf("unexpected guard defaults: guard=%q", cfg.Guard)
 	}
 	if cfg.AutoAction != "cooldown_then_disable" {
 		t.Fatalf("auto_action = %q", cfg.AutoAction)
@@ -28,7 +28,7 @@ func TestDecodeConfigPartialKeepsDefaults(t *testing.T) {
 	if cfg.Quality.SoftTPS != 500 || cfg.Quality.HardTPS != 1000 || cfg.Quality.MinGenerationMS != 1000 {
 		t.Fatalf("unexpected quality defaults: %#v", cfg.Quality)
 	}
-	if cfg.Quality.HoldTimeout.Duration != 30*time.Second || cfg.Quality.StreamIdleTimeout.Duration != 90*time.Second || cfg.Quality.MaxHoldTotal.Duration != 90*time.Second || cfg.Quality.HoldKeepalive.Duration != 5*time.Second || cfg.Quality.MissingThinkingCooldown.Duration != 12*time.Hour {
+	if cfg.Quality.HoldTimeout.Duration != 30*time.Second || cfg.Quality.AttemptTimeout.Duration != 60*time.Second || cfg.Quality.RequestTimeout.Duration != 120*time.Second || cfg.Quality.HoldKeepalive.Duration != 5*time.Second || cfg.Quality.MissingThinkingCooldown.Duration != 12*time.Hour {
 		t.Fatalf("unexpected durations: %#v", cfg.Quality)
 	}
 	if cfg.Quality.ShadowMode {
@@ -256,7 +256,7 @@ func TestDecodeConfigPartialRoutingScoringKeepsDefaults(t *testing.T) {
 
 func TestPolicyJSONWithoutRoutingUsesRoutingDefaults(t *testing.T) {
 	var policy Policy
-	if errUnmarshal := json.Unmarshal([]byte(`{"passive_guard":true,"auto_action":"observe"}`), &policy); errUnmarshal != nil {
+	if errUnmarshal := json.Unmarshal([]byte(`{"guard":"passive","auto_action":"observe"}`), &policy); errUnmarshal != nil {
 		t.Fatal(errUnmarshal)
 	}
 	if policy.Routing.Strategy.Selection != "round_robin" || !policy.Routing.Strategy.PreferLastSuccess || !policy.Routing.Affinity.Enabled {
@@ -267,16 +267,14 @@ func TestPolicyJSONWithoutRoutingUsesRoutingDefaults(t *testing.T) {
 	}
 }
 
-func TestRoutingEWMAHalfLifeUsesHealthyInterval(t *testing.T) {
+func TestRoutingEWMAHalfLifeUsesScoringHalfLife(t *testing.T) {
 	for _, test := range []struct {
 		hours int
 		want  time.Duration
 	}{
 		{hours: 0, want: 168 * time.Hour},
-		{hours: 6, want: 12 * time.Hour},
-		{hours: 24, want: 24 * time.Hour},
-		{hours: 72, want: 72 * time.Hour},
-		{hours: 240, want: 168 * time.Hour},
+		{hours: 6, want: 6 * time.Hour},
+		{hours: 240, want: 240 * time.Hour},
 	} {
 		if got := RoutingEWMAHalfLife(test.hours); got != test.want {
 			t.Fatalf("RoutingEWMAHalfLife(%d) = %s, want %s", test.hours, got, test.want)
@@ -293,10 +291,10 @@ func TestPolicyQualityMissingFieldsUseDefaults(t *testing.T) {
 		t.Fatal(errNormalize)
 	}
 	quality := normalized.Quality
-	if quality.ConsecutiveSoft != 2 || quality.ConsecutiveErrors != 2 || quality.ConsecutiveMissingThinking != 1 {
+	if quality.ConsecutiveSoft != 2 || quality.ConsecutiveErrors != 2 || quality.ConsecutiveMissingThinking != 2 {
 		t.Fatalf("unexpected consecutive defaults: %#v", quality)
 	}
-	if !quality.ThinkingGuard || quality.SoftCrossVerify || quality.ThinkingCrossVerify {
+	if !quality.ThinkingGuard || quality.CrossVerify != "thinking" {
 		t.Fatalf("unexpected thinking defaults: %#v", quality)
 	}
 }

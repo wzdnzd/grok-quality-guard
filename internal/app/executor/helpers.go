@@ -49,6 +49,7 @@ const (
 	ClassQuotaExhausted        = domain.ClassQuotaExhausted
 	ClassRateLimited           = domain.ClassRateLimited
 	ClassIgnored               = domain.ClassIgnored
+	ClassInconclusive          = domain.ClassInconclusive
 	ClassNone                  = domain.ClassNone
 	ClassExpectedMarkerMissing = domain.ClassExpectedMarkerMissing
 	QualityActionWait          = domain.QualityActionWait

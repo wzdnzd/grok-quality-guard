@@ -57,6 +57,28 @@ func stateForDisableKind(kind string) string {
 func isAccountStatusClass(class string) bool {
 	return class == ClassCredentialInvalid || class == ClassQuotaExhausted
 }
+
+const (
+	transportBackoffBase = 30 * time.Second
+	transportBackoffMax  = 10 * time.Minute
+)
+
+// transportBackoff keeps network failures out of the quality pipeline. The
+// window doubles while the account stays unreachable and resets once it
+// recovers, so a restored link returns to the pool within minutes.
+func transportBackoff(previous AccountState) time.Duration {
+	backoff := transportBackoffBase
+	if previous.State == StateUnreachable && !previous.LastObservedAt.IsZero() {
+		if window := previous.ProbeBackoffUntil.Sub(previous.LastObservedAt); window > 0 {
+			backoff = window * 2
+		}
+	}
+	if backoff > transportBackoffMax {
+		backoff = transportBackoffMax
+	}
+	return backoff
+}
+
 func nextProbeBackoff(cfg ProbeConfig, previous AccountState) time.Duration {
 	base := cfg.SuspectBackoff.Duration
 	if base <= 0 {

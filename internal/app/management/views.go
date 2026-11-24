@@ -37,6 +37,7 @@ func (s *Service) accountSummaryWithHash(account Account, stateAccount AccountSt
 		OutputTokens:      stateAccount.Metrics.OutputTokens,
 		ReasoningTokens:   stateAccount.Metrics.ReasoningTokens,
 		EncryptedBytes:    stateAccount.Metrics.EncryptedBytes,
+		Verdict:           buildVerdictView(stateAccount),
 	}
 	if view.Proxy != "" && (account.ProxyMasked == "" || view.Proxy != account.ProxyMasked) {
 		view.Proxy = maskProxyURL(view.Proxy)
@@ -109,6 +110,7 @@ func (s *Service) accountSummaryWithBinding(account Account, stateAccount Accoun
 		OutputTokens:      stateAccount.Metrics.OutputTokens,
 		ReasoningTokens:   stateAccount.Metrics.ReasoningTokens,
 		EncryptedBytes:    stateAccount.Metrics.EncryptedBytes,
+		Verdict:           buildVerdictView(stateAccount),
 	}
 	if view.State == "" {
 		view.State = StateUnknown
@@ -146,24 +148,6 @@ func accountStateFromSummary(summary AccountStateSummary) AccountState {
 	}
 }
 
-func (s *Service) accountView(account Account, stateAccount AccountState, proxyURL, proxyHash string) accountView {
-	return accountView{
-		accountSummaryView:     s.accountSummaryWithHash(account, stateAccount, proxyURL, proxyHash),
-		Evidence:               stateAccount.LastEvidence,
-		LastProbeAt:            stateAccount.LastProbeAt,
-		DisableKind:            stateAccount.DisableKind,
-		StrikeMissingThinking:  stateAccount.QualityStrikeMissingThinking,
-		QualityFailureAt:       stateAccount.QualityFailureAt,
-		HealthyStreak:          stateAccount.HealthyStreak,
-		HealthyStreakStartedAt: stateAccount.HealthyStreakStartedAt,
-		SoftStrikes:            stateAccount.SoftStrikes,
-		ErrorStrikes:           stateAccount.ErrorStrikes,
-		ThinkingStrikes:        stateAccount.ThinkingStrikes,
-		TTFTMS:                 stateAccount.Metrics.FirstTokenMS,
-		VisibleTokens:          stateAccount.Metrics.VisibleTokens,
-	}
-}
-
 func (s *Service) accountViewWithBinding(account Account, stateAccount AccountState, binding proxyapp.BindingState) accountView {
 	return accountView{
 		accountSummaryView:     s.accountSummaryWithBinding(account, stateAccount, binding),
@@ -180,29 +164,6 @@ func (s *Service) accountViewWithBinding(account Account, stateAccount AccountSt
 		TTFTMS:                 stateAccount.Metrics.FirstTokenMS,
 		VisibleTokens:          stateAccount.Metrics.VisibleTokens,
 	}
-}
-
-// Runtime-only auths need a per-auth read for proxy metadata, so cap that fallback
-// to small catalogs and keep bulk management requests free of N+1 host calls
-const catalogProxyFallbackLimit = 200
-
-func (s *Service) accountProxyURL(ctx context.Context, account Account, allowFallback bool) string {
-	proxyURL := strings.TrimSpace(account.ProxyMasked)
-	if proxyURL != "" || strings.TrimSpace(account.Path) != "" || !allowFallback {
-		return proxyURL
-	}
-	_, _, raw, errResolve := s.resolveAuth(ctx, account.ID)
-	if errResolve != nil {
-		return ""
-	}
-	return strings.TrimSpace(authRawString(raw, "proxy_url"))
-}
-
-func (s *Service) accountProxyProjection(ctx context.Context, account Account, allowFallback bool) (string, string) {
-	if value := strings.TrimSpace(account.ProxyMasked); value != "" {
-		return value, account.ProxyHash
-	}
-	return s.accountProxyURL(ctx, account, allowFallback), ""
 }
 
 func (s *Service) accountViewForAccount(ctx context.Context, account Account) (accountView, error) {
