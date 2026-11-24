@@ -203,13 +203,6 @@ func (s *Service) applyVerdictLocked(
 
 		switch verdict.Class {
 		case ClassNone:
-			if sig.ReasoningSkipped {
-				// A tool call without a reasoning bill proves the account answers,
-				// not that it thinks. It must not clear thinking strikes, mark a
-				// suspect account healthy or advance strike decay.
-				account.ErrorStrikes = 0
-				return nil, nil
-			}
 			account.SoftStrikes = 0
 			account.ErrorStrikes = 0
 			account.ThinkingStrikes = 0
@@ -472,11 +465,6 @@ func (s *Service) applyVerdictLocked(
 // account's own history instead of assuming the worst.
 func noteEvidenceObservation(account *AccountState, sig Signals) {
 	if account == nil {
-		return
-	}
-	if sig.ReasoningSkipped {
-		// The model chose not to reason for this turn, so it is neither a hit
-		// nor a miss for the account's evidence history.
 		return
 	}
 	observed := sig.Terminal || sig.VisibleTokens > 0 || sig.OutputTokens > 0 || sig.ReasoningTokens > 0 || sig.HasThinking

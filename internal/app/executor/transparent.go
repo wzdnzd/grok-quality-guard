@@ -670,22 +670,6 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 		holdTimer = time.NewTimer(holdLimit)
 		holdC = holdTimer.C
 	}
-	// Short visible text without evidence settles by time, not size, and a
-	// stalled degraded stream sends no frame that would reclassify it.
-	var settleTimer *time.Timer
-	var settleC <-chan time.Time
-	defer func() {
-		if settleTimer != nil {
-			settleTimer.Stop()
-		}
-	}()
-	armSettle := func() {
-		if settleTimer != nil || emitted || !reasoningNeeded {
-			return
-		}
-		settleTimer = time.NewTimer(qualityPreambleSettleWindow)
-		settleC = settleTimer.C
-	}
 	classifyHold := func(preview QualitySignals) QualityVerdict {
 		preview = info.decorate(preview)
 		preview.HoldExpired = holdExpired
@@ -750,14 +734,6 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 			if attempt, done := applyHold(classifyHold(analyzer.Preview())); done {
 				return attempt
 			}
-		case <-settleC:
-			settleC = nil
-			if emitted {
-				continue
-			}
-			if attempt, done := applyHold(classifyHold(analyzer.Preview())); done {
-				return attempt
-			}
 		case event, ok := <-readEvents:
 			if !ok {
 				return finish()
@@ -803,7 +779,6 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 					preview = analyzer.Preview()
 					if preview.FirstVisible {
 						armHold()
-						armSettle()
 					}
 					if preview.Terminal {
 						return finish()

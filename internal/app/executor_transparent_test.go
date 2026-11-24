@@ -2068,12 +2068,13 @@ func TestTransparentToolCallPreambleWithEncryptedReasoningIsDelivered(t *testing
 	}
 }
 
-// TestTransparentToolCallWithoutReasoningIsDelivered replays the field report:
-// a Codex continuation turn on grok-4.7 returned a function call with no
-// reasoning bill, in one burst after the prefill, on every account it was
-// tried on. The gate rejected each one as missing_thinking (and the burst
-// timed out at ~1500 tok/s) until the pool ran dry and Codex got a 503.
-func TestTransparentToolCallWithoutReasoningIsDelivered(t *testing.T) {
+// TestTransparentToolCallWithoutReasoningFailsOver replays the field reports:
+// Codex continuation turns on grok-4.7 returned function calls with no
+// reasoning bill and no evidence, while healthy turns of the same size carried
+// 245-294 reasoning tokens. Delivering them let an agent run for nine minutes
+// without reasoning until the quota ran out. grok2api keeps such 0-thinking
+// tool turns behind the gate, and so does the plugin.
+func TestTransparentToolCallWithoutReasoningFailsOver(t *testing.T) {
 	scripts := map[string][]pluginapi.HostModelStreamReadResponse{
 		"bare call": {
 			streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_call\",\"model\":\"grok-4.7\"}}\n\n"),
@@ -2114,27 +2115,18 @@ func TestTransparentToolCallWithoutReasoningIsDelivered(t *testing.T) {
 			for _, payload := range emitted {
 				joined.Write(payload)
 			}
-			if !strings.Contains(joined.String(), "exec_command") || !strings.Contains(joined.String(), "response.completed") || closeDetail != nil {
-				t.Fatalf("no-reasoning tool call was not delivered: close=%#v output=%s", closeDetail, joined.String())
+			if strings.Contains(joined.String(), "exec_command") || strings.Contains(joined.String(), "resp_call") {
+				t.Fatalf("no-reasoning tool call leaked to the client: %s", joined.String())
 			}
-			if strings.Contains(joined.String(), "good answer") {
-				t.Fatalf("no-reasoning tool call failed over: %s", joined.String())
+			if !strings.Contains(joined.String(), "good answer") || closeDetail != nil {
+				t.Fatalf("reasoning account was not delivered: close=%#v output=%s", closeDetail, joined.String())
 			}
-			if calls := modelCallAuthIDs(host); len(calls) != 1 || calls[0] != "auth-1" {
-				t.Fatalf("no-reasoning tool call used attempts %v, want auth-1 only", calls)
+			if calls := modelCallAuthIDs(host); len(calls) != 2 || calls[0] != "auth-1" || calls[1] != "auth-2" {
+				t.Fatalf("no-reasoning tool call attempts = %v, want auth-1 then auth-2", calls)
 			}
 			account, ok := plugin.stateAccount("auth-1")
-			if !ok || account.LastAttempt == nil || account.LastAttempt.Class != "" {
-				t.Fatalf("no-reasoning tool call was judged: %#v", account.LastAttempt)
-			}
-			if account.ThinkingStrikes != 0 || account.State == appstate.StateCooling || account.State == appstate.StateSuspect {
-				t.Fatalf("no-reasoning tool call penalized the account: state=%s strikes=%d", account.State, account.ThinkingStrikes)
-			}
-			if account.EvidenceSamples != 0 {
-				t.Fatalf("no-reasoning tool call counted as an evidence sample: %d", account.EvidenceSamples)
-			}
-			if account.LastEvidence == nil || account.LastEvidence.TPS > 1000 {
-				t.Fatalf("burst tool call recorded an impossible TPS: %#v", account.LastEvidence)
+			if !ok || account.LastAttempt == nil || account.LastAttempt.Class != "missing_thinking" {
+				t.Fatalf("no-reasoning tool call was not judged missing_thinking: %#v", account.LastAttempt)
 			}
 		})
 	}

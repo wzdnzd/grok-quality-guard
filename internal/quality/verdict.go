@@ -134,58 +134,20 @@ func qualityFastFlush(sig Signals, limitMS int64) bool {
 	return sig.VisibleSpanMS >= 0 && sig.VisibleSpanMS < limitMS
 }
 
-// qualityPreambleTokens is the visible size a client tool-call preamble can
-// reach. Below it the text may still be followed by a tool call.
-func qualityPreambleTokens(minOutput int64) int64 {
-	return maxInt64(minOutput, defaultQualityPreambleTokens)
-}
-
-// qualityNoThinkingSettled reports that later frames can no longer change a
-// missing-thinking verdict, so the attempt may fail over before the terminal
-// event. Healthy evidence is emitted before the visible answer, so an answer
-// that has outgrown a tool-call preamble and visibly streams without evidence
-// is settled; waiting past that point only blocks the client. Short text is
-// settled once it has stood alone for the preamble window, since a preamble's
-// tool call follows it in the same burst. Before that, a client tool call and
-// the terminal reasoning bill can still turn the turn into a legitimate
-// no-reasoning step, and judging each frame on that partial evidence rejected
-// healthy agent turns after their first eight tokens.
-func qualityNoThinkingSettled(sig Signals, minOutput int64) bool {
-	if sig.HasThinking {
+// qualityReasoningWaitSettled reports that waiting for reasoning evidence can
+// no longer change the verdict. A healthy reasoning stream emits its evidence
+// before the visible answer, so a visible window that has already started
+// streaming without any evidence is a missing-thinking stream. Waiting past
+// that point only blocks the client for the remaining hold timeout and reaches
+// the same verdict, so the attempt can fail over early instead.
+func qualityReasoningWaitSettled(sig Signals, minOutput int64) bool {
+	if sig.HasThinking || !sig.FirstVisible {
 		return false
 	}
-	preamble := qualityPreambleTokens(minOutput)
-	if sig.HasToolCall && sig.VisibleTokens < preamble {
-		// The tool call is still streaming; its reasoning bill arrives last.
-		return false
-	}
-	if sig.HoldExpired {
-		return true
-	}
-	if !sig.FirstVisible || sig.VisibleTokens < minOutput {
-		return false
-	}
-	if sig.VisibleFlushMS >= defaultQualityPreambleSettleMS {
-		return true
-	}
-	if sig.VisibleTokens < preamble {
+	if sig.VisibleTokens < minOutput {
 		return false
 	}
 	return sig.VisibleSpanMS >= defaultQualitySettleSpanMS || sig.VisibleChunks >= defaultQualitySettleChunks
-}
-
-// qualityToolCallWithoutReasoning reports a client tool-call turn the model
-// answered without billing any reasoning. Agent loops routinely emit such
-// continuation calls: the same request produced them on every healthy account
-// it was retried on, so the turn says nothing about the account. Billed
-// reasoning without evidence stays the degraded signature, and a long text
-// answer next to the call is judged like any other answer.
-func qualityToolCallWithoutReasoning(sig Signals, minOutput int64) bool {
-	return sig.HasToolCall &&
-		!sig.HasThinking &&
-		!sig.HasReasoningDelta &&
-		sig.ReasoningTokens <= 0 &&
-		sig.VisibleTokens < qualityPreambleTokens(minOutput)
 }
 
 // qualityEvidencePrecededVisible reports ordered thinking: evidence arrived
@@ -355,12 +317,12 @@ func ClassifyQualityHold(sig Signals, minOutput int64) QualityVerdict {
 	}
 	output := qualityThinkingOutput(sig)
 	enough := output >= minOutput
+	if sig.ReasoningStarted && !sig.Terminal && !sig.HoldExpired && !qualityReasoningWaitSettled(sig, minOutput) {
+		return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.waiting_for_reasoning_evidence", Signals: sig}
+	}
 	if sig.Terminal {
 		if output <= 0 {
 			return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.empty_terminal_stream", Signals: sig}
-		}
-		if qualityToolCallWithoutReasoning(sig, minOutput) {
-			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.tool_call_without_reasoning_bill", Signals: sig}
 		}
 		if enough {
 			if qualityMissingThinkingConfirmed(sig) {
@@ -370,26 +332,25 @@ func ClassifyQualityHold(sig Signals, minOutput int64) QualityVerdict {
 		}
 		return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.short_response_below_thinking_threshold", Signals: sig}
 	}
-	if !qualityNoThinkingSettled(sig, minOutput) {
-		reason := "reason.detail.waiting_for_enough_output"
-		switch {
-		case sig.HasToolCall:
-			reason = "reason.detail.waiting_for_tool_call_completion"
-		case sig.ReasoningStarted:
-			reason = "reason.detail.waiting_for_reasoning_evidence"
-		}
-		return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: reason, Signals: sig}
-	}
 	if enough {
 		if qualityMissingThinkingConfirmed(sig) {
 			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
 		}
 		return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: qualityMissingThinkingReason(sig), Signals: sig}
 	}
-	if output <= 0 {
-		return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.hold_expired_without_output", Signals: sig}
+	if sig.HoldExpired {
+		if output <= 0 {
+			return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.hold_expired_without_output", Signals: sig}
+		}
+		if enough {
+			if qualityMissingThinkingConfirmed(sig) {
+				return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
+			}
+			return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: qualityMissingThinkingReason(sig), Signals: sig}
+		}
+		return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.short_response_below_thinking_threshold", Signals: sig}
 	}
-	return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.short_response_below_thinking_threshold", Signals: sig}
+	return QualityVerdict{Action: QualityActionWait, Class: ClassNone, Reason: "reason.detail.waiting_for_enough_output", Signals: sig}
 }
 func isDumpClass(class string) bool {
 	switch class {
@@ -443,7 +404,8 @@ func classifyOutputSpeed(sig Signals, cfg config.QualityConfig, failClosed bool)
 	speed := tps(sig.OutputTokens, genMS)
 	if cfg.MinPassiveOutputTokens > 0 && sig.OutputTokens < cfg.MinPassiveOutputTokens {
 		// A handful of tokens cannot be timed reliably: keep the sample for
-		// display and routing, but do not judge the account by it.
+		// display and routing, but do not judge the account by it. The egress
+		// guard audit uses the same 32-token floor.
 		return ClassNone, speed, genMS
 	}
 	if failClosed && qualityArrivalBurst(sig, cfg) {
@@ -468,14 +430,6 @@ func qualityArrivalBurst(sig Signals, cfg config.QualityConfig) bool {
 	}
 	arrival := arrivalWindowMS(sig.DurationMS, sig.FirstTokenMS, sig.ReasoningTokens)
 	return arrival > 0 && arrival < cfg.MinGenerationMS && tps(sig.OutputTokens, arrival) >= cfg.SoftTPS
-}
-
-// qualityReasoningSkippedVerdict delivers a tool-call turn without a
-// reasoning bill. The signals keep ReasoningSkipped so account bookkeeping
-// neither counts the turn as a thinking sample nor as a healthy one.
-func qualityReasoningSkippedVerdict(sig Signals) QualityVerdict {
-	sig.ReasoningSkipped = true
-	return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.tool_call_without_reasoning_bill", Signals: sig}
 }
 
 func classifyFinal(sig Signals, cfg config.QualityConfig, reasoningRequired bool, minOutput int64, streaming bool) QualityVerdict {
@@ -524,11 +478,9 @@ func classifyFinal(sig Signals, cfg config.QualityConfig, reasoningRequired bool
 			}
 		}
 	}
-	skipped := false
 	if thinkingRequired && !sig.HasThinking && !isSemanticOnly(sig) {
-		if qualityToolCallWithoutReasoning(sig, minOutput) {
-			skipped = true
-		} else if output := qualityThinkingOutput(sig); output >= minOutput && qualityMissingThinkingConfirmed(sig) {
+		output := qualityThinkingOutput(sig)
+		if output >= minOutput && qualityMissingThinkingConfirmed(sig) {
 			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
 		}
 	}
@@ -537,9 +489,6 @@ func classifyFinal(sig Signals, cfg config.QualityConfig, reasoningRequired bool
 	sig.TPS = speed
 	if class != ClassNone {
 		return QualityVerdict{Action: QualityActionWithhold, Class: class, Reason: outputSpeedReason(class), Signals: sig}
-	}
-	if skipped {
-		return qualityReasoningSkippedVerdict(sig)
 	}
 	return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.within_threshold", Signals: sig}
 }
@@ -619,24 +568,16 @@ func classifyPassiveAudit(sig Signals, cfg config.QualityConfig) QualityVerdict 
 	if sig.GenerationMS <= 0 || (sig.OutputTokens < cfg.MinPassiveOutputTokens && !thinkingEligible) {
 		return QualityVerdict{Action: QualityActionDeliver, Class: ClassIgnored, Reason: "reason.detail.insufficient_output_tokens", Signals: sig}
 	}
-	skipped := false
-	if thinkingEligible && !sig.HasThinking && !isSemanticOnly(sig) {
-		if qualityToolCallWithoutReasoning(sig, cfg.MinHoldOutputTokens) {
-			skipped = true
-		} else if qualityMissingThinkingConfirmed(sig) {
-			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
-		}
+	if thinkingEligible && !sig.HasThinking && !isSemanticOnly(sig) && qualityMissingThinkingConfirmed(sig) {
+		return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}
 	}
 	class, speed, gen := classifyOutputSpeed(sig, cfg, cfg.FailClosed)
 	sig.GenerationMS = gen
 	sig.TPS = speed
-	if class != ClassNone {
-		return QualityVerdict{Action: QualityActionWithhold, Class: class, Reason: outputSpeedReason(class), Signals: sig}
+	if class == ClassNone {
+		return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.within_threshold", Signals: sig}
 	}
-	if skipped {
-		return qualityReasoningSkippedVerdict(sig)
-	}
-	return QualityVerdict{Action: QualityActionDeliver, Class: ClassNone, Reason: "reason.detail.within_threshold", Signals: sig}
+	return QualityVerdict{Action: QualityActionWithhold, Class: class, Reason: outputSpeedReason(class), Signals: sig}
 }
 
 func classifyNonStreamResult(sig Signals, cfg config.QualityConfig, reasoningRequired bool, minOutput int64) QualityVerdict {
@@ -658,9 +599,6 @@ func classifyNonStreamResult(sig Signals, cfg config.QualityConfig, reasoningReq
 		return QualityVerdict{Action: QualityActionWithhold, Class: ClassEmptyStream, Reason: "reason.detail.upstream_response_completed_without_content", Signals: sig}
 	}
 	if cfg.ThinkingGuard && reasoningRequired && !sig.HasThinking && !isSemanticOnly(sig) {
-		if qualityToolCallWithoutReasoning(sig, minOutput) {
-			return qualityReasoningSkippedVerdict(sig)
-		}
 		output := qualityThinkingOutput(sig)
 		if output >= minOutput && qualityMissingThinkingConfirmed(sig) {
 			return QualityVerdict{Action: QualityActionWithhold, Class: ClassMissingThinking, Reason: "reason.detail.no_real_reasoning_evidence", Signals: sig}

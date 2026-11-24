@@ -1,18 +1,11 @@
 package quality
 
-import (
-	"time"
-
-	"grok-quality-guard/internal/config"
-)
+import "grok-quality-guard/internal/config"
 
 const (
 	ProtocolChat      = qualityProtocolChat
 	ProtocolResponses = qualityProtocolResponses
 	ProtocolAnthropic = qualityProtocolAnthropic
-	// PreambleSettleWindow is how long short visible text without evidence
-	// may wait for a tool call before the hold reclassifies it.
-	PreambleSettleWindow = time.Duration(defaultQualityPreambleSettleMS) * time.Millisecond
 )
 
 // Signals and verdict helpers are re-exported through exported names so the

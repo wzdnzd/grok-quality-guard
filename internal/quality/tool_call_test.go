@@ -6,10 +6,11 @@ import (
 	"grok-quality-guard/internal/config"
 )
 
-// noReasoningToolCallSignals models the Codex continuation turn from the field
-// report: grok-4.7 at xhigh effort emitted a ~75-token function call without
-// any reasoning, and every account it was retried on did the same. The call
-// arrived in one burst right after a 2.1s prefill.
+// noReasoningToolCallSignals models the Codex continuation turns from the
+// field reports: grok-4.7 at xhigh effort emitted ~75-token function calls
+// with no reasoning bill and no evidence, in one burst after a 2.1s prefill.
+// Healthy turns of the same size carried 245-294 reasoning tokens, so these
+// are the 0-thinking degraded stream grok2api keeps behind the gate.
 func noReasoningToolCallSignals() Signals {
 	return Signals{
 		Protocol:          ProtocolResponses,
@@ -29,19 +30,14 @@ func noReasoningToolCallSignals() Signals {
 	}
 }
 
-func TestToolCallWithoutReasoningBillIsDelivered(t *testing.T) {
+func TestToolCallWithoutReasoningIsMissingThinking(t *testing.T) {
 	cfg := config.DefaultQualityConfig()
 	sig := noReasoningToolCallSignals()
-	if verdict := ClassifyQualityHold(sig, cfg.MinHoldOutputTokens); verdict.Action != QualityActionDeliver || verdict.Reason != "reason.detail.tool_call_without_reasoning_bill" {
-		t.Fatalf("hold verdict = %#v, want deliver", verdict)
+	if verdict := ClassifyQualityHold(sig, cfg.MinHoldOutputTokens); verdict.Action != QualityActionWithhold || verdict.Class != ClassMissingThinking {
+		t.Fatalf("hold verdict = %#v, want missing_thinking withhold", verdict)
 	}
-	verdict := classifyFinal(sig, cfg, true, cfg.MinHoldOutputTokens, true)
-	if verdict.Action != QualityActionDeliver || verdict.Class != ClassNone || !verdict.Signals.ReasoningSkipped {
-		t.Fatalf("final verdict = %#v, want neutral deliver", verdict)
-	}
-	// The burst used to divide 75 tokens by the 50ms arrival tail: 1500 tok/s.
-	if verdict.Signals.GenerationMS != 2180 || verdict.Signals.TPS > 40 {
-		t.Fatalf("burst TPS = %.1f over %dms, want the full-duration bound", verdict.Signals.TPS, verdict.Signals.GenerationMS)
+	if verdict := classifyFinal(sig, cfg, true, cfg.MinHoldOutputTokens, true); verdict.Class != ClassMissingThinking {
+		t.Fatalf("final verdict = %#v, want missing_thinking", verdict)
 	}
 
 	preamble := sig
@@ -49,87 +45,58 @@ func TestToolCallWithoutReasoningBillIsDelivered(t *testing.T) {
 	preamble.VisibleTokens = 12
 	preamble.VisibleChunks = 3
 	preamble.VisibleSpanMS = 30
-	if verdict := classifyFinal(preamble, cfg, true, cfg.MinHoldOutputTokens, true); verdict.Class != ClassNone || !verdict.Signals.ReasoningSkipped {
-		t.Fatalf("tool call with a short preamble = %#v, want neutral deliver", verdict)
+	if verdict := classifyFinal(preamble, cfg, true, cfg.MinHoldOutputTokens, true); verdict.Class != ClassMissingThinking {
+		t.Fatalf("tool call with a preamble = %#v, want missing_thinking", verdict)
 	}
 
-	essay := preamble
-	essay.VisibleTokens = 200
-	if verdict := classifyFinal(essay, cfg, true, cfg.MinHoldOutputTokens, true); verdict.Class != ClassMissingThinking {
-		t.Fatalf("long answer next to a tool call = %#v, want missing_thinking", verdict)
-	}
-
-	billed := sig
-	billed.ReasoningTokens = 300
-	billed.OutputTokens = 375
-	if verdict := classifyFinal(billed, cfg, true, cfg.MinHoldOutputTokens, true); verdict.Class != ClassMissingThinking {
-		t.Fatalf("billed reasoning without evidence = %#v, want missing_thinking", verdict)
-	}
-
-	text := sig
-	text.HasToolCall = false
-	text.FirstVisible = true
-	text.VisibleTokens = 75
-	text.VisibleChunks = 10
-	text.VisibleSpanMS = 40
-	if verdict := classifyFinal(text, cfg, true, cfg.MinHoldOutputTokens, true); verdict.Class != ClassMissingThinking {
-		t.Fatalf("text answer without reasoning = %#v, want missing_thinking", verdict)
-	}
-}
-
-func TestToolCallWithoutReasoningBillOnOtherPaths(t *testing.T) {
-	cfg := config.DefaultQualityConfig()
-	nonStream := noReasoningToolCallSignals()
+	nonStream := sig
 	nonStream.Streaming = false
-	if verdict := classifyNonStreamResult(nonStream, cfg, true, cfg.MinHoldOutputTokens); verdict.Class != ClassNone || !verdict.Signals.ReasoningSkipped {
-		t.Fatalf("non-stream tool call = %#v, want neutral deliver", verdict)
+	if verdict := classifyNonStreamResult(nonStream, cfg, true, cfg.MinHoldOutputTokens); verdict.Class != ClassMissingThinking {
+		t.Fatalf("non-stream tool call = %#v, want missing_thinking", verdict)
 	}
-	passive := noReasoningToolCallSignals()
-	if verdict := classifyPassiveAudit(passive, cfg); verdict.Class != ClassNone || !verdict.Signals.ReasoningSkipped {
-		t.Fatalf("passive tool call = %#v, want neutral deliver", verdict)
+	if verdict := classifyPassiveAudit(noReasoningToolCallSignals(), cfg); verdict.Class != ClassMissingThinking {
+		t.Fatalf("passive tool call = %#v, want missing_thinking", verdict)
+	}
+
+	// Only a turn with neither output nor a bill is semantic-only.
+	semantic := sig
+	semantic.OutputTokens = 0
+	semantic.UsageReported = false
+	if verdict := classifyFinal(semantic, cfg, true, cfg.MinHoldOutputTokens, true); verdict.Class != ClassNone {
+		t.Fatalf("semantic-only tool call = %#v, want deliver", verdict)
 	}
 }
 
-func TestShortVisibleTextWaitsForToolCallBeforeSettling(t *testing.T) {
+func TestToolCallInProgressWaitsForItsBill(t *testing.T) {
+	calling := Signals{
+		ReasoningExplicit: true,
+		SemanticOutput:    true,
+		HasToolCall:       true,
+	}
+	if verdict := ClassifyQualityHold(calling, 8); verdict.Action != QualityActionWait {
+		t.Fatalf("tool call before its terminal event = %#v, want wait", verdict)
+	}
 	preamble := Signals{
 		ReasoningExplicit: true,
 		FirstVisible:      true,
 		VisibleTokens:     12,
 		VisibleChunks:     3,
 		VisibleSpanMS:     60,
-		VisibleFlushMS:    60,
 	}
-	// Eight visible tokens used to withhold the turn before its tool call or
-	// reasoning bill could arrive.
-	if verdict := ClassifyQualityHold(preamble, 8); verdict.Action != QualityActionWait {
-		t.Fatalf("short preamble = %#v, want wait", verdict)
+	// grok2api withholds a no-evidence visible stream once it reaches the
+	// hold floor; a preamble is not given extra room.
+	if verdict := ClassifyQualityHold(preamble, 8); verdict.Class != ClassMissingThinking {
+		t.Fatalf("no-evidence preamble = %#v, want missing_thinking", verdict)
 	}
-	stub := preamble
-	stub.ReasoningStarted = true
-	if verdict := ClassifyQualityHold(stub, 8); verdict.Action != QualityActionWait || verdict.Reason != "reason.detail.waiting_for_reasoning_evidence" {
-		t.Fatalf("short preamble after a stub = %#v, want wait", verdict)
-	}
+}
 
-	calling := preamble
-	calling.HasToolCall = true
-	calling.VisibleFlushMS = 5000
-	calling.HoldExpired = true
-	if verdict := ClassifyQualityHold(calling, 8); verdict.Action != QualityActionWait || verdict.Reason != "reason.detail.waiting_for_tool_call_completion" {
-		t.Fatalf("tool call in progress = %#v, want wait for its bill", verdict)
-	}
-
-	// A preamble's tool call follows in the same burst. Short text that stays
-	// alone past the window is an answer, so a stalled stream still fails over.
-	stalled := stub
-	stalled.VisibleFlushMS = defaultQualityPreambleSettleMS
-	if verdict := ClassifyQualityHold(stalled, 8); verdict.Class != ClassMissingThinking {
-		t.Fatalf("stalled short answer = %#v, want missing_thinking", verdict)
-	}
-
-	long := preamble
-	long.VisibleTokens = 64
-	if verdict := ClassifyQualityHold(long, 8); verdict.Class != ClassMissingThinking {
-		t.Fatalf("answer beyond preamble size = %#v, want missing_thinking", verdict)
+func TestBurstTPSUsesFullDurationBound(t *testing.T) {
+	cfg := config.DefaultQualityConfig()
+	// The same burst on a request without a reasoning requirement: the 50ms
+	// arrival tail used to time it at 1500 tok/s and fail it as hard_tps.
+	verdict := classifyFinal(noReasoningToolCallSignals(), cfg, false, cfg.MinHoldOutputTokens, true)
+	if verdict.Class != ClassNone || verdict.Signals.GenerationMS != 2180 || verdict.Signals.TPS > 40 {
+		t.Fatalf("burst verdict = %#v, want none at the full-duration bound", verdict)
 	}
 }
 
