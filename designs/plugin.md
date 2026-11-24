@@ -22,7 +22,7 @@
 - soft / hard TPS 异常
 - 空流和空闲流
 
-本设计采用“先观测、后处置、透明保护可选”的策略。默认不自动修改凭证，只有管理员显式开启自动处置后才写 `disabled`。透明拦截模式默认关闭，开启后拦截所有可识别的 Grok / xAI OAuth 请求；重放资格只决定失败后是否允许换号重试。
+本设计采用“先观测、后处置、透明保护可选”的策略。默认不自动修改凭证，只有管理员显式开启自动处置后才写 `disabled`。运行模式由 `guard: off|passive|transparent` 选择，默认 `passive`；`transparent` 拦截所有可识别的 Grok / xAI OAuth 请求，重放资格只决定失败后是否允许换号重试。
 
 ### 1.2 目标
 
@@ -31,7 +31,7 @@
 3. 将异常账号与 Resin 账号级租约绑定，而不是绑定到整个出口节点。
 4. 提供管理页与 JSON API，支持探测、冷却、禁用、恢复、绑定和轮换。
 5. 可选透明拦截：在首个客户端可见 chunk 发出前识别坏流并换号。
-6. 所有异常候选耗尽时 fail closed，返回 503 `quality_degraded`，不把确定异常的内容下发给客户端。
+6. 所有候选耗尽时不把已确认异常的内容下发给客户端：默认 `on_exhausted: fail_unverified` 只放行从未被确认降智的最后一个缓冲响应，否则返回 503 `quality_degraded`。
 7. 文档层面的接口、默认值、状态机、错误处理和测试标准必须足够明确，使后续实现无需再次做产品或架构决策。
 
 ### 1.3 非目标
@@ -75,7 +75,7 @@ grok2api 的关键实现位于：
 1. `usage.reasoning_tokens` 不是思考证据。降智账号可能报告几百 reasoning tokens，但流里没有 reasoning delta。
 2. `: grok2api-reasoning-start` 只是 timing stub，不是思考证据。
 3. 空 reasoning item 不等于思考。
-4. `encrypted_content` 非空也不够，必须达到密文下限：`max(min_encrypted_bytes, reasoning_tokens * encrypted_bytes_per_reasoning_token)`，默认 `max(256, reasoning_tokens * 2)`。
+4. `encrypted_content` 非空也不够，按输出 item 累加的密文字节（`encrypted_bytes`）必须达到密文下限：`max(min_encrypted_bytes, reasoning_tokens * encrypted_bytes_per_reasoning_token)`，默认 `max(256, reasoning_tokens * 2)`。
 5. 密文长度按 trim 后的字符串字节长度计算，与 grok2api 当前实现一致。
 6. visible token 只能从可见 content delta 推导，不能用 `usage.output - usage.reasoning` 代替。
 7. 判断速度异常时，TPS 使用总 output tokens，其中包含 reasoning tokens。
@@ -110,7 +110,7 @@ TPS = outputTokens * 1000 / generationWindow
 
 参考实现只在 `reasoningTokens > 0` 时做上述修正。无推理账单的突发输出因此按几十毫秒的尾段计算：Codex 一次 75 token 的工具调用在 2.13s 预填充后 50ms 内到达，会算出 1500 tok/s 并被误判为 `hard_tps`。修正后按完整时长计算约为 34 tok/s，真正不可能的速度（例如 2s 内到达 3000 token）仍会命中阈值。
 
-`fail_closed` 的 `buffered_burst` 与 `insufficient_generation_window` 仍使用参考实现的到达窗口（仅推理账单触发修正），以保留用户显式开启的缓冲突发检测；客户端工具调用轮次不参与该到达窗口检测。
+`burst_guard` 的 `buffered_burst` 与 `insufficient_generation_window` 仍使用参考实现的到达窗口（仅推理账单触发修正），以保留用户显式开启的缓冲突发检测；客户端工具调用轮次不参与该到达窗口检测。
 
 ### 2.3 默认阈值
 
@@ -121,19 +121,28 @@ TPS = outputTokens * 1000 / generationWindow
 | `min_generation_ms` | 1000 | buffered burst 的生成窗口下限 |
 | `min_passive_output_tokens` | 32 | 被动速度审计最小输出 |
 | `min_hold_output_tokens` | 8 | 透明流式 hold 最小可见输出 |
-| `hold_timeout` | 30s | 流式扣留最长时间 |
-| `stream_idle_timeout` | 90s | 单次上游请求等待首块或流式读取期间无新增生成输出的终止时间 |
-| `hold_max_buffer_bytes` | 4 MiB | 扣留的最大缓冲 |
-| `max_attempts` | 6 | 透明模式总上游尝试次数 |
-| `on_exhausted` | `fail_closed` | 所有候选异常后的行为 |
+| `hold_timeout` | 30s | 首个可判定输出前的最长扣留时间，`5s..10m` |
+| `attempt_timeout` | 60s | 单账号无新增生成输出的空闲计时，不小于 `hold_timeout + 10s`，最大 `10m` |
+| `request_timeout` | 120s | 单次请求所有账号尝试共享的总预算，不小于 `attempt_timeout`，最大 `30m` |
+| `hold_keepalive` | 5s | 扣留期间向客户端发送 SSE 保活注释的间隔，`1s..1m` |
+| `hold_max_buffer_bytes` | 4 MiB | 扣留的最大缓冲，`1..64 MiB` |
+| `max_attempts` | 4 | 透明模式总上游尝试次数，最大 8 |
+| `on_exhausted` | `fail_unverified` | 所有候选耗尽后的行为：`fail_unverified` 或 `fail_closed` |
+| `consecutive_soft` | 2 | 连续 soft TPS 次数阈值，`1..10` |
+| `consecutive_errors` | 2 | 连续传输错误次数阈值，`1..10` |
+| `consecutive_missing_thinking` | 2 | 连续缺少思考次数阈值，`1..10`；主动探测来源固定为 1 |
 | `missing_thinking_cooldown` | 12h | missing-thinking 首次冷却 |
 | `strike_decay_after` | 48h | missing-thinking strike 自动降级窗口，单位小时；0 关闭 |
 | `strike_decay_min_healthy` | 10 | 窗口内至少积累的连续健康观测/探测次数 |
 | `empty_stream_cooldown` | 15m | 空流/空闲流冷却 |
 | `min_encrypted_bytes` | 256 | encrypted thinking 字节下限 |
 | `encrypted_bytes_per_reasoning_token` | 2 | 每 reasoning token 的密文下限，按线上健康样本 2.44 至 8.67 字节/token 校准 |
-| `fail_closed` | false | 短生成窗口和高 TPS 是否直接判为 burst，以及窗口不足是否单独分类 |
+| `burst_guard` | false | 短生成窗口和高 TPS 是否直接判为 burst，以及窗口不足是否单独分类 |
+| `cross_verify` | `thinking` | 达到阈值后先用主动探测确认的异常类型：`off`、`soft`、`thinking`、`all` |
+| `shadow_mode` | false | 透明模式只记录结论，不扣留响应、不处置账号 |
 | `non_reasoning_models` | 空 | 用户额外声明不产生推理的模型标识，提供方前缀会被忽略 |
+
+缺失字段使用默认值；所有字段在加载时校验取值范围，越界值直接拒绝，不做静默截断。
 
 ### 2.4 异常分类
 
@@ -148,8 +157,9 @@ TPS = outputTokens * 1000 / generationWindow
 | `hard_tps` | TPS 达到 hard 阈值 | TPS >= 1000 |
 | `rate_limited` | 上游限速但不是明确额度耗尽 | 429 或明确 rate limit 文案，无强 quota 特征；只设置探测退避，不写 auth |
 | `empty_stream` | 上游完成但没有有效内容 | 无 thinking、无 usage、无 visible/semantic output |
-| `probe_error` | 主动探测请求失败或流不完整 | 网络、超时、非 2xx、无终止事件 |
-| `proxy_error` | 代理层失败 | 代理连接、认证或 Resin 错误 |
+| `probe_error` | 主动探测请求失败或流不完整 | 网络、超时、非 2xx、无终止事件；属于传输错误，账号转 `unreachable` |
+| `proxy_error` | 代理层失败 | 代理连接、认证或 Resin 错误；属于传输错误，账号转 `unreachable` |
+| `inconclusive` | 请求预算不足以完成判定 | 剩余预算小于最小校验窗口；不计入账号质量 |
 
 分类优先级：
 
@@ -243,11 +253,19 @@ Account 只允许 `A-Z a-z 0-9 _ -`，最长 128 字符。
 
 ## 3. 总体架构
 
-### 3.1 双模式
+### 3.1 运行模式
 
-#### passive_guard
+运行模式由单一字段 `guard` 决定：
 
-默认开启。职责：
+| 值 | 含义 |
+| --- | --- |
+| `off` | 只保留管理功能，不观测请求、不自动调度探测 |
+| `passive` | 默认值，只做被动观测，不改变路由 |
+| `transparent` | 接管 Grok 请求，同时包含 `passive` 的全部被动分析 |
+
+#### guard: passive
+
+默认模式。职责：
 
 - 读取已有请求的 usage、响应和流 chunk
 - 解析真实 thinking 证据
@@ -256,18 +274,18 @@ Account 只允许 `A-Z a-z 0-9 _ -`，最长 128 字符。
 - 执行主动恢复探测
 - 在管理员开启自动处置后写冷却/禁用状态
 
-passive_guard 不改变正常请求的路由和响应。它无法阻止当前请求已经收到的坏响应，只能影响后续调度或凭证状态。
+`guard: passive` 不改变正常请求的路由和响应。它无法阻止当前请求已经收到的坏响应，只能影响后续调度或凭证状态。
 
-#### transparent_guard
+#### guard: transparent
 
-默认关闭。职责：
+需显式开启。职责：
 
 - `ModelRouter` 判断请求是否属于 Grok / xAI 路由模型
 - 路由到插件自有 `Executor`
 - executor 固定 AuthID 和 ProxyURL 调用 `host.model.execute_stream`
 - 在首个客户端可见 chunk 前完成质量门
 - 可安全重放的异常流关闭上游流并换号；不可安全重放的请求只执行一次
-- 所有候选异常时 fail closed
+- 所有候选耗尽时按 `on_exhausted` 处理，已确认降智的内容永不下发
 
 透明模式覆盖全部可识别的 Grok / xAI 路由请求。禁用推理、非推理模型和不可安全重放请求都不得绕过质量门；它们只在 thinking 判定、dump 类判定和失败后的重试策略上有所区别。
 
@@ -318,9 +336,10 @@ client request
   -> host.model.execute_stream
   -> hold stream and analyze
        ├─ deliver: emit buffered prefix, then pass through
-       ├─ withhold + replayable: close upstream, rotate Resin, next attempt
+       ├─ withhold + replayable: close upstream, next account (proxy rotation only as fallback)
        ├─ withhold + unsafe replay: return 503 quality_degraded
-       └─ all exhausted: host.stream.close 503 quality_degraded
+       ├─ budget below min verify window: stop as inconclusive
+       └─ all exhausted: on_exhausted (fail_unverified / fail_closed)
 ```
 
 ### 3.5 主动探测数据流
@@ -333,7 +352,7 @@ probe scheduler
   -> analyze reasoning evidence, TPS, marker
   -> success: healthy + clear cooldown, keep strike
   -> missing_thinking after cooldown: permanent disable
-  -> probe error: re-disable and backoff
+  -> transport error: unreachable + 30s..10m backoff, no quality strike
 ```
 
 ## 4. 质量判定规范
@@ -342,7 +361,7 @@ probe scheduler
 
 质量判定对象是 xAI / Grok OAuth 请求的响应。
 
-- `transparent_guard=true` 时，所有可识别的 Grok 路由请求都进入透明门，不按 reasoning 能力或重放资格旁路。
+- `guard: transparent` 时，所有可识别的 Grok 路由请求都进入透明门，不按 reasoning 能力或重放资格旁路。
 - 内置或配置声明的非推理模型、显式关闭 reasoning 和未命中能力表的未知非 Grok 模型跳过 `missing_thinking` 与 dump 类；空流仍须拦截，速度和缓冲上限在终态继续记录。
 - 可安全重放只决定质量失败后能否换号或换代理，不决定是否接管请求。
 - passive 观测只对具有可解析文本流的样本形成质量结论，不改变 CPA 原生路由。
@@ -493,7 +512,7 @@ usage.output_tokens - usage.reasoning_tokens
 后置审计或探测完成时：
 
 ```text
-if fail_closed && !toolCall && arrivalWindow < min_generation_ms && outputTokens/arrivalWindow >= soft_tps:
+if burst_guard && !toolCall && arrivalWindow < min_generation_ms && outputTokens/arrivalWindow >= soft_tps:
     buffered_burst
 else if outputTokens < min_passive_output_tokens:
     healthy (TPS recorded, not judged)
@@ -579,7 +598,7 @@ type QualityVerdict struct {
 | 主动探测 | marker、输出下限、thinking 要求、生成窗口、TPS，并复用 `ClassifyQualityHold` 的 dump 判定 | 不把传输错误或上游非 2xx 当成质量降智；成功探测保留 strike |
 | 非流式质量门 | 空响应、缺少真实思考、密文下限、语义输出 | 不计算 TPS，不做流式 burst/dump 推断 |
 
-`ignored` 表示本次样本不是质量信号。它只更新最近尝试，不增加质量 strike，也不覆盖上一次真实质量指标。`probe_error` / `proxy_error` 会更新最近尝试和探测退避，但同样保留上一次质量证据。
+`ignored` 表示本次样本不是质量信号。它只更新最近尝试，不增加质量 strike，也不覆盖上一次真实质量指标。`probe_error` / `proxy_error` 是传输错误，会更新最近尝试并让账号进入 `unreachable` 退避，但同样不增加质量 strike，并保留上一次质量证据。
 
 ### 4.10 账号详情证据
 
@@ -592,6 +611,16 @@ type QualityVerdict struct {
 - chunk、byte、event、unknown event 和 parse failure 计数
 
 “最近尝试”与“最近质量判定”分开保存。这样即使最近一次是 `ignored` 或探测错误，也能看到上一次真实质量结论及其指标，而不是把所有指标误显示为 0。
+
+管理 API 把两者合并为每个账号摘要上的单一 `verdict` 对象 `{category, code, decision, source, at, detail, evidence}`，页面只渲染一次，不在尝试行、判定行和证据区重复同一分类：
+
+| 字段 | 取值 |
+| --- | --- |
+| `category` | `quality`（质量降智）、`transport`（`probe_error` / `proxy_error`）、`account`（`credential_invalid`、`quota_exhausted`、`rate_limited`）、`inconclusive`、`ignored` |
+| `decision` | `deliver`、`retry`、`quarantine`、`cooldown`、`disable`、`observe`，表示插件对该观测实际采取的唯一动作 |
+| `evidence` | 协议、流式、思考证据、`encrypted_bytes` 与密文下限、各类 token、TTFT、生成窗口、TPS、hold 到期、strike 与阈值 |
+
+事件同样携带 `category`、`code`、`decision`；事件日志按 `category` 筛选。传输与账号类错误永不计入质量 strike。
 
 ### 4.11 复核后补充契约
 
@@ -615,6 +644,7 @@ type QualityVerdict struct {
 | `healthy` | 最近主动探测通过 | 是 |
 | `suspect` | 有一次弱异常、探测错误或证据不完整 | 是，但降低优先级 |
 | `degraded` | 已确认质量异常，但未自动处置 | 是，仅 observe 模式 |
+| `unreachable` | 网络、代理或探测传输错误，处于短退避 | 否，退避到期后重新探测 |
 | `cooling` | 已确认异常并处于冷却 | 否 |
 | `quota_exhausted` | 上游明确额度耗尽，进入 24 小时冷却 | 否 |
 | `credential_invalid` | 上游拒绝凭据，账号被禁用并等待重新认证 | 否 |
@@ -638,7 +668,17 @@ healthy
 
 suspect
   ├─ probe pass -> healthy
-  ├─ probe error -> suspect + backoff
+  ├─ transport error -> unreachable
+  └─ confirmed anomaly -> degraded
+
+unknown / healthy / suspect / degraded
+  └─ transport error -> unreachable + backoff (30s doubling, max 10m)
+
+unreachable
+  ├─ backoff not expired -> unreachable
+  ├─ probe pass -> healthy
+  ├─ transport error again -> unreachable, backoff doubles
+  ├─ managed proxy rotated -> unknown
   └─ confirmed anomaly -> degraded
 
 degraded
@@ -685,7 +725,7 @@ disabled_by_guard
 3. 冷却到期后执行恢复探测。
 4. 恢复探测成功：恢复 `disabled=false`，状态 `healthy`。
 5. 恢复探测仍异常：重新进入冷却，状态保持 `cooling`，不写永久禁用。
-6. 恢复探测网络错误：重新进入 cooldown + backoff，不写永久禁用。
+6. 恢复探测网络错误：重新进入 cooldown + backoff，不写永久禁用，不计入质量 strike。
 
 `auto_action=cooldown_then_disable`：
 
@@ -694,9 +734,17 @@ disabled_by_guard
 3. 冷却到期：只有在 state 仍记录该账号由 guard 控制且未被管理员手动改动时，临时恢复。
 4. 恢复探测成功：恢复 `disabled=false`，清除 cooldown，状态 `healthy`，保留 `strike_missing_thinking=true`。
 5. 恢复探测再次确认 `missing_thinking`：auth 写 `disabled=true`，state 写 `disable_kind=permanent`，状态 `disabled_by_guard`。
-6. 恢复探测网络错误：重新写回 cooldown，增加 backoff，不直接永久禁用。
+6. 恢复探测网络错误：重新写回 cooldown，增加 backoff，不直接永久禁用，不计入质量 strike。
 
 上游账号状态错误独立于质量 strike：`credential_invalid` 直接禁用并等待凭据更新；`quota_exhausted` 使用固定 24 小时冷却，因为 Grok 免费额度按滚动 24 小时窗口恢复。这两类处置不受 `auto_action: observe` 限制，避免失效凭据或耗尽额度继续参与路由。
+
+传输错误语义（`probe_error` / `proxy_error`）：
+
+- 不是质量信号，不增加质量 strike，不进入质量冷却，不写 `disabled=true`，也不受 `auto_action` 影响
+- 未处于隔离状态的账号转为 `unreachable`，`probe_backoff_until` 从 30s 起，账号持续不可达时翻倍，最长 10m
+- 退避到期后由探测调度器重新探测；健康探测直接恢复为 `healthy`
+- 已处于 `cooling` 等隔离状态的账号保持原状态，只更新退避
+- 达到 `consecutive_errors` 且绑定受管代理时轮换代理；轮换成功清除连续错误并回到 `unknown`，轮换失败只记录事件，不升级为质量冷却
 
 `rate_limited` 语义：
 
@@ -769,7 +817,7 @@ Router 输入包含 SourceFormat、RequestedModel、Stream、Headers、Query、B
 
 Router 处理条件：
 
-1. 插件配置 `transparent_guard=true`
+1. 插件配置 `guard: transparent`
 2. 请求不是插件内部主动探测
 3. 请求模型匹配 Grok：默认 model prefix 为 `grok-`，或从缓存的 `host.auth.models` 可确认该模型属于 xAI
 
@@ -801,7 +849,7 @@ Router 处理条件：
 - 请求体无法解析为预期 JSON
 - 请求路径表明媒体或非文本能力
 
-重放资格只控制失败后的失败恢复：可安全重放请求受 `max_attempts` 限制并允许换号/换代理；不可证明可安全重放时仍执行一次透明质量门，失败返回 `503 quality_degraded`，不换号重试。只有显式配置 `on_exhausted: fail_open` 才会下发最后一个已缓冲响应。
+重放资格只控制失败后的失败恢复：可安全重放请求受 `max_attempts` 限制并允许换号/换代理；不可证明可安全重放时仍执行一次透明质量门，失败后不换号重试，按 `on_exhausted` 收尾。尚未拿到响应前的传输错误例外，不可重放请求也可换号。
 
 ### 6.3 候选账号
 
@@ -815,7 +863,7 @@ Router 处理条件：
 
 - provider/type 必须为 xAI/Grok
 - 只允许 `healthy` / `unknown`
-- 跳过 `suspect`、`degraded`、`cooling` 及其他隔离状态
+- 跳过 `suspect`、`degraded`、`unreachable`、`cooling` 及其他隔离状态
 - 跳过 `disabled_by_guard`
 - 跳过 `externally_disabled`
 - 跳过 runtime unavailable
@@ -825,11 +873,12 @@ Router 处理条件：
 
 分层：
 
-1. `healthy` 整体优先于 `unknown`
+1. `healthy`（rank 0）整体优先于 `unknown`（rank 1）
 2. 同一质量状态下，Auth Priority 数值越大越优先
 3. 每个 `(quality, priority)` 组合是独立选择层，层内按 AuthID 稳定排序
-4. 当前层未耗尽时不进入下一层
-5. 当前层全部失败后才 fallback 到下一层
+4. 存在 healthy 层时，单次请求最多尝试 1 个 `unknown` 账号；全部为 `unknown` 时不限制
+5. 当前层未耗尽时不进入下一层
+6. 当前层全部失败后才 fallback 到下一层
 
 透明请求不得依赖 CPA 内置 auth selection 再次选号，必须显式传 `AuthID`。
 完整的分层索引、preferred、session affinity、in-flight 跟踪和层内策略见 6.10。
@@ -888,7 +937,11 @@ loop read upstream chunk:
         maybe rotate Resin
         continue next candidate
 
-    if buffer > 4 MiB:
+    if no new generated output for attempt_timeout:
+        close upstream stream
+        next candidate
+
+    if buffer > hold_max_buffer_bytes:
         emit buffer
         emitStarted = true
         record buffer_overflow
@@ -909,10 +962,30 @@ if terminal and no verdict:
 
 - 时间型 dump 只在 `terminal` 或 `hold_expired` 后判定；流式进行中不得因前两个 delta 提前拦截
 - emit 失败或请求 context 结束时，整个请求按客户端中止处理：关闭上游流、不换号、不记 strike、不写失败事件
-- 缓冲超过 4 MiB 时放行已缓冲内容并记录 `transparent_overflow` 事件，不对该样本应用健康/异常判定，也不清零 strike
+- 扣留期间每隔 `hold_keepalive` 向客户端发送 `: quality-hold` SSE 注释，不含内容也不结束扣留；开始 emit 后停止
+- 缓冲超过 `hold_max_buffer_bytes`（默认 4 MiB）时放行已缓冲内容并记录 `transparent_overflow` 事件，不对该样本应用健康/异常判定，也不清零 strike
 - 非推理请求在首个可见块后约 200ms 提前放行；空流仍会拦截，TPS 速度和缓冲上限在终态继续记录
 - 判定记账在后台执行：失败尝试的 `transparent_attempt` 事件、账号判定（含交叉验证调度）以及成功样本的健康判定都不阻塞请求路径。每次判定都会完整落盘状态文件并获取账号锁，而正在运行的探测会在整个探测期间持有该锁，同步执行会让每次换号额外等待数秒到一次完整探测的时长，客户端在此期间收不到任何内容。成功响应先关闭客户端流再记账；插件停机时记账改为同步执行，保证在最终落盘前完成
 - 判定只决定当前请求是否换号；同一请求内已失败的账号由选择器的 `MarkFailure` 立即排除，因此不依赖记账完成
+
+#### 6.5.1 超时与请求预算
+
+透明流使用三级超时，加载时强制 `hold_timeout + 10s <= attempt_timeout <= request_timeout`：
+
+| 配置 | 默认值 | 作用 |
+| --- | ---: | --- |
+| `hold_timeout` | 30s | 单次扣留的上限：出现首个可判定输出前最多缓冲多久 |
+| `attempt_timeout` | 60s | 单账号空闲计时：打开流或读取期间超过该时间没有新增生成输出即终止当前尝试并换号 |
+| `request_timeout` | 120s | 单次请求的总预算，由该请求的所有账号尝试共享 |
+
+规则：
+
+- 每次尝试的扣留上限取 `hold_timeout` 与剩余请求预算的较小值
+- 最小校验窗口为 `hold_timeout` 的一半，最多 3s；剩余预算小于该窗口时不再发起新尝试，当前尝试以 `inconclusive`（`budget_exhausted`）结束
+- 扣留因预算被截短时，到期的 `missing_thinking` 改记为 `inconclusive`，不计入账号质量，避免一池降智账号把健康账号拖成误判
+- `attempt_timeout` 是空闲计时，不缩短扣留；`request_timeout` 防止多个降智账号累计把客户端拖过自身超时
+
+`shadow_mode=true` 时质量门只记录本应采取的结论（`quality_shadow` 事件），不扣留响应、不换号、不处置账号。
 
 ### 6.6 非流式请求
 
@@ -926,7 +999,12 @@ if terminal and no verdict:
 
 ### 6.7 耗尽行为
 
-所有尝试都异常或没有候选时：
+所有尝试都异常、预算耗尽或没有候选时，按 `on_exhausted` 处理：
+
+- `fail_unverified`（默认）：最后一次流式尝试的缓冲从未被确认降智（例如预算不足以 `inconclusive` 结束）时放行该缓冲；已确认降智的响应永不放行
+- `fail_closed`：始终关闭为 503
+
+不放行时：
 
 ```text
 host.stream.close(
@@ -942,7 +1020,7 @@ host.stream.close(
 
 要求：
 
-- 不返回最后一次异常响应
+- 不返回任何已确认异常的响应
 - 不伪造 402 或 429
 - 不把异常内容以 200 发出
 - 不泄露账号、代理或上游响应细节
@@ -956,8 +1034,8 @@ host.stream.close(
 1. 记录异常并把该账号标为 `suspect` 或 `degraded`
 2. 如果还有其他透明候选，立即切换账号，不在当前账号上做代理轮换
 3. 只有单账号池才使用代理轮换作为兜底，同一账号最多轮换一次
-4. 轮换后仍异常则 fail closed；后续请求不会再次选择该账号
-5. 总上游尝试次数仍受 `max_attempts=6` 限制
+4. 轮换后仍异常则按 `on_exhausted` 收尾；后续请求不会再次选择该账号
+5. 总上游尝试次数仍受 `max_attempts`（默认 4）和 `request_timeout` 预算限制
 
 其他质量异常仍可按代理轮换策略在同账号重试一次，再切换账号。所有后续透明请求都跳过 `suspect` / `degraded` 账号。
 
@@ -1041,6 +1119,7 @@ grok2api 的关键结论是：同 Priority 账号会随 in-flight 和 lastSelect
 - 非 Grok provider/type
 - `suspect`
 - `degraded`
+- `unreachable`
 - `cooling`
 - `quota_exhausted`
 - `credential_invalid`
@@ -1077,7 +1156,7 @@ unknown / Priority=0
 - 层内按 AuthID 稳定排序
 - 当前层还有未尝试候选时不进入下一层
 - 当前层全部失败后才进入下一层
-- 请求级 `max_attempts` 仍是硬上限，达到后立即停止
+- 请求级 `max_attempts` 与 `request_timeout` 仍是硬上限，达到后立即停止
 - 非可安全重放请求仍只允许一次尝试
 
 Priority 的语义必须统一为“数值越大越优先”。旧的升序排序已经移除。
@@ -1122,6 +1201,7 @@ unknown -> healthy
 
 - `healthy -> suspect`：退出选择索引
 - `healthy -> degraded`：退出选择索引
+- `healthy -> unreachable`：退出选择索引，健康探测后重新进入
 - `unknown -> quota_exhausted`：退出选择索引
 - auth 被删除或禁用：退出所有层
 - Priority 变化：移动到新的 Priority 层
@@ -1263,6 +1343,7 @@ activeAttempts map[authID]int
 - 非流式、缓冲流、实时流结束或失败后释放
 - auth 解析失败、执行前失败、Resin 轮换后失败和所有提前返回路径都必须释放
 - 使用 `attempt.Release()` 统一释放，禁止在 selection lock 内调用上游网络
+- 每次创建选择时清理超过 10 分钟仍未释放的占用，避免异常路径永久占住账号
 
 健康账号按每个 `(质量, Priority)` 层内的 EWMA 分数降序排列，再按 `routing.scoring.max_accounts_per_bucket` 切分为不可变桶；`unknown` 不计算评分，按 Auth ID 排序后使用相同容量分桶。桶数由账号数动态计算，不写死。评分综合：
 
@@ -1271,7 +1352,7 @@ activeAttempts map[authID]int
 - 输出 TPS
 - 主动探测、透明请求、被动观测三类来源证据
 
-半衰期统一由 `probe.healthy_interval_hours` 推导并限制在 `12h..168h`；该值为 `0` 时使用 `168h`。来源区别由证据权重表达，而不是使用互相不可比的衰减时间。
+半衰期统一由 `routing.scoring.half_life_hours` 配置，默认 168，允许 `1..8760`，所有证据来源共用。来源区别由证据权重表达，而不是使用互相不可比的衰减时间。
 
 普通策略先在当前评分桶内执行 idle pass，再依次进入较低评分桶；本层所有桶的 idle pass 都没有候选后，才执行 busy pass：
 
@@ -1318,6 +1399,7 @@ routing:
   scoring:
     enabled: true
     max_accounts_per_bucket: 512
+    half_life_hours: 168
     weights:
       success: 0.50
       ttft: 0.30
@@ -1410,8 +1492,8 @@ return quality_degraded
 处理：
 
 - `ignored` / `rate_limited` 可以触发当前请求换号，但不替换全局 preferred，也不在 `MarkFailure` 阶段主动删除 session 绑定
-- `probe_error` / `proxy_error` 视为传输级硬失败：即使请求体不可安全重放，只要尚未向客户端 emit，也换到下一账号；同时清除该 auth 的当前 session 绑定和匹配的全局 preferred，避免后续请求继续命中不可达连接
-- 这些传输失败不是账号质量 strike；账号是否转为 `suspect` 仍由状态机独立决定
+- `probe_error` / `proxy_error` 视为传输级硬失败：只要尚未拿到上游响应，即使请求体不可安全重放也换到下一账号；同时清除该 auth 的当前 session 绑定和匹配的全局 preferred，避免后续请求继续命中不可达连接
+- 这些传输失败不是账号质量 strike；账号转为 `unreachable` 并按 30s..10m 退避重新探测，不进入质量冷却
 
 Resin 轮换语义保持不变：
 
@@ -1420,9 +1502,10 @@ Resin 轮换语义保持不变：
 - 轮换后重新解析 auth，确保使用新的 `proxy_url`
 - `missing_thinking` 存在其他候选时优先换号，不先轮换代理
 - `proxy_error` / `probe_error` 达到 `consecutive_errors` 时，存在其他候选则先换号并异步轮换失败账号的代理
-- 没有其他候选时才同步轮换代理并重试同一 auth
+- 没有其他候选且连续传输错误达到 `proxy.rotate_after_errors`（默认 2，最大 10）时才同步轮换代理并重试同一 auth
 - 单账号池才使用代理轮换作为兜底
 - 轮换次数计入 `max_attempts`
+- auth 未绑定插件管理的代理时跳过轮换；插件不依赖代理，没有任何代理来源、节点或绑定时，探测、透明保护和换号都走直连
 
 #### 6.10.11 配置与热更新
 
@@ -1440,6 +1523,7 @@ routing:
   scoring:
     enabled: true
     max_accounts_per_bucket: 512
+    half_life_hours: 168
     weights:
       success: 0.50
       ttft: 0.30
@@ -1460,6 +1544,7 @@ routing:
 - `routing.affinity.ttl > 0` 且不超过 `168h`
 - `routing.affinity.max_entries > 0` 且不超过 `100000`
 - `routing.scoring.max_accounts_per_bucket` 为 `16..4096` 的整数
+- `routing.scoring.half_life_hours` 为 `1..8760` 的整数
 - 指标权重与证据权重均为 `0..1` 的有限数，且各自至少一项大于 `0`
 - `routing.scoring.refresh.min_interval >= 10s`
 - `routing.scoring.refresh.max_age` 位于 `min_interval..7d`
@@ -1496,7 +1581,7 @@ routing:
 - `healthy` 整体优先于 `unknown`
 - `suspect` / `degraded` 不进入候选
 - `unknown -> healthy` 增量移动到 healthy 层且不触发全量重建
-- EWMA 半衰期随 `probe.healthy_interval_hours` 动态变化
+- EWMA 半衰期由 `routing.scoring.half_life_hours` 统一控制
 - 新鲜证据提高评分，陈旧证据向中性分衰减
 - 评分桶按容量动态切分，`unknown` 也遵守同一容量上限
 - 累计评分漂移或最大索引年龄触发后台重建
@@ -1622,7 +1707,8 @@ QUALITY_OK
 默认只做恢复性探测：
 
 - 新发现账号：`unknown`，延迟 30s 后探测一次
-- `suspect`：15m 后探测一次，失败 backoff 最大 1h
+- `suspect` / `degraded`：`probe.suspect_backoff`（默认 2m）后探测一次，失败 backoff 翻倍，最大 `probe.max_backoff`（默认 1h）
+- `unreachable`：传输退避（30s 起翻倍，最长 10m）到期后探测一次
 - `cooling`：冷却到期后探测一次
 - `healthy`：`probe.healthy_interval_hours=0`（默认）时没有周期探测；大于 `0` 时，距上次主动探测达到该小时数后到期
 - 管理员可随时手动触发 force probe
@@ -1631,7 +1717,7 @@ QUALITY_OK
 
 - 扫描阶段一次性过滤出到期账号，再放入有界队列；健康账号仅在 `probe.healthy_interval_hours` 启用且间隔已到或尚无 `last_probe_at` 时参与周期探测
 - 队列容量由 `probe.queue_size` 控制，默认 10000，最大 1000000
-- 单类探测或批量任务内部只启动与 `probe.concurrency` 相同数量的 worker
+- 单类探测或批量任务内部只启动与 `probe.concurrency`（默认 2）相同数量的 worker
 - 同一账号同时最多 1 个 probe
 - `probe.unknown_jitter` 为首次探测增加稳定抖动，避免启动时全部到期
 - 队列按 auth ID 去重；worker 出队后再次检查 due 状态
@@ -1656,10 +1742,10 @@ CPA 不允许直接执行 disabled auth。恢复探测流程必须：
 - 通过：`healthy`
 - 探测与透明 hold 门共用 `ClassifyQualityHold` 的 dump 判定；成功探测只解除冷却，保留 `strike_missing_thinking`
 - 探测成功计入 strike 自动降级的连续健康样本；失败不增加健康计数
-- `missing_thinking`：冷却后再次确认 -> `disabled_by_guard`
+- `missing_thinking`：探测本身就是确认步骤，阈值固定为 1；冷却后再次确认 -> `disabled_by_guard`
 - 空流：15m 冷却
-- probe 网络/超时/流不完整：`suspect` + backoff
-- 代理错误：`proxy_error`，冷却并在条件允许时轮换 Resin
+- probe 网络/超时/流不完整：`probe_error`，账号转 `unreachable` + 传输退避，不计入质量 strike
+- 代理错误：`proxy_error`，同样转 `unreachable`；达到 `consecutive_errors` 且绑定受管代理时同步轮换代理，不进入质量冷却
 - `401`：`credential_invalid`，直接写入 `disabled=true`，不自动探测
 - `402` 或包含明确 free usage/spending-limit/credits 短语的 `403/429`：`quota_exhausted`，直接进入 24 小时冷却
 - 普通 `429` 或明确 rate limit 文案：`rate_limited`，只设置探测退避，不写 auth、不清零连续计数
@@ -1885,11 +1971,11 @@ ormalizeManagementRoute` 会把 action 路由挂到 `/v0/management/` 下，仅�
 页面采用与 CPA Management Center 一致的中性色视觉体系，自动跟随宿主页面的明暗主题，所有界面文字使用中文，并按任务频率拆分 Tab：
 
 - `概览`：守护状态、检测模式、账号总数、需关注账号、最近 24h 自动检测统计、质量分布、最近事件、当前策略摘要和代理摘要
-- `账号`：搜索、状态筛选和分页、脱敏账号信息、最近尝试、真实思考证据、TPS/TTFT/output/reasoning/encrypted 指标、代理绑定、冷却和探测退避；详情抽屉提供脱敏判定依据，以及主动探测、冷却、恢复、禁用、绑定和轮换
+- `账号`：搜索、状态筛选和分页、脱敏账号信息、统一 `verdict` 判定、真实思考证据、TPS/TTFT/output/reasoning/encrypted 指标、代理绑定、冷却和探测退避；详情抽屉提供脱敏判定依据，以及主动探测、冷却、恢复、禁用、绑定和轮换
 - `代理管理`：内部按 `账号绑定` 和 `代理来源` 两个任务子视图组织。账号绑定子视图展示每个 Grok 账号、脱敏代理、代理账号和轮换代数，支持搜索、状态筛选、分页、单账号绑定/轮换/清除，以及批量绑定/清除。代理来源子视图统一展示节点、模板和 Resin，新增类型下拉同时包含三种来源。
 - `任务中心`：统一展示账号、代理、Resin 清理和质量交叉验证等异步任务，包含进度、总数、处理中、等待、成功、失败、跳过、来源、时间和逐项结果；等待中或执行中的任务在状态旁提供取消操作，已结束任务在状态旁提供永久删除操作，删除会同时移除索引、归档和逐项明细。常驻队列只显示实际启用或仍有工作的队列。主动探测调度器以“质量检测队列”展示实时等待、处理中、成功和失败数量，自动探测不逐账号创建任务历史。历史任务列表从紧凑索引按页读取，逐项结果仅在打开任务时按需解压加载。`#tasks/<task-id>` 可直接打开任务详情
-- `事件日志`：按关键词和事件类型筛选并分页展示时间、auth ID、分类、动作、结果和脱敏详情
-- `设置`：低频配置集中在 `守护策略`；运行模式、层内选择策略、Preferred Last-Success、Session Affinity、最大尝试次数、候选耗尽行为和探测调度都在此编辑
+- `事件日志`：按关键词和判定分类（`quality`、`transport`、`account`、`inconclusive`、`ignored`）及代理、任务事件筛选并分页展示时间、auth ID、分类、代码、处置、动作、结果和脱敏详情
+- `设置`：低频配置集中在 `守护策略`，按“运行模式与处置 / 透明鉴权选择与会话亲和 / 健康账号评分 / 质量阈值与思考证据 / 透明保护 / 主动探测 / 任务中心与历史记录”分组，每个字段通过 i 图标提示说明含义
 
 页面技术要求：
 
@@ -1951,7 +2037,7 @@ Content-Type: application/json
 | Action | 参数 | 说明 |
 | --- | --- | --- |
 | `overview` | 无 | 汇总状态和计数 |
-| `accounts.list` | `page`、`page_size`、`state`、`query`、`summary`、`ids_only`、`all_ids` | 分页账号列表；`ids_only` 返回当前筛选页的 ID，`ids_only + all_ids` 在单次扫描中返回全部命中 ID |
+| `accounts.list` | `page`、`page_size`、`state`、`query`、`summary`、`ids_only`、`all_ids` | 分页账号列表，每个账号附带 `verdict`；`ids_only` 返回当前筛选页的 ID，`ids_only + all_ids` 在单次扫描中返回全部命中 ID |
 | `accounts.get` | `auth_id` | 单个账号详情 |
 | `accounts.probe` | `auth_id`、`force` | 提交异步探测任务，返回 `task_id` |
 | `accounts.probe_selected` | `auth_ids` | 将选中账号放入有界探测队列，需要恢复时先恢复再检测 |
@@ -1979,7 +2065,7 @@ Content-Type: application/json
 | `policy.update` | `policy` | 校验并持久化策略 |
 | `policy.reset` | 无 | 重置为 YAML 默认值 |
 | `state_file.update` | `state_file` | 写入并切换状态文件路径；目标文件必须不存在 |
-| `events.list` | `limit`、`cursor`、`auth_id` | 事件列表 |
+| `events.list` | `limit`、`cursor`、`auth_id` | 事件列表；每条事件带 `category`、`code`、`decision` |
 | `tasks.center.list` | `page`、`page_size`、`category`、`status`、`query` | 查询任务中心的任务索引；常驻队列使用独立的 `tasks.center.queues` |
 | `tasks.center.queues` | 无 | 读取常驻队列的计数摘要 |
 | `tasks.center.queue` | `queue_id`、`page`、`page_size` | 读取质量检测、自动绑定或代理健康检查队列的执行中与等待项 |
@@ -2064,8 +2150,7 @@ plugins:
       enabled: true
       priority: 10
 
-      passive_guard: true
-      transparent_guard: false
+      guard: passive              # off | passive | transparent
       auto_action: observe
 
       model_prefixes:
@@ -2082,6 +2167,7 @@ plugins:
         scoring:
           enabled: true
           max_accounts_per_bucket: 512
+          half_life_hours: 168
           weights:
             success: 0.50
             ttft: 0.30
@@ -2100,41 +2186,47 @@ plugins:
         hard_tps: 1000
         consecutive_soft: 2
         consecutive_errors: 2
-        consecutive_missing_thinking: 1
+        consecutive_missing_thinking: 2
         strike_decay_after: 48
         strike_decay_min_healthy: 10
         thinking_guard: true
         non_reasoning_models: []
-        soft_cross_verify: false
-        thinking_cross_verify: false
+        cross_verify: thinking       # off | soft | thinking | all
         min_generation_ms: 1000
-        fail_closed: false
+        burst_guard: false
         min_passive_output_tokens: 32
         min_hold_output_tokens: 8
         hold_timeout: "30s"
-        stream_idle_timeout: "90s"
+        attempt_timeout: "60s"
+        request_timeout: "120s"
+        hold_keepalive: "5s"
+        shadow_mode: false
         hold_max_buffer_bytes: 4194304
         min_encrypted_bytes: 256
         encrypted_bytes_per_reasoning_token: 2
         missing_thinking_cooldown: "12h"
         empty_stream_cooldown: "15m"
-        max_attempts: 6
-        on_exhausted: "fail_closed"
+        max_attempts: 4
+        on_exhausted: "fail_unverified"  # fail_unverified | fail_closed
 
       probe:
         model: "grok-4.5"
         timeout: "90s"
         max_output_tokens: 768
-        concurrency: 1
+        concurrency: 2
         queue_size: 10000
+        scan_interval: "15s"
         healthy_interval_hours: 0
         unknown_delay: "30s"
         unknown_jitter: "30s"
-        suspect_backoff: "15m"
+        suspect_backoff: "2m"
         max_backoff: "1h"
+        entry_protocol: "codex"
+        exit_protocol: "codex"
 
       proxy:
         auto_rotate_after_quality_failure: true
+        rotate_after_errors: 2
         auto_bind:
           enabled: false
           source_scope: all
@@ -2164,7 +2256,7 @@ plugins:
 
 不存在全局 `resin:` YAML 配置块。Resin 来源的连接信息、账号格式、占位符和本地轮换模式通过管理页或 `proxy.sources.create/update` 的 `kind=resin` 配置。
 
-YAML 使用严格字段校验，未知字段会直接报错。旧 `resin.*` 注册字段、环境变量回退和单例 Resin 配置不再读取。
+YAML 使用严格字段校验，未知字段会直接报错。旧 `resin.*` 注册字段、环境变量回退和单例 Resin 配置不再读取；已移除的 `passive_guard`、`transparent_guard`、`quality.soft_cross_verify`、`quality.thinking_cross_verify`、`quality.fail_closed`、`quality.stream_idle_timeout`、`quality.max_hold_total` 同样按未知字段拒绝。
 
 ### 11.2 配置来源与优先级
 
@@ -2172,23 +2264,23 @@ YAML 决定以下部署级字段：
 
 - `enabled`
 - `priority`
-- 首次启动时的 `passive_guard`、`transparent_guard`、`auto_action`、`model_prefixes`
+- 首次启动时的 `guard`、`auto_action`、`model_prefixes`
 - `routing`、`quality`、`probe`
-- `proxy.auto_rotate_after_quality_failure`、`proxy.auto_bind.*`、`task_history.*`
+- `proxy.auto_rotate_after_quality_failure`、`proxy.rotate_after_errors`、`proxy.auto_bind.*`、`task_history.*`
 - `state_file`、`events_limit`
 
 `state_file` 是状态文件的启动引导路径。管理页可以通过 `state_file.update` 写入并切换状态文件路径，并在引导路径旁写入 `<state_file>.location` 指针；指针存在时，插件重启后使用其指向的实际状态文件。修改 YAML 的 `state_file` 会切换到新的引导位置。
 
 运行时策略首次从 YAML 初始化到 state，之后由管理页修改：
 
-- `passive_guard`
-- `transparent_guard`
+- `guard`
 - `auto_action`
 - `model_prefixes`
 - `routing`
 - `quality`
 - `probe`
 - `proxy.auto_rotate_after_quality_failure`
+- `proxy.rotate_after_errors`
 - `task_history`
 - `events_limit`
 
@@ -2198,11 +2290,10 @@ YAML 决定以下部署级字段：
 
 ### 11.3 默认值
 
-- `passive_guard=true`
-- `transparent_guard=false`
+- `guard=passive`
 - `auto_action=observe`
-- `on_exhausted=fail_closed`
-- `max_attempts=6`
+- `quality.on_exhausted=fail_unverified`
+- `quality.max_attempts=4`
 - `routing.strategy.selection=round_robin`
 - `routing.strategy.prefer_last_success=true`
 - `routing.affinity.enabled=true`
@@ -2210,21 +2301,29 @@ YAML 决定以下部署级字段：
 - `routing.affinity.max_entries=10000`
 - `routing.scoring.enabled=true`
 - `routing.scoring.max_accounts_per_bucket=512`
+- `routing.scoring.half_life_hours=168`
 - `routing.scoring.refresh.min_interval=5m`
 - `routing.scoring.refresh.max_age=30m`
 - `routing.scoring.refresh.drift_threshold=0.03`
 - `quality.consecutive_soft=2`
 - `quality.consecutive_errors=2`
-- `quality.consecutive_missing_thinking=1`
+- `quality.consecutive_missing_thinking=2`
 - `quality.strike_decay_after=48`
 - `quality.strike_decay_min_healthy=10`
 - `quality.thinking_guard=true`
 - `quality.non_reasoning_models=[]`
-- `quality.soft_cross_verify=false`
-- `quality.thinking_cross_verify=false`
+- `quality.cross_verify=thinking`
+- `quality.burst_guard=false`
+- `quality.hold_timeout=30s`
+- `quality.attempt_timeout=60s`
+- `quality.request_timeout=120s`
+- `quality.hold_keepalive=5s`
+- `quality.shadow_mode=false`
 - `probe.healthy_interval_hours=0`
-- `probe.concurrency=1`
+- `probe.concurrency=2`
+- `probe.suspect_backoff=2m`
 - `proxy.auto_rotate_after_quality_failure=true`
+- `proxy.rotate_after_errors=2`
 - `proxy.auto_bind.enabled=false`
 - Resin 来源默认账号格式 `grok-{account}-{suffix}`
 ## 12. 状态文件与持久化
@@ -2246,19 +2345,19 @@ Docker 部署必须将 `/CLIProxyAPI/plugins/data/grok-quality-guard` 挂载为�
 
 ### 12.2 Schema
 
-状态文件固定为 schema v1。加载规则：
+状态文件固定为 schema v2。加载规则：
 
-- `schema_version` 必须严格等于 1。
+- `schema_version` 必须严格等于 2。
 - JSON 使用 `DisallowUnknownFields` 解码。
 - 不接受旧 schema、旧单例 Resin 字段、旧账号 `resin` 字段或旧 token 引用字段。
 - 不执行字段迁移、旧数据继承或兼容回退；旧 state 必须删除后重建。
-- 保存时再次校验 schema，禁止把非 v1 内存状态写回磁盘。
+- 保存时再次校验 schema，禁止把非 v2 内存状态写回磁盘。
 
 结构示意：
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "updated_at": "2026-11-17T12:00:00Z",
   "policy": {},
   "policy_yaml_revision": "sha256:...",
@@ -2431,7 +2530,7 @@ Docker 部署必须将 `/CLIProxyAPI/plugins/data/grok-quality-guard` 挂载为�
 - 只有 reasoning_tokens
 - 真实 reasoning delta
 - encrypted stub 不足下限
-- encrypted 达到 max(256, 4 * reasoning tokens)
+- 按输出 item 累加的 encrypted 达到 max(256, 2 * reasoning tokens)
 - visible token 估算
 - generation window 边界
 - soft / hard TPS
@@ -2532,8 +2631,11 @@ Resin / 代理来源：
 - mock xAI SSE
 - mock Resin Admin API
 - 透明模式首次 emit 前换号
-- 所有候选耗尽返回 503 `quality_degraded`
+- 所有候选耗尽按 `on_exhausted` 返回 503 `quality_degraded` 或放行未确认降智的缓冲
 - 坏内容不 emit
+- 请求预算不足时以 `inconclusive` 结束且不计入账号质量
+- 传输错误使账号进入 `unreachable` 而不是质量冷却
+- 无任何代理配置时透明保护与探测走直连
 - 第一候选 deliver 后不再换号
 - 4 MiB buffer overflow 放行并记录
 - Resin 轮换后 auth proxy_url 立即更新且旧租约删除异步入队
@@ -2630,7 +2732,7 @@ git diff --check
 - 后台分层选择索引和原子快照
 - preferred last-success、session affinity 和 in-flight 跟踪
 - round_robin / random / fill_first 层内策略
-- fail closed
+- 候选耗尽处理（`on_exhausted`）
 - HostCallbackID 防递归
 
 ### Phase 6：验收与加固
@@ -2646,7 +2748,7 @@ git diff --check
 实现必须满足：
 
 1. 默认启动不会写 auth，不会禁用账号，不会自动绑定 Resin。
-2. passive_guard 能正确区分 reasoning stub 和真实 thinking。
+2. `guard: passive` 能正确区分 reasoning stub 和真实 thinking。
 3. 所有质量异常分类与默认阈值和本文一致。
 4. 自动处置只操作 guard-owned auth。
 5. 成功请求不清除 missing-thinking strike。
@@ -2655,7 +2757,7 @@ git diff --check
 8. Resin 绑定和轮换保留 auth 中所有 token 字段。
 9. 删除租约后不查询 IP，不承诺换 IP。
 10. 透明模式仅在首个 emit 前换号。
-11. 所有候选耗尽返回 503 quality_degraded。
+11. 所有候选耗尽时按 `on_exhausted` 处理，已确认降智的响应永不下发。
 12. 管理页和 API 不泄漏任何 secret。
 13. Resin 来源以 kind=resin 模板保存，可以并存多个；API 模式只有在 Admin API、Admin Token、平台 ID 和 Proxy Token 全部验证通过后才会保存，本地轮换模式无需这些字段。
 14. 插件注册和热重载不因账号扫描阻塞。
@@ -2681,11 +2783,13 @@ git diff --check
 | 插件 ID | `grok-quality-guard` |
 | 资源页完整 URL | `/v0/resource/plugins/grok-quality-guard/dashboard` |
 | Action API 完整 URL | `/v0/management/plugins/grok-quality-guard/api` |
-| passive_guard | true |
-| transparent_guard | false |
+| guard | passive |
 | auto_action | observe |
-| 透明失败策略 | fail_closed |
-| 最大尝试次数 | 6 |
+| 透明失败策略 | fail_unverified |
+| 最大尝试次数 | 4 |
+| 透明超时 | hold 30s，单账号 60s，单请求 120s |
+| 传输错误 | `unreachable`，30s 起翻倍，最长 10m，不计质量 strike |
+| 代理 | 可选；无代理时全部直连 |
 | 层内选择策略 | round_robin |
 | preferred last-success | true，仅健康且空闲时生效 |
 | session affinity | true，TTL 1h，最多 10000 条 |
@@ -2697,7 +2801,7 @@ git diff --check
 | 自动恢复 | 仅 guard-owned 冷却账号 |
 | OAuth/导入/导出 | 不支持 |
 | auth 写入字段 | 仅 `disabled`、`proxy_url` |
-| 状态文件版本 | 1 |
+| 状态文件版本 | 2 |
 | 事件数量上限 | 1000 |
 
 ## 20. 参考文件

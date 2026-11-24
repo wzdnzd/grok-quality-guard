@@ -57,6 +57,33 @@ func TestEncryptedContentDeduplication(t *testing.T) {
 	}
 }
 
+func TestEncryptedContentSumsAcrossReasoningItems(t *testing.T) {
+	// Multi-step reasoning splits ciphertext over several items. Each item
+	// alone stays below the 3000-byte floor; only the per-item sum clears it.
+	first := strings.Repeat("A", 1800)
+	second := strings.Repeat("B", 1600)
+	analyzer := NewStreamAnalyzer()
+	payload := `data: {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning","encrypted_content":"` + first[:900] + `"}}` + "\n\n" +
+		`data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","encrypted_content":"` + first + `"}}` + "\n\n" +
+		`data: {"type":"response.output_item.done","item":{"id":"rs_2","type":"reasoning","encrypted_content":"` + second + `"}}` + "\n\n" +
+		`data: {"type":"response.output_text.delta","delta":"visible"}` + "\n\n" +
+		`data: {"type":"response.completed","response":{"usage":{"output_tokens":1600,"output_tokens_details":{"reasoning_tokens":1500}}}}` + "\n\n"
+	analyzer.ObserveChunk([]byte(payload))
+	sig := analyzer.Finalize(true)
+	if sig.EncryptedBytes != 3400 {
+		t.Fatalf("encrypted bytes = %d, want 3400 summed across items", sig.EncryptedBytes)
+	}
+	if sig.EncryptedBytesMax != 1800 || sig.EncryptedItemCount != 2 {
+		t.Fatalf("encrypted max/items = %d/%d, want 1800/2", sig.EncryptedBytesMax, sig.EncryptedItemCount)
+	}
+	if !sig.HasThinking {
+		t.Fatalf("summed ciphertext did not satisfy the 3000-byte floor: %#v", sig)
+	}
+	if verdict := classifyFinal(sig, config.DefaultQualityConfig(), true, 8, true); verdict.Class == ClassMissingThinking {
+		t.Fatalf("multi-item reasoning was classified as missing: %#v", verdict)
+	}
+}
+
 func TestAnthropicThinkingStream(t *testing.T) {
 	analyzer := NewStreamAnalyzer()
 	analyzer.ObserveChunk([]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n"))

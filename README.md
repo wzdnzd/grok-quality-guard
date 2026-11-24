@@ -8,16 +8,16 @@ Grok Quality Guard 观测 Grok / xAI auth 的真实响应质量，识别 HTTP 20
 
 ## 功能
 
-- 被动观测 `passive_guard`：通过 response、stream chunk 和 usage 分析已有请求，不改变路由
-- 可选透明保护 `transparent_guard`：拦截所有可识别的 Grok / xAI OAuth 请求，在首次向客户端 emit 前完成质量门
+- 运行模式 `guard`：`off` 只保留管理功能；`passive`（默认）通过 response、stream chunk 和 usage 分析已有请求，不改变路由；`transparent` 接管所有可识别的 Grok / xAI OAuth 请求，在首次向客户端 emit 前完成质量门，同时包含被动分析
 - 透明模式由插件完整接管 auth 选择：`healthy` / `unknown` 分层、Priority 数值越大越优先、后台快照索引、round-robin/random/fill-first、preferred last-success 与 session affinity
 - 真实 thinking 证据判定，不使用空 reasoning stub 或单独的 `reasoning_tokens` 判断健康
 - 检测 `missing_thinking`、`buffered_burst`、`cipher_drool`、`fake_encrypted_dump`、`fast_reasoning_ratio_dump`、`soft_tps`、`hard_tps`、`empty_stream`、`probe_error`、`proxy_error`
-- 账号状态机：`unknown`、`healthy`、`suspect`、`degraded`、`cooling`、`quota_exhausted`、`credential_invalid`、`disabled_by_guard`、`externally_disabled`
+- 账号状态机：`unknown`、`healthy`、`suspect`、`degraded`、`unreachable`、`cooling`、`quota_exhausted`、`credential_invalid`、`disabled_by_guard`、`externally_disabled`
 - 首次确认异常可配置为只观察或临时冷却，冷却到期通过固定 prompt 恢复探测
+- 代理为可选项：不配置任何代理来源、节点或绑定时，探测、透明保护和换号都走直连，只跳过代理轮换
 - 通用代理节点、模板与 Resin 来源统一管理；支持 `http`、`https`、`socks5`、`socks5h`、标准 URL / 地址在前 / `host:port@user:pass` 多格式批量导入、均衡绑定、轮换和清除
 - 内嵌中文化管理页，按“概览 / 账号 / 代理管理 / 任务中心 / 事件日志 / 设置”分 Tab；账号、代理和质量交叉验证等异步批量任务统一从任务中心查看与管理，事件日志只承担审计
-- 账号详情展示最近尝试与脱敏质量判定依据，明确区分非质量错误和上一次真实质量结论
+- 账号详情展示统一的 `verdict` 判定（分类、代码、处置、来源与脱敏证据），明确区分非质量错误和上一次真实质量结论
 - 任务中心展示任务进度、总数、完成/处理中/等待/成功/失败/跳过数量、逐项结果和历史任务；历史详情按需加载
 - 历史任务默认保留 3 天，可配置保留天数、记录数、归档磁盘上限和单任务明细上限
 - auth、proxy URL、Admin Token、xAI token 全程脱敏
@@ -36,7 +36,7 @@ max(min_encrypted_bytes, reasoning_tokens * encrypted_bytes_per_reasoning_token)
 默认 max(256 bytes, reasoning_tokens * 2 bytes)
 ```
 
-每 token 系数按线上实测校准：同时带明文推理摘要、可确认健康的样本中，密文长度为每 reasoning token 2.44 至 8.67 字节，约一半低于 4 字节。系数取 4 时，不输出推理摘要的健康账号会被误判为 `missing_thinking`。下限只用于拦截与推理账单明显不符的短 stub
+密文字节按输出 item 累加（`encrypted_bytes`），不再只取单个最大密文块。每 token 系数按线上实测校准：同时带明文推理摘要、可确认健康的样本中，密文长度为每 reasoning token 2.44 至 8.67 字节，约一半低于 4 字节。系数取 4 时，不输出推理摘要的健康账号会被误判为 `missing_thinking`。下限只用于拦截与推理账单明显不符的短 stub
 
 主动探测与透明请求一样会请求 `include: ["reasoning.encrypted_content"]`。Grok 只有在请求时才返回推理密文，缺少该字段时不输出推理摘要的账号没有任何思考证据，每次探测都会被判为 `missing_thinking`
 
@@ -55,7 +55,7 @@ generationWindow = tail，若 tail < firstToken 且 tail < 1000ms 则取 duratio
 TPS = outputTokens * 1000 / generationWindow
 ```
 
-尾段比等待时间还短且不足 1 秒，说明输出是在等待之后一次性到达的（工具调用参数、隐藏推理、中间链路缓冲），这段时间只反映传输，所以改用完整时长作为生成时间的上界。参考实现只在有推理账单时做这一修正，导致 Codex 一次 75 token、50ms 内到达的工具调用被算成 1500 tok/s。输出少于 `min_passive_output_tokens`（默认 32）的样本只记录 TPS，不做速度判定。`fail_closed` 的突发检测仍沿用参考实现的到达窗口，但不检测客户端工具调用。
+尾段比等待时间还短且不足 1 秒，说明输出是在等待之后一次性到达的（工具调用参数、隐藏推理、中间链路缓冲），这段时间只反映传输，所以改用完整时长作为生成时间的上界。参考实现只在有推理账单时做这一修正，导致 Codex 一次 75 token、50ms 内到达的工具调用被算成 1500 tok/s。输出少于 `min_passive_output_tokens`（默认 32）的样本只记录 TPS，不做速度判定。`burst_guard` 的突发检测仍沿用参考实现的到达窗口，但不检测客户端工具调用。
 
 注意：这是显示与记账口径的修正，不会放宽思考闸门。实测健康账号上同样规模的工具调用轮次带有 245–294 个推理 token，所以推理账单为 0 的工具调用仍按 `missing_thinking` 处理，只是它不再叠加速度异常。
 
@@ -88,7 +88,7 @@ TPS 计时从发起上游模型调用前开始，而不是从首个 host stream 
 
 `ignored` 表示本次尝试不是质量信号，例如上游失败、非 Grok 请求、非流式被动样本、缺少 TTFT、输出不足或传输错误。它不会增加质量 strike，也不会覆盖上一次真实质量判定。
 
-`probe_error` / `proxy_error` 会记录为最近一次尝试并参与错误退避，但不会把上一次质量指标清空。管理页的“最近尝试”和“最近质量判定”分开显示，因此可以直接看出某次 `ignored` 或探测错误是否只是噪声。
+`probe_error` / `proxy_error` 是传输错误，会记录为最近一次尝试并让账号进入 `unreachable` 短退避，但不计入质量 strike，也不会把上一次质量指标清空。管理页的“最近尝试”和“最近质量判定”分开显示，因此可以直接看出某次 `ignored` 或探测错误是否只是噪声。
 
 空流表示上游已经终止，但没有可见内容、真实思考证据、usage 输出或语义输出。空流使用独立的 15 分钟冷却，不会自动升级成 missing-thinking 永久禁用。
 
@@ -219,9 +219,9 @@ plugins:
       enabled: true
       priority: 10
 
+      # off 仅管理；passive 只观测；transparent 接管 Grok 请求（含被动分析）
+      guard: passive
       # 质量异常默认只观测；401/额度耗尽仍直接处置
-      passive_guard: true
-      transparent_guard: false
       auto_action: observe
       model_prefixes:
         - "grok-"
@@ -237,6 +237,7 @@ plugins:
         scoring:
           enabled: true
           max_accounts_per_bucket: 512
+          half_life_hours: 168
           weights:
             success: 0.50
             ttft: 0.30
@@ -255,44 +256,47 @@ plugins:
         hard_tps: 1000
         consecutive_soft: 2
         consecutive_errors: 2
-        consecutive_missing_thinking: 1
+        consecutive_missing_thinking: 2
         strike_decay_after: 48
         strike_decay_min_healthy: 10
         thinking_guard: true
         non_reasoning_models: []
-        soft_cross_verify: false
-        thinking_cross_verify: false
+        cross_verify: thinking         # off | soft | thinking | all
         min_generation_ms: 1000
-        fail_closed: false
+        burst_guard: false
         min_passive_output_tokens: 32
         min_hold_output_tokens: 8
-        hold_timeout: "30s"
-        stream_idle_timeout: "90s"
+        hold_timeout: "30s"            # 首个可判定输出前的最长扣留
+        attempt_timeout: "60s"         # 单账号无新输出的超时，>= hold_timeout + 10s
+        request_timeout: "120s"        # 单次请求跨账号共享的总预算，>= attempt_timeout
+        hold_keepalive: "5s"
+        shadow_mode: false
         hold_max_buffer_bytes: 4194304
         min_encrypted_bytes: 256
         encrypted_bytes_per_reasoning_token: 2
         missing_thinking_cooldown: "12h"
         empty_stream_cooldown: "15m"
-        max_attempts: 6
-        on_exhausted: "fail_closed"
+        max_attempts: 4
+        on_exhausted: "fail_unverified"  # fail_unverified | fail_closed
 
       probe:
         model: "grok-4.5"
         timeout: "90s"
         max_output_tokens: 768
-        concurrency: 1
+        concurrency: 2
         queue_size: 10000
         scan_interval: "15s"
         healthy_interval_hours: 0
         unknown_delay: "30s"
         unknown_jitter: "30s"
-        suspect_backoff: "15m"
+        suspect_backoff: "2m"
         max_backoff: "1h"
         entry_protocol: "codex"
         exit_protocol: "codex"
 
       proxy:
         auto_rotate_after_quality_failure: true
+        rotate_after_errors: 2
         auto_bind:
           enabled: false
           source_scope: all
@@ -320,7 +324,7 @@ plugins:
       events_limit: 1000
 ```
 
-配置使用严格 YAML 解码，未知字段（包括旧 `resin:` 配置块）会直接报错，不会静默忽略。
+配置使用严格 YAML 解码，未知字段（包括旧 `resin:` 配置块，以及已移除的 `passive_guard`、`transparent_guard`、`quality.soft_cross_verify`、`quality.thinking_cross_verify`、`quality.fail_closed`、`quality.stream_idle_timeout`、`quality.max_hold_total`）会直接报错，不会静默忽略。各字段都有取值范围校验，超出范围的值在加载时拒绝。
 
 ### 自动处置
 
@@ -333,19 +337,22 @@ plugins:
 连续阈值与旧 grok2api/egress guard 策略对齐：
 
 - `consecutive_soft`：连续软 TPS 样本达到次数后才进入处置；默认 `2`
-- `consecutive_errors`：连续传输/代理错误达到次数后才进入处置；上游 5xx、普通限流和无法确认的 403/429 只记录为 `ignored`，不计入 strike；默认 `2`；开启自动轮换且 auth 绑定插件管理的代理时，达到阈值若还有可用账号先换号并异步轮换失败账号的代理，没有可用账号时再同步轮换后重试；轮换成功清除连续错误并恢复账号，轮换不可用再回退自动处置
+- `consecutive_errors`：连续传输/代理错误达到次数后记录阈值事件，开启自动轮换且 auth 绑定插件管理的代理时轮换失败账号的代理（透明请求异步轮换，主动探测同步轮换）；传输错误只让账号进入 `unreachable`，不计入质量 strike，不进入质量冷却，也不写 `disabled=true`；上游 5xx、普通限流和无法确认的 403/429 只记录为 `ignored`；默认 `2`
+- `proxy.rotate_after_errors`：透明请求没有其他可用账号时，连续传输错误达到次数后同步轮换受管代理并重试同一账号，默认 `2`，最大 `10`；有其他账号时先换号
+- 代理轮换成功清除连续错误并把账号放回 `unknown`；轮换失败只记录事件，账号仍按 `unreachable` 退避重新探测；未绑定受管代理时直接跳过轮换
 - 外部禁用只标记状态，插件无法得知外部原因，因此不写入 `disable_reason`；插件自身禁用会持久化简短的 `disable_reason`，dashboard 统一显示中文
 - 上游 `401` 标记为 `credential_invalid`，写入 `disabled=true` 并等待管理员更新凭据后手动恢复
 - 上游 `402`、包含明确 free usage/spending-limit/credits 耗尽短语的 `403/429` 标记为 `quota_exhausted`，写入 24 小时冷却；到期后自动恢复探测
 - CPA 返回的 `model_cooldown` 是宿主级调度状态，不能证明当前 auth 单独额度耗尽；插件只记录为 `ignored`，不会因此写入 `disabled=true`
-- `consecutive_missing_thinking`：连续缺少真实思考达到次数后才进入处置；默认 `1`
+- `consecutive_missing_thinking`：连续缺少真实思考达到次数后才进入处置；默认 `2`；主动探测本身就是确认步骤，探测来源的阈值固定为 `1`
 - `strike_decay_after`：missing-thinking strike 自动降级窗口，单位小时，默认 `48`；设置为 `0` 关闭自动降级
 - `strike_decay_min_healthy`：窗口内至少积累的连续健康观测/探测次数，默认 `10`；健康样本包括 passive/transparent 的 `ClassNone` 和成功探测，真实质量失败会重置窗口与计数
 - `thinking_guard=false`：跳过缺少思考判定，只保留 TPS、空流等其他质量检查
 - `non_reasoning_models`：额外声明不产生推理的模型标识，配置项优先于内置能力表和 Grok 4+ 版本回退；支持 YAML 列表或管理页逗号分隔输入，提供方前缀会被忽略，明确 reasoning effort 后缀会归一到基础模型
-- `fail_closed=true`：生成窗口小于 `min_generation_ms` 且速度达到 `soft_tps` 时判定为 `buffered_burst`；窗口不足但速度不高时判定为 `insufficient_generation_window`
+- `burst_guard=true`：生成窗口小于 `min_generation_ms` 且速度达到 `soft_tps` 时判定为 `buffered_burst`；窗口不足但速度不高时判定为 `insufficient_generation_window`；默认关闭
 - `ignored`、`probe_error`、`proxy_error` 不覆盖上一次真实质量指标；详情页会分别展示最近尝试和最近质量证据
-- `soft_cross_verify=true` 或 `thinking_cross_verify=true`：被动样本达到阈值后先启动后台主动探测，由探测结果确认后再处置；默认关闭
+- `cross_verify`：`off`、`soft`（仅速度异常）、`thinking`（仅缺少思考，默认）、`all`；命中类型的非探测样本达到阈值后先启动后台主动探测，由探测结果确认后再处置
+- `shadow_mode=true`：透明模式只记录质量结论，不扣留响应也不处置账号，用于上线前评估误判；默认关闭
 - 任一健康样本会清零 `soft_strikes`、`error_strikes`、`thinking_strikes`，与旧插件的连续计数语义一致
 
 主动探测调度器在插件启动后立即建立并执行第一次扫描，不再等待状态修复完成；之后按 `probe.scan_interval` 定时扫描（默认 `15s`，允许 `1s..24h`），先过滤出当前到期账号，再放入有界队列。`probe.healthy_interval_hours` 为健康账号的周期探测间隔，单位小时，默认 `0`（不主动探测）；配置为大于 `0` 的整数后，健康账号距上次主动探测达到该间隔时也会进入同一队列，尚无 `last_probe_at` 的健康账号在启用后视为到期。等待中和执行中的账号优先按 auth 文件里的 OAuth `sub`/`subject` 去重，缺失时才回退到宿主 auth ID，因此同一 OAuth 账号不会重复入队。`probe.queue_size` 默认 `10000`，最大 `1000000`；`probe.concurrency` 控制探测以及批量账号操作实际使用的 worker 数。`probe.unknown_jitter` 为 `unknown` 账号的首次探测增加稳定抖动，避免大量账号在同一时刻到期。
@@ -382,7 +389,7 @@ plugins:
 
 ### 透明保护
 
-`transparent_guard: true` 时，所有将使用 xAI / Grok OAuth 的文本 chat / responses 请求都会先进入插件质量门，而不是只在可安全重放时才接管。模型可通过 `grok-*` 命名或 CPA 的 xAI auth model 列表识别。
+`guard: transparent` 时，所有将使用 xAI / Grok OAuth 的文本 chat / responses 请求都会先进入插件质量门，而不是只在可安全重放时才接管。模型可通过 `grok-*` 命名或 CPA 的 xAI auth model 列表识别。
 
 与 grok2api 一致，Responses compaction（包括 `compaction_trigger` 和 TUI 压缩摘要 prompt）不进入质量保持，避免系统摘要因没有 reasoning 而被误判换号。Codex / Responses 推理请求会在上游执行前补齐 `reasoning.encrypted_content` include，确保真实 thinking 证据可观测。
 
@@ -392,22 +399,23 @@ plugins:
 
 主动探测只按请求级证据忽略内部 probe usage，不会在探测窗口内按 AuthID 丢弃真实请求的 usage，也不会把该账号从透明候选集中排除。
 
-透明候选只使用 `healthy` / `unknown` 账号；已进入 `suspect` 或 `degraded` 的账号不会继续承接透明请求，直到主动探测或手动恢复。`missing_thinking` 被视为账号级证据：存在其他可用账号时立即切号，代理轮换只作为单账号池的兜底；所有候选都不可用时返回 `503 quality_degraded`。
+透明候选只使用 `healthy` / `unknown` 账号；已进入 `suspect`、`degraded` 或 `unreachable` 的账号不会继续承接透明请求，直到主动探测或手动恢复。`missing_thinking` 被视为账号级证据：存在其他可用账号时立即切号，代理轮换只作为单账号池的兜底；所有候选都不可用时返回 `503 quality_degraded`。
 
 ### 透明 Auth 选择
 
 透明模式完全接管 Grok/xAI auth 选择，CPA 只执行插件指定的 `AuthID`。插件在后台维护不可变分层、分桶快照，请求只读取快照，不扫描或在请求路径排序账号池：
 
-- 先按质量分层：`healthy` 整体优先于 `unknown`
+- 先按质量分层：`healthy`（rank 0）整体优先于 `unknown`（rank 1）；存在 healthy 层时，单次请求最多尝试 1 个 `unknown` 账号，全部为 `unknown` 时不限制
 - 同一质量状态下按 Auth Priority 数值从大到小分层
 - `healthy` 按 EWMA 质量分从高到低排序；`unknown` 不计算评分，保持 Auth ID 顺序
 - 每个 `(质量, Priority)` 层按 `routing.scoring.max_accounts_per_bucket` 自动分桶；桶数由该层账号数决定，不写死
 - 健康账号评分综合成功率、首 Token 耗时和输出速度，并按主动探测、透明请求、被动观测分别保留证据
-- 同一评分来源与模型类别使用时间衰减 EWMA；半衰期由 `probe.healthy_interval_hours` 推导，并限制在 `12h..168h`（未启用周期探测时按 `168h`）
+- 同一评分来源与模型类别使用时间衰减 EWMA；半衰期由 `routing.scoring.half_life_hours` 配置，默认 `168`，允许 `1..8760`，所有证据来源共用
 - 层内先尝试当前评分桶；当前桶没有空闲候选后再进入下一桶，所有桶都忙时才进入当前层的 busy fallback
 - `round_robin`、`random`、`fill_first` 只在当前评分桶内生效
 - `routing.strategy.prefer_last_success=true` 时，上次透明请求成功的 auth 只要仍健康、仍属于最高质量层且当前空闲就优先使用；EWMA 评分换桶不会丢弃该偏好
 - `routing.affinity.enabled=true` 时，同一稳定 session 尽量固定到同一 auth；绑定只存在内存中，默认 TTL `1h`，最多 `10000` 条
+- 超过 10 分钟仍未释放的 in-flight 占用会被清理，避免异常路径永久占住账号
 
 评分权重与证据权重均限制在 `0..1`，两组分别归一化，不需要总和为 `1`。默认更重视实际成功率和主动探测证据，避免把最近被透明请求使用过的账号误判为“更新鲜”。每个账号只持久化紧凑的 EWMA 状态，不保存原始采样列表。
 
@@ -415,7 +423,39 @@ plugins:
 
 `max_accounts_per_bucket` 默认 `512`，允许 `16..4096`。该上限同时约束 `unknown` 的 ID 有序分桶；评分关闭时健康账号也按 ID 顺序使用相同桶容量。4000 个账号在默认配置下通常形成约 8 个健康评分桶，选择路径不会逐个重算所有账号。
 
-透明模式在首次向客户端 emit 前完成质量门。一旦开始 emit，插件不能回滚已经发送的内容；如果所有候选账号耗尽，默认返回 `503 quality_degraded`。可配置 `on_exhausted: fail_open` 在失败时返回最后一个已缓冲响应，但这会牺牲 fail-closed 语义。透明缓冲超过 `hold_max_buffer_bytes` 时也会 fail closed，不会把未完成质量判定的内容下发给客户端。`stream_idle_timeout` 默认 `90s`，上游请求在首块到达前或流式读取中超过该时间没有新增生成输出时会终止当前尝试并更换账号重试；仅有 `response.created` 或 reasoning stub 的静默流不会永久等待，也不会在 `fail_open` 下放行空流
+透明模式在首次向客户端 emit 前完成质量门。一旦开始 emit，插件不能回滚已经发送的内容。所有候选账号耗尽时按 `on_exhausted` 处理：
+
+- `fail_unverified`（默认）：只有最后一个已缓冲响应从未被确认降智（未完成判定，例如预算不足以 `inconclusive` 结束）时才放行；已确认降智的响应永不下发，其余情况返回 `503 quality_degraded`
+- `fail_closed`：始终返回 `503 quality_degraded`
+
+透明缓冲超过 `hold_max_buffer_bytes` 时放行已缓冲内容并记录 `transparent_overflow` 事件，该样本不计为健康观测。扣留期间每隔 `hold_keepalive`（默认 `5s`）向客户端发送不含内容的 SSE 注释，避免连接空闲断开
+
+### 超时与请求预算
+
+透明流使用三级超时，加载时校验 `hold_timeout + 10s <= attempt_timeout <= request_timeout`：
+
+| 配置 | 默认值 | 范围 | 说明 |
+| --- | ---: | ---: | --- |
+| `quality.hold_timeout` | `30s` | `5s..10m` | 出现首个可判定输出前的最长扣留时间 |
+| `quality.attempt_timeout` | `60s` | `hold_timeout+10s..10m` | 单账号无新增生成输出的空闲计时，超时即终止当前尝试并换号 |
+| `quality.request_timeout` | `120s` | `attempt_timeout..30m` | 单次请求所有账号尝试共享的总预算 |
+
+剩余预算不足最小校验窗口（`hold_timeout` 的一半，最多 `3s`）时，本次尝试以 `inconclusive` 结束，不判 `missing_thinking`，也不计入账号质量。仅有 `response.created` 或 reasoning stub 的静默流不会永久等待
+
+### 传输错误与无代理运行
+
+网络、代理和探测传输错误（`probe_error` / `proxy_error`）不是质量失败：不增加质量 strike，不进入质量冷却，也不写 `disabled=true`。账号转为 `unreachable`，退避从 `30s` 起翻倍、最长 `10m`，到期后重新探测，探测健康即恢复候选资格。
+
+插件不依赖代理。没有任何代理来源、节点或绑定时，主动探测、透明保护和换号都使用直连，代理轮换直接跳过。
+
+### 判定分类与处置
+
+账号摘要和详情返回统一的 `verdict` 对象 `{category, code, decision, source, at, detail, evidence}`；事件同样带 `category`、`code`、`decision`，事件日志按 `category` 筛选。
+
+- `category`：`quality`（质量降智）、`transport`（传输错误）、`account`（凭据失效、额度耗尽、限流）、`inconclusive`（预算不足未定论）、`ignored`（非质量信号）
+- `decision`：`deliver`（放行）、`retry`（换号重试）、`quarantine`（隔离观察）、`cooldown`（冷却）、`disable`（禁用）、`observe`（仅记录）
+
+管理页设置按“运行模式与处置 / 透明鉴权选择与会话亲和 / 健康账号评分 / 质量阈值与思考证据 / 透明保护 / 主动探测 / 任务中心与历史记录”分组，每个字段通过 i 图标提示说明含义
 
 ## 通用代理节点、模板与 Resin
 
@@ -510,7 +550,7 @@ curl -X POST \
 | Action | 说明 |
 | --- | --- |
 | `overview` | 汇总账号、状态、代理和最近异常 |
-| `accounts.list` | 分页账号列表 |
+| `accounts.list` | 分页账号列表，每个账号附带 `verdict` 判定 |
 | `accounts.get` | 账号详情 |
 | `accounts.probe` | 提交异步固定 prompt 探测任务 |
 | `accounts.probe_selected` | 检测选中的账号；需要恢复时在同一任务内先恢复再检测 |
@@ -536,7 +576,7 @@ curl -X POST \
 | `policy.update` | 校验并持久化策略 |
 | `policy.reset` | 重置为 YAML 初始值 |
 | `state_file.update` | 写入并切换状态文件路径；目标文件必须不存在 |
-| `events.list` | 查看质量事件日志 |
+| `events.list` | 查看事件日志；每条事件带 `category`、`code`、`decision` |
 | `tasks.center.list` | 按类型、状态、关键词和分页查询任务中心 |
 | `tasks.center.queue` | 按 `queue_id` 分页读取质量检测、自动绑定和代理健康检查队列的执行中与等待项 |
 | `tasks.center.get` | 按页懒加载任务逐项明细；历史任务从归档读取 |
@@ -579,7 +619,7 @@ services:
 
 管理页“设置 / 守护策略”中的状态文件路径可以直接编辑。保存新路径时，插件会把当前完整 state 写入目标文件并立即切换；为避免覆盖已有数据，目标文件必须尚不存在。引导路径旁会生成 `<state_file>.location` 指针文件，使插件重启后继续使用新路径。修改 YAML 中的 `state_file` 会产生新的引导位置，因此可以借此重新指定路径；如要回退到旧引导文件，需要先删除对应指针文件。
 
-状态文件使用 schema v1、原子替换写入，Unix 权限为目录 `0700`、文件 `0600`。读取时严格拒绝未知字段和非 v1 schema；不会迁移或兼容旧 state，旧数据必须删除后重建。策略首次从 YAML 初始化，之后管理页修改会持久化到 state；`policy.reset` 会恢复为当前 YAML 的默认值。通过管理页保存的多个 Resin 代理配置、连接凭据和租约清理快照也存储在 state 中，API 与页面只返回是否已设置的布尔标记。管理页设置区会显示当前实际使用的状态文件路径。
+状态文件使用 schema v2、原子替换写入，Unix 权限为目录 `0700`、文件 `0600`。读取时严格拒绝未知字段和非 v2 schema；不会迁移或兼容旧 state，旧数据必须删除后重建。策略首次从 YAML 初始化，之后管理页修改会持久化到 state；`policy.reset` 会恢复为当前 YAML 的默认值。通过管理页保存的多个 Resin 代理配置、连接凭据和租约清理快照也存储在 state 中，API 与页面只返回是否已设置的布尔标记。管理页设置区会显示当前实际使用的状态文件路径。
 
 插件运行时只会修改 auth 文件中的原生字段 `disabled` 和 `proxy_url`。冷却原因、strike、禁用所有权、Resin 租约及其他控制信息全部保存在 `state.json`，不再向 auth 写入 `grok_quality_guard` 或其他插件私有字段。
 
