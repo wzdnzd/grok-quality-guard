@@ -1995,5 +1995,10 @@
   "ui.reasoning_tokens": "推理 Token",
   "ui.total_duration": "總時長",
   "ui.generation_window": "生成視窗",
-  "ui.healthy_streak": "連續健康"
+  "ui.healthy_streak": "連續健康",
+  "registration.config.quality_debug_logging": "為每次透明判定寫入診斷事件，包含原因碼與關鍵訊號",
+  "ui.debug_logging": "判定診斷日誌",
+  "ui.debug_logging_help": "開啟後每次判定額外寫入診斷事件 包含原因碼與關鍵訊號",
+  "action.quality_debug": "判定診斷",
+  "event.detail.diagnostic_verdict": "判定診斷：{class} · {source} · 可見 {visible_tokens} · 輸出 {output_tokens} · 推理 {reasoning_tokens} · 密文 {encrypted_bytes} B 下限 {encrypted_floor} B · 生成 {generation_ms} 毫秒 · 首 Token {first_token_ms} 毫秒 · {tps} TPS · 扣留到期 {hold_expired}"
 }

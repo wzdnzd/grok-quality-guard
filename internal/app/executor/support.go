@@ -353,6 +353,44 @@ func (s *Service) recordShadowVerdict(authID string, verdict QualityVerdict) {
 	})
 }
 
+// recordDiagnosticVerdict writes an opt-in diagnostic event for one attempt.
+// Events already carry the class and reason, so this only runs when the
+// operator asks for it: it adds the signals that explain why the class was
+// chosen, without duplicating the verdict fields the account page shows.
+func (s *Service) recordDiagnosticVerdict(authID, source string, cfg QualityConfig, verdict QualityVerdict, signals QualitySignals, extra map[string]any) {
+	if !cfg.DebugLogging || s == nil || s.env == nil || s.env.Store() == nil {
+		return
+	}
+	args := map[string]any{
+		"class":            verdict.Class,
+		"source":           source,
+		"visible_tokens":   signals.VisibleTokens,
+		"output_tokens":    signals.OutputTokens,
+		"reasoning_tokens": signals.ReasoningTokens,
+		"encrypted_bytes":  signals.EncryptedBytes,
+		"encrypted_floor":  signals.EncryptedFloor,
+		"generation_ms":    signals.GenerationMS,
+		"first_token_ms":   signals.FirstTokenMS,
+		"tps":              signals.TPS,
+		"hold_expired":     signals.HoldExpired,
+	}
+	for key, value := range extra {
+		args[key] = value
+	}
+	event := Event{
+		Time:       time.Now().UTC(),
+		AuthID:     authID,
+		Action:     "quality_debug",
+		Result:     "observed",
+		Detail:     "diagnostic verdict: " + firstNonEmpty(verdict.Class, "none"),
+		DetailKey:  "event.detail.diagnostic_verdict",
+		DetailArgs: args,
+	}
+	s.runSettlement(func(context.Context) {
+		_ = s.env.Store().AppendEvent(event)
+	})
+}
+
 // transparentSettleTimeout bounds background verdict bookkeeping. Applying a
 // verdict may save the auth file through the host, so it needs more room than
 // a single state write.

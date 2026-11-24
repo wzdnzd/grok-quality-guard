@@ -1995,5 +1995,10 @@
   "ui.reasoning_tokens": "Reasoning tokens",
   "ui.total_duration": "Total time",
   "ui.generation_window": "Generation window",
-  "ui.healthy_streak": "Healthy streak"
+  "ui.healthy_streak": "Healthy streak",
+  "registration.config.quality_debug_logging": "Write a diagnostic event for every transparent verdict with its reason code and key signals",
+  "ui.debug_logging": "Verdict diagnostics",
+  "ui.debug_logging_help": "Writes an extra diagnostic event per verdict with the reason code and key signals",
+  "action.quality_debug": "Verdict diagnostic",
+  "event.detail.diagnostic_verdict": "Verdict diagnostic: {class} · {source} · visible {visible_tokens} · output {output_tokens} · reasoning {reasoning_tokens} · cipher {encrypted_bytes} B floor {encrypted_floor} B · generated {generation_ms} ms · first token {first_token_ms} ms · {tps} TPS · hold expired {hold_expired}"
 }
