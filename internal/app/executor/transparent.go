@@ -325,7 +325,7 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 			class, reason := classifyTransparentTransportFailure(errRead)
 			return Result{}, QualityVerdict{Class: class, Reason: reason}, errRead
 		}
-		progressBefore := analyzer.Preview().ProgressEvents
+		progressBefore := analyzer.ProgressEvents()
 		if len(read.Payload) > 0 {
 			bufferBytes += int64(len(read.Payload))
 			analyzer.ObserveChunk(read.Payload)
@@ -337,7 +337,7 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 				s.recordTransparentOverflow(execution.AuthID, cfg.HoldMaxBufferBytes)
 			}
 		}
-		if analyzer.Preview().ProgressEvents > progressBefore {
+		if analyzer.ProgressEvents() > progressBefore {
 			idleDeadline = time.Now().Add(idleTimeout)
 		}
 		if read.Error != "" {
@@ -647,11 +647,8 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 			earlyTimer.Stop()
 		}
 	}()
-	armEarly := func() {
-		if reasoningNeeded || emitted || earlyArmed {
-			return
-		}
-		if !analyzer.Preview().FirstVisible {
+	armEarly := func(firstVisible bool) {
+		if reasoningNeeded || emitted || earlyArmed || !firstVisible {
 			return
 		}
 		earlyTimer = time.NewTimer(200 * time.Millisecond)
@@ -672,6 +669,45 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 		}
 		holdTimer = time.NewTimer(holdLimit)
 		holdC = holdTimer.C
+	}
+	// Short visible text without evidence settles by time, not size, and a
+	// stalled degraded stream sends no frame that would reclassify it.
+	var settleTimer *time.Timer
+	var settleC <-chan time.Time
+	defer func() {
+		if settleTimer != nil {
+			settleTimer.Stop()
+		}
+	}()
+	armSettle := func() {
+		if settleTimer != nil || emitted || !reasoningNeeded {
+			return
+		}
+		settleTimer = time.NewTimer(qualityPreambleSettleWindow)
+		settleC = settleTimer.C
+	}
+	classifyHold := func(preview QualitySignals) QualityVerdict {
+		preview = info.decorate(preview)
+		preview.HoldExpired = holdExpired
+		return ClassifyQualityHold(preview, cfg.MinHoldOutputTokens)
+	}
+	// applyHold acts on a hold verdict and reports whether the attempt ends.
+	applyHold := func(verdict QualityVerdict) (StreamAttempt, bool) {
+		switch verdict.Action {
+		case QualityActionWithhold:
+			if cfg.ShadowMode {
+				s.recordShadowVerdict(execution.AuthID, verdict)
+			} else if transparentHoldBlocks(cfg, reasoningNeeded, verdict) {
+				return StreamAttempt{Class: verdict.Class, Verdict: verdict, Err: fmt.Errorf("quality gate rejected stream: %s", verdict.Class), Buffered: buffer, Available: true}, true
+			}
+		case QualityActionDeliver:
+		default:
+			return StreamAttempt{}, false
+		}
+		if errEmit := emitBuffered(); errEmit != nil {
+			return abort(errEmit), true
+		}
+		return StreamAttempt{}, false
 	}
 
 	for {
@@ -706,29 +742,21 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 		case <-holdC:
 			holdC = nil
 			holdExpired = true
-			preview := info.decorate(analyzer.Preview())
-			preview.HoldExpired = true
-			verdict := ClassifyQualityHold(preview, cfg.MinHoldOutputTokens)
-			if verdict.Action == QualityActionWithhold {
-				if cfg.ShadowMode {
-					s.recordShadowVerdict(execution.AuthID, verdict)
-					if errEmit := emitBuffered(); errEmit != nil {
-						return abort(errEmit)
-					}
-					continue
-				}
-				if transparentHoldBlocks(cfg, reasoningNeeded, verdict) {
-					return StreamAttempt{Class: verdict.Class, Verdict: verdict, Err: fmt.Errorf("quality gate rejected stream: %s", verdict.Class), Buffered: buffer, Available: true}
-				}
-				if errEmit := emitBuffered(); errEmit != nil {
-					return abort(errEmit)
-				}
+			if emitted {
+				// Content already reached the client; a late verdict must not
+				// fail over and splice another account's answer onto it.
 				continue
 			}
-			if verdict.Action == QualityActionDeliver {
-				if errEmit := emitBuffered(); errEmit != nil {
-					return abort(errEmit)
-				}
+			if attempt, done := applyHold(classifyHold(analyzer.Preview())); done {
+				return attempt
+			}
+		case <-settleC:
+			settleC = nil
+			if emitted {
+				continue
+			}
+			if attempt, done := applyHold(classifyHold(analyzer.Preview())); done {
+				return attempt
 			}
 		case event, ok := <-readEvents:
 			if !ok {
@@ -742,8 +770,14 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 				}
 				return StreamAttempt{Class: class, Verdict: verdict, Err: event.Err}
 			}
+			// The hold verdict can only move when a chunk changes a signal it
+			// depends on. Control frames, keepalive comments and empty item
+			// announcements are buffered without reclassifying the stream.
+			signalChanged := false
+			var preview QualitySignals
 			if len(event.Response.Payload) > 0 {
-				progressBefore := analyzer.Preview().ProgressEvents
+				progressBefore := analyzer.ProgressEvents()
+				revisionBefore := analyzer.Revision()
 				payload := append([]byte(nil), event.Response.Payload...)
 				framedPayloads := outputNormalizer.Feed(payload)
 				if emitted {
@@ -761,15 +795,19 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 					}
 				}
 				analyzer.ObserveChunk(payload)
-				previewNow := analyzer.Preview()
-				if previewNow.ProgressEvents > progressBefore {
+				if analyzer.ProgressEvents() > progressBefore {
 					resetStreamIdle()
 				}
-				if previewNow.FirstVisible {
-					armHold()
-				}
-				if previewNow.Terminal {
-					return finish()
+				if analyzer.Revision() != revisionBefore {
+					signalChanged = true
+					preview = analyzer.Preview()
+					if preview.FirstVisible {
+						armHold()
+						armSettle()
+					}
+					if preview.Terminal {
+						return finish()
+					}
 				}
 			}
 			if event.Response.Error != "" {
@@ -784,36 +822,15 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 			if event.Response.Done {
 				return finish()
 			}
-			if emitted {
+			if emitted || !signalChanged {
 				continue
 			}
 			if !reasoningNeeded {
-				armEarly()
+				armEarly(preview.FirstVisible)
 				continue
 			}
-			preview := info.decorate(analyzer.Preview())
-			preview.HoldExpired = holdExpired
-			holdVerdict := ClassifyQualityHold(preview, cfg.MinHoldOutputTokens)
-			if holdVerdict.Action == QualityActionWithhold {
-				if cfg.ShadowMode {
-					s.recordShadowVerdict(execution.AuthID, holdVerdict)
-					if errEmit := emitBuffered(); errEmit != nil {
-						return abort(errEmit)
-					}
-					continue
-				}
-				if transparentHoldBlocks(cfg, reasoningNeeded, holdVerdict) {
-					return StreamAttempt{Class: holdVerdict.Class, Verdict: holdVerdict, Err: fmt.Errorf("quality gate rejected stream: %s", holdVerdict.Class), Buffered: buffer, Available: true}
-				}
-				if errEmit := emitBuffered(); errEmit != nil {
-					return abort(errEmit)
-				}
-				continue
-			}
-			if holdVerdict.Action == QualityActionDeliver {
-				if errEmit := emitBuffered(); errEmit != nil {
-					return abort(errEmit)
-				}
+			if attempt, done := applyHold(classifyHold(preview)); done {
+				return attempt
 			}
 		}
 	}

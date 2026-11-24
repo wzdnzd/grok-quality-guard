@@ -34,6 +34,7 @@ type StreamAnalyzer struct {
 	minEncrypted   int64
 	bytesPerToken  int64
 	retainText     bool
+	revision       uint64
 	signals        Signals
 }
 
@@ -127,14 +128,70 @@ func (a *StreamAnalyzer) Preview() Signals {
 	return a.snapshot(false)
 }
 
+// ProgressEvents returns the generated-output event count without building a
+// full signal snapshot.
+func (a *StreamAnalyzer) ProgressEvents() int {
+	if a == nil {
+		return 0
+	}
+	return a.signals.ProgressEvents
+}
+
+// Revision changes whenever an observed chunk changes a signal a quality
+// verdict depends on. Control frames such as response.created, empty item
+// announcements or keepalive comments leave it untouched, so the hold loop can
+// skip reclassifying them.
+func (a *StreamAnalyzer) Revision() uint64 {
+	if a == nil {
+		return 0
+	}
+	return a.revision
+}
+
+// analyzerMark is the verdict-relevant state compared before and after each
+// chunk to advance the revision.
+type analyzerMark struct {
+	progress   int
+	reasoning  bool
+	evidence   bool
+	encrypted  int64
+	usage      bool
+	output     int64
+	billed     int64
+	terminal   bool
+	semantic   bool
+	toolCall   bool
+	visibleNow bool
+}
+
+func (a *StreamAnalyzer) mark() analyzerMark {
+	return analyzerMark{
+		progress:   a.signals.ProgressEvents,
+		reasoning:  a.reasoningStart,
+		evidence:   !a.evidenceAt.IsZero(),
+		encrypted:  a.encryptedBytes,
+		usage:      a.signals.UsageReported,
+		output:     a.signals.OutputTokens,
+		billed:     a.signals.ReasoningTokens,
+		terminal:   a.signals.Terminal,
+		semantic:   a.signals.SemanticOutput,
+		toolCall:   a.signals.HasToolCall,
+		visibleNow: !a.firstVisibleAt.IsZero(),
+	}
+}
+
 func (a *StreamAnalyzer) ObserveChunk(chunk []byte) {
 	if a == nil || len(chunk) == 0 {
 		return
 	}
+	before := a.mark()
 	a.signals.ChunkCount++
 	a.signals.ByteCount += int64(len(chunk))
 	for _, ev := range a.parser.Feed(chunk) {
 		a.observeEvent(ev, time.Now())
+	}
+	if a.mark() != before {
+		a.revision++
 	}
 }
 
@@ -887,7 +944,7 @@ func (a *StreamAnalyzer) snapshot(final bool) Signals {
 		sig.VisibleGapMaxMS, sig.VisibleGapMedMS = qualityGapStats(a.visibleGaps)
 	}
 	sig.DurationMS = durationMS(a.startedAt, end)
-	sig.GenerationMS = generationWindowMS(sig.DurationMS, sig.FirstTokenMS, sig.ReasoningTokens)
+	sig.GenerationMS = generationWindowMS(sig.DurationMS, sig.FirstTokenMS)
 	sig.TPS = tps(sig.OutputTokens, sig.GenerationMS)
 	if final && a.retainText {
 		sig.VisibleText = a.visibleText.String()

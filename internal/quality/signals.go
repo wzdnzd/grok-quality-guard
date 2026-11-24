@@ -43,6 +43,14 @@ const (
 	// answer, so waiting longer cannot change a missing-thinking verdict.
 	defaultQualitySettleSpanMS = int64(40)
 	defaultQualitySettleChunks = 2
+	// Visible text below this size may still be the short preamble of a
+	// client tool call, whose reasoning bill is only known at the terminal
+	// event. A missing-thinking verdict waits until the text outgrows it.
+	defaultQualityPreambleTokens = int64(64)
+	// A preamble is followed by its tool call in the same burst. Visible text
+	// that stays alone this long without evidence or a tool call is an answer,
+	// so a stalled degraded stream still fails over long before hold_timeout.
+	defaultQualityPreambleSettleMS = int64(2000)
 	// Silence followed by one short burst is the signature of a buffered dump.
 	defaultQualityBurstGapMS = int64(1500)
 	// Evidence this far ahead of the first visible chunk is ordered thinking.
@@ -79,7 +87,11 @@ type Signals struct {
 	// HasToolCall marks a turn that emits a tool call. Its visible text is a
 	// preamble rather than the answer, and healthy accounts deliver tool
 	// arguments in one burst, so visible-window dump timing does not apply.
-	HasToolCall       bool
+	HasToolCall bool
+	// ReasoningSkipped marks a client tool-call turn the model answered
+	// without billing any reasoning. The turn is delivered but carries no
+	// evidence either way about the account's thinking.
+	ReasoningSkipped  bool
 	Streaming         bool
 	ReasoningRequired bool
 	// ReasoningExplicit is true when the client itself asked for reasoning

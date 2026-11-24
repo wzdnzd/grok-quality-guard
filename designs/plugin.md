@@ -84,15 +84,14 @@ grok2api 的关键实现位于：
 ### 2.2 TPS 公式
 
 ```text
-generationWindow = duration - firstToken
+tail = duration - firstToken
 ```
 
-当满足以下条件时必须修正：
+当满足以下条件时，说明输出在等待之后一次性到达（工具调用参数、隐藏推理或中间链路缓冲），尾段只反映传输而非生成速度，必须修正：
 
 ```text
-reasoningTokens > 0
-generationWindow < firstToken
-generationWindow < 1000ms
+tail < firstToken
+tail < 1000ms
 ```
 
 此时：
@@ -101,13 +100,17 @@ generationWindow < 1000ms
 generationWindow = duration
 ```
 
-最终：
+否则 `generationWindow = tail`。最终：
 
 ```text
 TPS = outputTokens * 1000 / generationWindow
 ```
 
-如果 `outputTokens <= 0` 或 `generationWindow <= 0`，TPS 记为 0，不参与速度降智分类。
+如果 `outputTokens <= 0` 或 `generationWindow <= 0`，TPS 记为 0，不参与速度降智分类。输出少于 `min_passive_output_tokens`（默认 32）的样本仍记录 TPS，但不做 `soft_tps` / `hard_tps` 判定。
+
+参考实现只在 `reasoningTokens > 0` 时做上述修正。无推理账单的突发输出因此按几十毫秒的尾段计算：Codex 一次 75 token 的工具调用在 2.13s 预填充后 50ms 内到达，会算出 1500 tok/s 并被误判为 `hard_tps`。修正后按完整时长计算约为 34 tok/s，真正不可能的速度（例如 2s 内到达 3000 token）仍会命中阈值。
+
+`fail_closed` 的 `buffered_burst` 与 `insufficient_generation_window` 仍使用参考实现的到达窗口（仅推理账单触发修正），以保留用户显式开启的缓冲突发检测；客户端工具调用轮次不参与该到达窗口检测。
 
 ### 2.3 默认阈值
 
@@ -365,7 +368,15 @@ probe scheduler
 
 `usage` 中的输出或 reasoning 账单不能替代真实思考证据，但短可见文本不能借输出下限绕过 `missing_thinking`
 
-`ReasoningStarted`（reasoning item 或 timing stub）只延迟判定到可见输出出现之前。一旦可见输出已经真实流式到达（达到 `min_hold_output_tokens`，且可见跨度至少 40ms 或至少 2 个可见块）而仍无思考证据，`missing_thinking` 立即成立，不再等满 `hold_timeout`：等待并不会让证据出现得更早，只会让客户端在每次换号前空等一个完整 hold 窗口。尚未出现可见输出时仍保持 `wait`，因为模型可能还在思考。
+`ReasoningStarted`（reasoning item 或 timing stub）只延迟判定到可见输出出现之前。透明 hold 不会根据不完整的帧下最终结论：短可见文本后面仍可能跟着客户端工具调用，推理账单也要到终止事件才出现。流中途无思考证据时，满足以下任一条件即判 `missing_thinking` 并换号，不再等满 `hold_timeout`：
+
+- 可见输出超过工具调用前说明的规模（`max(min_hold_output_tokens, 64)` token），且可见跨度至少 40ms 或至少 2 个可见块
+- 可见输出达到 `min_hold_output_tokens`，并且在 2s 内既没有思考证据也没有工具调用：工具调用前的说明会和调用在同一批次下发，单独停留这么久的短文本就是答案，停滞的降智流也因此能在 2s 左右换号
+- 扣留窗口到期
+
+已经出现客户端工具调用且可见说明较短时，一直等到终止事件拿到推理账单再判定。尚未出现可见输出时仍保持 `wait`，因为模型可能还在思考。
+
+hold 阶段只在新到达的帧改变了判定所依赖的信号（可见文本、推理开始/证据、工具调用、usage、终止）时才重新判定；`response.created`、空 item 公告、保活注释等控制帧只进入缓冲，不触发判定。一旦内容已经发给客户端，迟到的 hold 定时器不会再触发换号，避免把另一个账号的回答拼接到已开始的流上。
 
 已有达到下限的密文证据（无明文 reasoning delta）时，以下任一情况立即放行，不再等待上游终止事件：可见文本持续流式且达到最小输出；客户端工具调用开始；扣留窗口到期且未命中任何 dump 判定。
 
@@ -477,15 +488,24 @@ usage.output_tokens - usage.reasoning_tokens
 
 `qualityVisibleStreaming` 成立时，时间型 dump 直接跳过；单块、可见跨度不足 100ms 或可见速率异常高的样本仍按上述规则拦截。
 
-含客户端工具调用的轮次（Responses 的 `function_call`、`custom_tool_call`、`local_shell_call`、`shell_call`、`apply_patch_call`、`computer_call`，Chat 的 `tool_calls` / `function_call`，Anthropic 的 `tool_use`）跳过 `buffered_burst`、`fake_encrypted_dump`、`fast_reasoning_ratio_dump`：这类轮次的可见文本只是工具调用前的简短说明，健康账号也会在推理结束后一次性下发说明和工具参数，可见窗口时序无法区分 dump。`cipher_drool` 与思考证据要求不受影响，缺少证据的工具调用仍判 `missing_thinking`。宿主侧执行的 `web_search_call`、hosted MCP 和 Anthropic `server_tool_use` 之后的文本仍是答案，照常检测。
+含客户端工具调用的轮次（Responses 的 `function_call`、`custom_tool_call`、`local_shell_call`、`shell_call`、`apply_patch_call`、`computer_call`，Chat 的 `tool_calls` / `function_call`，Anthropic 的 `tool_use`）跳过 `buffered_burst`、`fake_encrypted_dump`、`fast_reasoning_ratio_dump`：这类轮次的可见文本只是工具调用前的简短说明，健康账号也会在推理结束后一次性下发说明和工具参数，可见窗口时序无法区分 dump。`cipher_drool` 不受影响。
+
+思考证据方面，客户端工具调用分两种情况：
+
+- 推理账单为 0（`reasoning_tokens` 为 0 或未报告）、没有思考证据、可见说明少于 `max(min_hold_output_tokens, 64)` token：这是模型在 agent 循环中直接执行的续步，同一请求换到任何健康账号上都会得到同样的结果，不判 `missing_thinking`，按 `tool_call_without_reasoning_bill` 放行。该样本标记为 `ReasoningSkipped`：不计入账号证据命中率，不清除思考 strike，不把 suspect 账号改成 healthy，也不推进 strike 衰减，只清零传输错误计数
+- 报告了推理账单却没有证据，或者在工具调用旁输出了长篇正文：仍判 `missing_thinking`，前者正是降智账号的典型特征
+
+宿主侧执行的 `web_search_call`、hosted MCP 和 Anthropic `server_tool_use` 之后的文本仍是答案，照常检测。
 
 ### 4.6 速度分类
 
 后置审计或探测完成时：
 
 ```text
-if fail_closed && generationWindow < min_generation_ms && tps >= soft_tps:
+if fail_closed && !toolCall && arrivalWindow < min_generation_ms && outputTokens/arrivalWindow >= soft_tps:
     buffered_burst
+else if outputTokens < min_passive_output_tokens:
+    healthy (TPS recorded, not judged)
 else if tps >= hard_tps:
     hard_tps
 else if tps >= soft_tps:

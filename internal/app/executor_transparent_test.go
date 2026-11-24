@@ -2067,3 +2067,75 @@ func TestTransparentToolCallPreambleWithEncryptedReasoningIsDelivered(t *testing
 		t.Fatalf("healthy tool call turn was penalized: state=%s attempt=%#v", account.State, account.LastAttempt)
 	}
 }
+
+// TestTransparentToolCallWithoutReasoningIsDelivered replays the field report:
+// a Codex continuation turn on grok-4.7 returned a function call with no
+// reasoning bill, in one burst after the prefill, on every account it was
+// tried on. The gate rejected each one as missing_thinking (and the burst
+// timed out at ~1500 tok/s) until the pool ran dry and Codex got a 503.
+func TestTransparentToolCallWithoutReasoningIsDelivered(t *testing.T) {
+	scripts := map[string][]pluginapi.HostModelStreamReadResponse{
+		"bare call": {
+			streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_call\",\"model\":\"grok-4.7\"}}\n\n"),
+			streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"exec_command\",\"arguments\":\"\"}}\n\n"),
+			streamData("data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{\\\"cmd\\\":\\\"sed -n 1,200p internal/quality/verdict.go\\\"}\"}\n\n"),
+			streamData("data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"sed -n 1,200p internal/quality/verdict.go\\\"}\"}}\n\n"),
+			streamData("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_call\",\"usage\":{\"output_tokens\":75,\"output_tokens_details\":{\"reasoning_tokens\":0}}}}\n\n"),
+			{Done: true},
+		},
+		"preamble after empty reasoning item": {
+			streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_call\",\"model\":\"grok-4.7\"}}\n\n"),
+			streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[]}}\n\n"),
+			streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n"),
+			streamData("data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"delta\":\"Let me read the verdict \"}\n\n"),
+			streamData("data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"delta\":\"code before changing it.\"}\n\n"),
+			streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":2,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"exec_command\",\"arguments\":\"\"}}\n\n"),
+			streamData("data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":2,\"delta\":\"{\\\"cmd\\\":\\\"ls\\\"}\"}\n\n"),
+			streamData("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_call\",\"usage\":{\"output_tokens\":61,\"output_tokens_details\":{\"reasoning_tokens\":0}}}}\n\n"),
+			{Done: true},
+		},
+	}
+	for name, script := range scripts {
+		t.Run(name, func(t *testing.T) {
+			entries, auths := twoGrokAuths(t)
+			host := newMockHostCall(entries, auths)
+			host.scriptStream("auth-1", script...)
+			host.scriptStream("auth-2", goodResponsesStreamScript()...)
+			plugin := newTestPlugin(t, host, enableTransparentForTest)
+			streamID := "plugin-stream-no-reasoning-call"
+			plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.7", true), streamID)
+			plugin.waitSettled()
+
+			host.mu.Lock()
+			emitted := append([][]byte(nil), host.emitted[streamID]...)
+			closeDetail := host.closes[streamID]
+			host.mu.Unlock()
+			var joined strings.Builder
+			for _, payload := range emitted {
+				joined.Write(payload)
+			}
+			if !strings.Contains(joined.String(), "exec_command") || !strings.Contains(joined.String(), "response.completed") || closeDetail != nil {
+				t.Fatalf("no-reasoning tool call was not delivered: close=%#v output=%s", closeDetail, joined.String())
+			}
+			if strings.Contains(joined.String(), "good answer") {
+				t.Fatalf("no-reasoning tool call failed over: %s", joined.String())
+			}
+			if calls := modelCallAuthIDs(host); len(calls) != 1 || calls[0] != "auth-1" {
+				t.Fatalf("no-reasoning tool call used attempts %v, want auth-1 only", calls)
+			}
+			account, ok := plugin.stateAccount("auth-1")
+			if !ok || account.LastAttempt == nil || account.LastAttempt.Class != "" {
+				t.Fatalf("no-reasoning tool call was judged: %#v", account.LastAttempt)
+			}
+			if account.ThinkingStrikes != 0 || account.State == appstate.StateCooling || account.State == appstate.StateSuspect {
+				t.Fatalf("no-reasoning tool call penalized the account: state=%s strikes=%d", account.State, account.ThinkingStrikes)
+			}
+			if account.EvidenceSamples != 0 {
+				t.Fatalf("no-reasoning tool call counted as an evidence sample: %d", account.EvidenceSamples)
+			}
+			if account.LastEvidence == nil || account.LastEvidence.TPS > 1000 {
+				t.Fatalf("burst tool call recorded an impossible TPS: %#v", account.LastEvidence)
+			}
+		})
+	}
+}

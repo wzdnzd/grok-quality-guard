@@ -10,21 +10,27 @@ import (
 
 func TestGenerationWindowCorrectionBoundaries(t *testing.T) {
 	cases := []struct {
-		name      string
-		duration  int64
-		first     int64
-		reasoning int64
-		want      int64
+		name        string
+		duration    int64
+		first       int64
+		reasoning   int64
+		wantArrival int64
+		wantGen     int64
 	}{
-		{name: "short reasoning window uses full duration", duration: 1200, first: 1000, reasoning: 10, want: 1200},
-		{name: "long reasoning window subtracts ttft", duration: 3000, first: 1000, reasoning: 10, want: 2000},
-		{name: "no reasoning never corrects", duration: 1200, first: 1000, reasoning: 0, want: 200},
-		{name: "window equal to ttft does not correct", duration: 2000, first: 1000, reasoning: 10, want: 1000},
+		{name: "short reasoning window uses full duration", duration: 1200, first: 1000, reasoning: 10, wantArrival: 1200, wantGen: 1200},
+		{name: "long reasoning window subtracts ttft", duration: 3000, first: 1000, reasoning: 10, wantArrival: 2000, wantGen: 2000},
+		{name: "burst without reasoning keeps the arrival tail only", duration: 1200, first: 1000, reasoning: 0, wantArrival: 200, wantGen: 1200},
+		{name: "window equal to ttft does not correct", duration: 2000, first: 1000, reasoning: 10, wantArrival: 1000, wantGen: 1000},
+		{name: "fast prefill keeps a short streamed tail", duration: 250, first: 50, reasoning: 0, wantArrival: 200, wantGen: 200},
+		{name: "everything in the first chunk has no window", duration: 900, first: 900, reasoning: 0, wantArrival: 0, wantGen: 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := generationWindowMS(tc.duration, tc.first, tc.reasoning); got != tc.want {
-				t.Fatalf("generation window = %d, want %d", got, tc.want)
+			if got := arrivalWindowMS(tc.duration, tc.first, tc.reasoning); got != tc.wantArrival {
+				t.Fatalf("arrival window = %d, want %d", got, tc.wantArrival)
+			}
+			if got := generationWindowMS(tc.duration, tc.first); got != tc.wantGen {
+				t.Fatalf("generation window = %d, want %d", got, tc.wantGen)
 			}
 		})
 	}

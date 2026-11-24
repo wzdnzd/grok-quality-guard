@@ -1,11 +1,18 @@
 package quality
 
-import "grok-quality-guard/internal/config"
+import (
+	"time"
+
+	"grok-quality-guard/internal/config"
+)
 
 const (
 	ProtocolChat      = qualityProtocolChat
 	ProtocolResponses = qualityProtocolResponses
 	ProtocolAnthropic = qualityProtocolAnthropic
+	// PreambleSettleWindow is how long short visible text without evidence
+	// may wait for a tool call before the hold reclassifies it.
+	PreambleSettleWindow = time.Duration(defaultQualityPreambleSettleMS) * time.Millisecond
 )
 
 // Signals and verdict helpers are re-exported through exported names so the
@@ -17,8 +24,8 @@ func Numeric(value any) (int64, bool)  { return numeric(value) }
 func MaxInt64(left, right int64) int64 { return maxInt64(left, right) }
 
 func TPS(outputTokens, generationMS int64) float64 { return tps(outputTokens, generationMS) }
-func GenerationWindowMS(durationMS, firstTokenMS, reasoningTokens int64) int64 {
-	return generationWindowMS(durationMS, firstTokenMS, reasoningTokens)
+func GenerationWindowMS(durationMS, firstTokenMS int64) int64 {
+	return generationWindowMS(durationMS, firstTokenMS)
 }
 
 func QualityIsBurstDump(sig Signals, minOutput int64) bool { return qualityIsBurstDump(sig, minOutput) }

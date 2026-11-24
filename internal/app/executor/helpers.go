@@ -22,6 +22,9 @@ type Account = model.Account
 type Policy = config.Policy
 type QualityConfig = config.QualityConfig
 type QualityVerdict = domain.QualityVerdict
+type QualitySignals = domain.Signals
+
+const qualityPreambleSettleWindow = domain.PreambleSettleWindow
 type StreamAnalyzer = domain.StreamAnalyzer
 type Event = appstate.Event
 type sseOutputNormalizer = sse.Normalizer
