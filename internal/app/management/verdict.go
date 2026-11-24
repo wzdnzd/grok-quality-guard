@@ -86,6 +86,9 @@ func verdictDecision(class string, state string) string {
 	case appstate.StateDegraded:
 		return verdictDecisionQuarantine
 	}
+	if class == "" && state == appstate.StateHealthy {
+		return verdictDecisionDeliver
+	}
 	switch class {
 	case domain.ClassCredentialInvalid:
 		return verdictDecisionDisable

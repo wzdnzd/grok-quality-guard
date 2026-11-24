@@ -1575,10 +1575,21 @@ test('A late task-center detail response cannot replace a newer selection', asyn
   await first;
   assert.equal(ui.state.taskCenterDetail.task.task_id, 'task-2');
 });
-test('Labeled checkbox controls align with neighboring fields', () => {
-  assert.match(html, /<div class="field score-toggle"><label for="p_scoring_enabled">ui\.score_toggle_label<\/label>\s*<label class="check-row"><input id="p_scoring_enabled" type="checkbox"><span>ui\.enable_health_scoring<\/span><\/label>\s*<span class="hint">ui\.score_enabled_hint<\/span><\/div>/);
-  assert.doesNotMatch(html, /check-card compact score-toggle/);
-  assert.doesNotMatch(html, /check-card\.compact/);
+test('Settings toggles share one row style with info icons', () => {
+  for (const [id, title, hint] of [
+    ['p_scoring_enabled', 'ui.enable_health_scoring', 'ui.score_enabled_hint'],
+    ['p_task_history_enabled', 'ui.save_task_history', 'ui.stop_saving_new_task_records_when_disabled'],
+    ['p_prefer_last_success', 'ui.prefer_the_last_successful_account', 'ui.use_it_only_when_healthy_and_idle_spread_concurrent'],
+    ['p_session_affinity', 'ui.enable_session_affinity', 'ui.keep_a_session_on_the_same_auth_while_the'],
+    ['p_thinking_guard', 'ui.enable_missing_reasoning_detection', 'ui.when_disabled_only_tps_empty_stream_and_similar_quality'],
+    ['p_burst_guard', 'ui.strict_short_window_detection', 'ui.when_enabled_a_very_short_generation_window_with_tps'],
+    ['p_shadow_mode', 'ui.shadow_mode', 'ui.shadow_mode_quality_observations_only']
+  ]) {
+    assert.match(html, new RegExp('<label class="toggle-row"><input id="' + id + '" type="checkbox"><span class="toggle-title">' + title.replace(/\./g, '\.') + '<span class="hint-icon" tabindex="0" role="img" aria-label="' + hint.replace(/\./g, '\.') + '" title="' + hint.replace(/\./g, '\.') + '">'));
+  }
+  const settings = html.slice(html.indexOf('id="panel-settings"'), html.indexOf('</main>'));
+  assert.doesNotMatch(settings, /class="check-card|class="check-row|class="hint"/);
+  assert.doesNotMatch(html, /function upgradeHints/);
   assert.match(html, /\.field>\.field-error\s*\{\s*color: var\(--bad\);/);
   assert.match(html, /\.settings-group \.retry-grid\s*\{\s*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
   assert.match(html, /class="field-grid retry-grid"/);
@@ -1586,10 +1597,12 @@ test('Labeled checkbox controls align with neighboring fields', () => {
   assert.match(html, /ui\.longest_backoff_wait/);
 });
 
-test('Task history checkbox has a label above its control and a hint below', () => {
-  assert.match(html, /<div class="field task-history-field">\s*<label for="p_task_history_enabled">ui\.task_history_toggle_label<\/label>\s*<label class="check-row"><input id="p_task_history_enabled" type="checkbox"><span>ui\.save_task_history<\/span><\/label>\s*<span class="hint">ui\.stop_saving_new_task_records_when_disabled<\/span>/);
-  assert.match(html, /\.policy-group-task-history \.field > \.check-row,\s*\.policy-group-task-history \.field > input\s*\{\s*height: 33px;\s*min-height: 33px;/);
-  assert.doesNotMatch(html, /task-history-switch/);
+test('Every settings field puts its explanation behind an info icon', () => {
+  const settings = html.slice(html.indexOf('id="policyForm"'), html.indexOf('class="form-actions policy-actions"'));
+  const fields = settings.match(/<div class="field[^"]*"><span class="field-head"><label for="p_[a-z_0-9]+">[^<]+<\/label><span class="hint-icon"[^>]*aria-label="[^"]+" title="[^"]+">/g) || [];
+  const controls = settings.match(/<(?:input|select) id="p_[a-z_0-9]+"/g) || [];
+  const toggles = settings.match(/<label class="toggle-row"><input id="p_/g) || [];
+  assert.equal(fields.length + toggles.length, controls.length);
 });
 
 test('Overview cards pair into equal-height rows', () => {
@@ -1600,30 +1613,26 @@ test('Overview cards pair into equal-height rows', () => {
   assert.match(html, /\.overview-card > \.card-body,\s*\.overview-card > \.recent-list\s*\{\s*flex: 1 1 auto;/);
 });
 
-test('Policy settings use a compact grouped grid with responsive density', () => {
+test('Policy settings group parameters by type in a single column', () => {
   assert.match(html, /<form id="policyForm" class="settings-layout policy-settings-form" novalidate>/);
+  assert.match(html, /<section class="card policy-summary-card">[\s\S]*?<div class="policy-chips" id="settingsPolicySummary"><\/div>/);
   assert.match(html, /<div class="policy-settings-grid">/);
-  for (const group of ['mode', 'task-history', 'routing', 'scoring', 'quality', 'probe']) {
-    assert.match(html, new RegExp('class="policy-group[^"]*policy-group-' + group + '(?:[ "])'));
-  }
-  const modeStart = html.indexOf('class="policy-group policy-group-mode"');
-  const affinityStart = html.indexOf('class="policy-group policy-group-routing"');
-  const scoringStart = html.indexOf('class="policy-group policy-group-routing policy-group-scoring"');
-  const taskHistoryStart = html.indexOf('class="policy-group policy-group-task-history"');
-  const qualityStart = html.indexOf('class="policy-group policy-group-quality"');
-  const probeStart = html.indexOf('class="policy-group policy-group-probe"');
-  assert.ok(modeStart < affinityStart && affinityStart < scoringStart && scoringStart < taskHistoryStart && taskHistoryStart < qualityStart && qualityStart < probeStart);
-  assert.match(html, /\.policy-settings-grid\s*\{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
-  assert.match(html, /\.policy-group-quality \.field-grid,\s*\.policy-group-probe \.field-grid\s*\{\s*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
-  assert.match(html, /\.policy-group-scoring\s*\{\s*grid-column: 1 \/ -1;/);
-  assert.match(html, /\.policy-group-scoring \.field-grid\s*\{\s*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);/);
-  assert.match(html, /\.policy-group-scoring \.field\.score-metric,\s*\.policy-group-scoring \.field\.score-refresh\s*\{\s*grid-column: span 2;/);
-  assert.match(html, /\.policy-group-scoring \.field>\.hint\s*\{\s*white-space: nowrap;\s*overflow: hidden;\s*text-overflow: ellipsis;/s);
-  assert.match(html, /<div class="field score-toggle"><label for="p_scoring_enabled">ui\.score_toggle_label<\/label>/);
-  assert.match(html, /\.policy-group-quality \.check-card\s*\{\s*grid-column: span 2;/);
-  assert.match(html, /@media \(max-width: 1180px\)\s*\{[\s\S]*?\.settings-summary-card \.summary-grid\s*\{\s*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
-  assert.match(html, /@media \(max-width: 920px\)\s*\{[\s\S]*?\.policy-settings-grid\s*\{\s*grid-template-columns: 1fr;/);
-  assert.match(html, /@media \(max-width: 920px\)\s*\{[\s\S]*?\.policy-group-scoring \.field-grid\s*\{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  const order = [
+    'ui.operating_mode_and_actions',
+    'ui.transparent_auth_selection_and_session_affinity',
+    'ui.ewma_health_ranking',
+    'ui.quality_thresholds_and_reasoning_evidence',
+    'ui.transparent_stream_protection',
+    'ui.active_probes',
+    'ui.task_center_and_history'
+  ].map((key) => html.indexOf('</svg>' + key + '</h3>'));
+  assert.ok(order.every((index, position) => index > 0 && (position === 0 || order[position - 1] < index)));
+  assert.match(html, /\.policy-settings-grid\s*\{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);/);
+  assert.match(html, /\.policy-group \.field-grid\s*\{\s*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);[\s\S]*?align-items: start;/);
+  assert.match(html, /\.policy-group\.columns-3 \.field-grid\s*\{\s*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
+  assert.match(html, /\.field-head\s*\{[\s\S]*?min-height: 16px;/);
+  assert.match(html, /@media \(max-width: 920px\)\s*\{[\s\S]*?\.policy-group \.field-grid,\s*\.policy-group\.columns-3 \.field-grid\s*\{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(html, /@media \(max-width: 680px\)\s*\{[\s\S]*?\.policy-group \.field-grid,\s*\.policy-group\.columns-3 \.field-grid\s*\{\s*grid-template-columns: 1fr;/);
   assert.match(html, /class="form-actions policy-actions"/);
 });
 
@@ -1643,9 +1652,8 @@ test('Routing affinity cards share a row and parameter hints explain their effec
   assert.match(html, /ui.choose_only_healthy_unexpired_proxies/);
   assert.match(html, /:password@proxy\.example:1080/);
   assert.doesNotMatch(html, /:密码@proxy\.example:1080/);
-  assert.match(html, /\.policy-group-scoring \.field\.score-toggle,\s*\.policy-group-scoring \.field\.full,\s*\.policy-group-scoring \.field\.score-bucket\s*\{\s*grid-column: span 3;/);
   assert.match(html, /id="p_probe_healthy_interval_hours" type="number" min="0" step="1"/);
-  assert.match(html, /id="p_probe_healthy_interval_hours"[\s\S]*ui\.hours_zero_disables_active_healthy_probes/);
+  assert.match(html, /<label for="p_probe_healthy_interval_hours">[^<]+<\/label><span class="hint-icon"[^>]*aria-label="ui\.hours_zero_disables_active_healthy_probes"/);
   assert.match(html, /id="p_probe_scan_interval"/);
   assert.match(html, /ui.bind_nodes_templates_and_proxy_services_in_one_place/);
   assert.match(html, /<th>ui.endpoint<\/th>/);
@@ -1683,7 +1691,7 @@ test('Routing scoring controls expose dynamic buckets, weights, and request-driv
   assert.match(html, /ui\.score_min_interval_hint/);
   assert.match(html, /ui\.score_refresh_hint/);
   assert.match(html, /ui\.score_drift_hint/);
-  assert.match(html, /ui\.score_toggle_label/);
+  assert.doesNotMatch(html, /ui\.score_toggle_label|ui\.task_history_toggle_label/);
   assert.match(html, /ui\.enable_health_scoring/);
   assert.match(html, /ui\.score_min_interval_invalid/);
   assert.match(html, /ui\.score_max_age_invalid/);
@@ -2180,10 +2188,10 @@ test('Task center row actions confirm cancel and permanent deletion without sele
 test('Task history settings explain defaults and convert MiB to bytes', () => {
   const { dashboard: ui, get } = harness();
   assert.match(html, /id="p_task_history_enabled"/);
-  assert.match(html, /id="p_task_history_retention_days"[\s\S]*ui.counted_from_task_completion_default_3_days/);
-  assert.match(html, /id="p_task_history_max_records"[\s\S]*ui.evict_the_oldest_tasks_first_when_exceeded_default_500/);
-  assert.match(html, /id="p_task_history_max_bytes_mib"[\s\S]*ui.compressed_disk_usage_of_completed_task_archives_in_mib/);
-  assert.match(html, /id="p_task_history_max_items"[\s\S]*ui.keep_the_summary_and_mark_item_details_as_truncated/);
+  assert.match(html, /<label for="p_task_history_retention_days">[^<]+<\/label><span class="hint-icon"[^>]*aria-label="ui\.counted_from_task_completion_default_3_days"/);
+  assert.match(html, /<label for="p_task_history_max_records">[^<]+<\/label><span class="hint-icon"[^>]*aria-label="ui\.evict_the_oldest_tasks_first_when_exceeded_default_500"/);
+  assert.match(html, /<label for="p_task_history_max_bytes_mib">[^<]+<\/label><span class="hint-icon"[^>]*aria-label="ui\.compressed_disk_usage_of_completed_task_archives_in_mib"/);
+  assert.match(html, /<label for="p_task_history_max_items">[^<]+<\/label><span class="hint-icon"[^>]*aria-label="ui\.keep_the_summary_and_mark_item_details_as_truncated"/);
   ui.state.policy = { task_history: { enabled: true, retention_days: 3, max_records: 500, max_bytes: 64 * 1048576, max_items_per_task: 10000 } };
   ui.populatePolicyForm();
   assert.equal(Number(get('p_task_history_max_bytes_mib').value), 64);
