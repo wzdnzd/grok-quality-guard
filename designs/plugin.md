@@ -140,9 +140,11 @@ TPS = outputTokens * 1000 / generationWindow
 | `burst_guard` | false | 短生成窗口和高 TPS 是否直接判为 burst，以及窗口不足是否单独分类 |
 | `cross_verify` | `thinking` | 达到阈值后先用主动探测确认的异常类型：`off`、`soft`、`thinking`、`all` |
 | `shadow_mode` | false | 透明模式只记录结论，不扣留响应、不处置账号 |
+| `debug_logging` | false | 每次透明判定额外写入 `quality_debug` 诊断事件 |
 | `non_reasoning_models` | 空 | 用户额外声明不产生推理的模型标识，提供方前缀会被忽略 |
 
 缺失字段使用默认值；所有字段在加载时校验取值范围，越界值直接拒绝，不做静默截断。
+字段规格集中在 `internal/config/schema.go` 的 `FieldSpecs`，同时驱动加载校验与 `GET /settings/schema`；设置页从该接口读取 `min` `max` `enum`，不在前端重复维护区间。`Min: 0` 与「无下界」由 `zeroIsLowerBound` 区分，避免可为零的字段漏校验负数。
 
 ### 2.4 异常分类
 
@@ -986,6 +988,7 @@ if terminal and no verdict:
 - `attempt_timeout` 是空闲计时，不缩短扣留；`request_timeout` 防止多个降智账号累计把客户端拖过自身超时
 
 `shadow_mode=true` 时质量门只记录本应采取的结论（`quality_shadow` 事件），不扣留响应、不换号、不处置账号。
+`debug_logging=true` 时每次透明判定额外写入 `quality_debug` 事件，带原因码与可见/输出/推理 Token、密文与下限、生成窗口、首 Token、TPS 和扣留是否到期，用于复核误判；默认关闭，避免事件量翻倍。
 
 ### 6.6 非流式请求
 
@@ -2201,6 +2204,7 @@ plugins:
         request_timeout: "120s"
         hold_keepalive: "5s"
         shadow_mode: false
+        debug_logging: false
         hold_max_buffer_bytes: 4194304
         min_encrypted_bytes: 256
         encrypted_bytes_per_reasoning_token: 2
@@ -2319,6 +2323,7 @@ YAML 决定以下部署级字段：
 - `quality.request_timeout=120s`
 - `quality.hold_keepalive=5s`
 - `quality.shadow_mode=false`
+- `quality.debug_logging=false`
 - `probe.healthy_interval_hours=0`
 - `probe.concurrency=2`
 - `probe.suspect_backoff=2m`

@@ -85,3 +85,16 @@ func TestManagementRegistrationExposesLocaleResources(t *testing.T) {
 		t.Fatal("management registration is missing GET /plugins/grok-quality-guard/locales")
 	}
 }
+
+func TestManagementRegistrationExposesSettingsSchema(t *testing.T) {
+	var plugin Plugin
+	found := false
+	for _, route := range plugin.ManagementRegistration().Routes {
+		if route.Method == "GET" && route.Path == "/plugins/grok-quality-guard/settings/schema" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("management registration is missing GET /plugins/grok-quality-guard/settings/schema")
+	}
+}

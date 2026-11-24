@@ -32,6 +32,63 @@ type pluginapiErrorTest struct {
 	Message string `json:"message"`
 }
 
+func TestSettingsSchemaEndpointMatchesSpecs(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	plugin := newTestPlugin(t, newMockHostCall(entries, auths), nil)
+	response := callManagementForTest(t, plugin, http.MethodGet, "/v0/management/plugins/grok-quality-guard/settings/schema", nil, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("settings schema status = %d", response.StatusCode)
+	}
+	var payload struct {
+		Groups []struct {
+			Key   string `json:"key"`
+			Label string `json:"label"`
+		} `json:"groups"`
+		Fields []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+		} `json:"fields"`
+	}
+	var envelope struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Groups []struct {
+				Key   string `json:"key"`
+				Label string `json:"label"`
+			} `json:"groups"`
+			Fields []struct {
+				Path string `json:"path"`
+				Type string `json:"type"`
+			} `json:"fields"`
+		} `json:"data"`
+	}
+	if errUnmarshal := json.Unmarshal(response.Body, &envelope); errUnmarshal != nil {
+		t.Fatalf("decode settings schema envelope: %v", errUnmarshal)
+	}
+	payload.Groups = envelope.Data.Groups
+	payload.Fields = envelope.Data.Fields
+	if len(payload.Groups) != 7 {
+		t.Fatalf("settings schema groups = %d, want 7", len(payload.Groups))
+	}
+	for _, group := range payload.Groups {
+		if strings.HasPrefix(group.Label, "ui.") {
+			t.Fatalf("group %q label was not localized: %q", group.Key, group.Label)
+		}
+	}
+	paths := make(map[string]string, len(payload.Fields))
+	for _, field := range payload.Fields {
+		paths[field.Path] = field.Type
+	}
+	for _, required := range []string{"guard", "quality.attempt_timeout", "quality.request_timeout", "routing.scoring.half_life_hours", "probe.scan_interval"} {
+		if _, ok := paths[required]; !ok {
+			t.Fatalf("settings schema is missing %q", required)
+		}
+	}
+	if paths["guard"] != "enum" {
+		t.Fatalf("guard type = %q, want enum", paths["guard"])
+	}
+}
+
 func callManagementForTest(t *testing.T, plugin *Plugin, method, path string, headers http.Header, body []byte) managementapp.ManagementResponse {
 	t.Helper()
 	request := managementapp.RPCManagementRequest{

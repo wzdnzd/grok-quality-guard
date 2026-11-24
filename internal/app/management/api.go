@@ -215,6 +215,13 @@ func (s *Service) HandleManagement(request []byte) ([]byte, error) {
 	if strings.EqualFold(req.Method, http.MethodGet) && strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/dashboard") {
 		return okEnvelope(managementResponse{StatusCode: http.StatusOK, Headers: htmlHeadersFor(locale), Body: []byte(dashboard.HTML())})
 	}
+	if strings.EqualFold(req.Method, http.MethodGet) && strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/settings/schema") {
+		body, errMarshal := json.Marshal(map[string]any{"ok": true, "data": s.settingsSchema(locale)})
+		if errMarshal != nil {
+			return okEnvelope(managementResponse{StatusCode: http.StatusInternalServerError, Headers: jsonHeadersFor(locale), Body: jsonError("internal", localizedErrorMessage(locale, "internal", http.StatusInternalServerError, "", nil))})
+		}
+		return okEnvelope(managementResponse{StatusCode: http.StatusOK, Headers: jsonHeadersFor(locale), Body: body})
+	}
 	if !strings.EqualFold(req.Method, http.MethodPost) {
 		return okEnvelope(managementResponse{StatusCode: http.StatusMethodNotAllowed, Headers: jsonHeadersFor(locale), Body: jsonError("method_not_allowed", localizedErrorMessage(locale, "method_not_allowed", http.StatusMethodNotAllowed, "", nil))})
 	}
