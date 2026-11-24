@@ -40,75 +40,31 @@ func (s *Service) transparentExecute(ctx context.Context, req Request) (Result, 
 	if errFacts != nil {
 		return Result{}, errFacts
 	}
-	body := facts.Body
-	sourceFormat := facts.SourceFormat
-	requestModel := facts.Model
-	replayable := facts.Replayable
 	selection, errSelection := s.env.NewSelection(req, facts)
 	if errSelection != nil {
 		return Result{}, errSelection
 	}
-	maxAttempts := transparentMaxAttempts(policy)
-	attempts := 0
-candidateLoop:
-	for {
-		attempt, ok := selection.Next(ctx)
-		if !ok {
-			break
+	run := s.runTransparentAttempts(ctx, req, facts, policy, selection, false, time.Time{}, func(execution pluginapi.HostModelExecutionRequest, info attemptInfo) transparentAttemptOutcome {
+		result, verdict, errAttempt := s.executeTransparentOnce(ctx, execution, req.HostCallbackID, policy.Quality, info)
+		return transparentAttemptOutcome{
+			Class:       verdict.Class,
+			Verdict:     verdict,
+			Err:         errAttempt,
+			PreResponse: result.PreResponse,
+			Delivered:   errAttempt == nil,
+			Result:      result,
+			Available:   result.Available,
+			Signals:     result.Signals,
 		}
-		attemptID := attempt.Account.ID
-		source := attempt.Source
-		rotated := false
-		account := attempt.Account
-		raw := attempt.Raw
-		for {
-			if attempts >= maxAttempts {
-				attempt.Release()
-				break candidateLoop
-			}
-			if raw == nil {
-				fetchedAccount, fetchedRaw, ok := s.env.ExecutableAuth(ctx, attemptID)
-				if !ok {
-					attempt.Release()
-					s.env.RefreshSelectionAccount(attemptID)
-					break
-				}
-				account, raw = fetchedAccount, fetchedRaw
-			}
-			attempts++
-			execution := buildHostExecutionWithModel(req, body, sourceFormat, requestModel, account.ID, authRawString(raw, "proxy_url"), false)
-			raw = nil
-			info := s.transparentAttemptInfo(facts, account.ID)
-			result, verdict, errAttempt := s.executeTransparentOnce(ctx, execution, req.HostCallbackID, policy.Quality, info)
-			if errAttempt == errTransparentAttemptAborted {
-				attempt.Release()
-				return Result{}, errAttempt
-			}
-			if errAttempt == nil {
-				selection.MarkSuccess(account.ID, source)
-				attempt.Release()
-				return result, nil
-			}
-			class := verdict.Class
-			selection.MarkFailure(account.ID, source, class)
-			failureRetryable := attempts < maxAttempts && transparentFailureCanFailover(replayable, false, result.PreResponse, class)
-			if failureRetryable && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
-				didRotate, errRotate := s.rotateAfterFailure(ctx, account.ID, class)
-				if errRotate == nil && didRotate {
-					rotated = true
-					s.settleTransparentFailure(account.ID, verdict, class, errAttempt, req.HostCallbackID, false)
-					continue
-				}
-			}
-			s.settleTransparentFailure(account.ID, verdict, class, errAttempt, req.HostCallbackID, true)
-			attempt.Release()
-			if !failureRetryable {
-				break candidateLoop
-			}
-			break
-		}
+	})
+	switch run.Status {
+	case transparentRunDelivered:
+		return run.Final.Result, nil
+	case transparentRunAborted:
+		return Result{}, errTransparentAttemptAborted
+	default:
+		return Result{}, fmt.Errorf("no healthy Grok account produced a valid response")
 	}
-	return Result{}, fmt.Errorf("no healthy Grok account produced a valid response")
 }
 
 func (s *Service) transparentExecuteBufferedStream(ctx context.Context, req Request) (Result, error) {
@@ -120,75 +76,31 @@ func (s *Service) transparentExecuteBufferedStream(ctx context.Context, req Requ
 	if errFacts != nil {
 		return Result{}, errFacts
 	}
-	body := facts.Body
-	sourceFormat := facts.SourceFormat
-	requestModel := facts.Model
-	replayable := facts.Replayable
 	selection, errSelection := s.env.NewSelection(req, facts)
 	if errSelection != nil {
 		return Result{}, errSelection
 	}
-	maxAttempts := transparentMaxAttempts(policy)
-	attempts := 0
-candidateLoop:
-	for {
-		attempt, ok := selection.Next(ctx)
-		if !ok {
-			break
+	run := s.runTransparentAttempts(ctx, req, facts, policy, selection, true, time.Time{}, func(execution pluginapi.HostModelExecutionRequest, info attemptInfo) transparentAttemptOutcome {
+		result, verdict, errAttempt := s.executeTransparentBufferedAttempt(ctx, execution, req.HostCallbackID, policy.Quality, info)
+		return transparentAttemptOutcome{
+			Class:       verdict.Class,
+			Verdict:     verdict,
+			Err:         errAttempt,
+			PreResponse: result.PreResponse,
+			Delivered:   errAttempt == nil,
+			Result:      result,
+			Available:   result.Available,
+			Signals:     result.Signals,
 		}
-		attemptID := attempt.Account.ID
-		source := attempt.Source
-		rotated := false
-		account := attempt.Account
-		raw := attempt.Raw
-		for {
-			if attempts >= maxAttempts {
-				attempt.Release()
-				break candidateLoop
-			}
-			if raw == nil {
-				fetchedAccount, fetchedRaw, ok := s.env.ExecutableAuth(ctx, attemptID)
-				if !ok {
-					attempt.Release()
-					s.env.RefreshSelectionAccount(attemptID)
-					break
-				}
-				account, raw = fetchedAccount, fetchedRaw
-			}
-			attempts++
-			execution := buildHostExecutionWithModel(req, body, sourceFormat, requestModel, account.ID, authRawString(raw, "proxy_url"), true)
-			raw = nil
-			info := s.transparentAttemptInfo(facts, account.ID)
-			result, verdict, errAttempt := s.executeTransparentBufferedAttempt(ctx, execution, req.HostCallbackID, policy.Quality, info)
-			if errAttempt == errTransparentAttemptAborted {
-				attempt.Release()
-				return Result{}, errAttempt
-			}
-			if errAttempt == nil {
-				selection.MarkSuccess(account.ID, source)
-				attempt.Release()
-				return result, nil
-			}
-			class := verdict.Class
-			selection.MarkFailure(account.ID, source, class)
-			failureRetryable := attempts < maxAttempts && transparentFailureCanFailover(replayable, false, result.PreResponse, class)
-			if failureRetryable && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
-				didRotate, errRotate := s.rotateAfterFailure(ctx, account.ID, class)
-				if errRotate == nil && didRotate {
-					rotated = true
-					s.settleTransparentFailure(account.ID, verdict, class, errAttempt, req.HostCallbackID, false)
-					continue
-				}
-			}
-			s.settleTransparentFailure(account.ID, verdict, class, errAttempt, req.HostCallbackID, true)
-			attempt.Release()
-			if !failureRetryable {
-				break candidateLoop
-			}
-			break
-		}
+	})
+	switch run.Status {
+	case transparentRunDelivered:
+		return run.Final.Result, nil
+	case transparentRunAborted:
+		return Result{}, errTransparentAttemptAborted
+	default:
+		return Result{}, fmt.Errorf("no healthy Grok account produced a valid response")
 	}
-	return Result{}, fmt.Errorf("no healthy Grok account produced a valid response")
 }
 
 func (s *Service) executeTransparentOnce(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig, info attemptInfo) (Result, QualityVerdict, error) {
@@ -217,7 +129,7 @@ func (s *Service) executeTransparentOnce(ctx context.Context, execution pluginap
 	sig := info.decorate(analyzer.Finalize(true))
 	sig.DurationMS = time.Since(startedAt).Milliseconds()
 	verdict := classifyNonStreamResult(sig, cfg, info.ReasoningNeeded, cfg.MinHoldOutputTokens)
-	result := Result{Payload: response.Body, Headers: response.Headers, Available: true}
+	result := Result{Payload: response.Body, Headers: response.Headers, Available: true, Signals: sig}
 	if verdict.Class == ClassNone {
 		s.settleTransparentVerdict(execution.AuthID, verdict, callbackID)
 		return result, verdict, nil
@@ -344,7 +256,7 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 	}
 	sig := info.decorate(analyzer.Finalize(true))
 	verdict := classifyFinal(sig, cfg, info.ReasoningNeeded, cfg.MinHoldOutputTokens, true)
-	result := Result{Headers: stream.Headers, Chunks: chunks, Available: true}
+	result := Result{Headers: stream.Headers, Chunks: chunks, Available: true, Signals: sig}
 	if holdOverflow {
 		// The buffer limit bypassed the hold gate. Deliver the response but do
 		// not turn an unverified sample into a healthy account observation.
@@ -381,10 +293,6 @@ func (s *Service) runTransparentStreamBridge(ctx context.Context, req Request, s
 		s.closePluginErrorStream(streamID, locale, "invalid_request", http.StatusBadRequest)
 		return
 	}
-	body := facts.Body
-	sourceFormat := facts.SourceFormat
-	requestModel := facts.Model
-	replayable := facts.Replayable
 	selection, errSelection := s.env.NewSelection(req, facts)
 	if errSelection != nil {
 		s.closePluginErrorStream(streamID, locale, "quality_degraded", http.StatusServiceUnavailable)
@@ -393,99 +301,33 @@ func (s *Service) runTransparentStreamBridge(ctx context.Context, req Request, s
 	// One withhold budget covers every attempt of this request, so a pool of
 	// degraded accounts cannot hold the client past its own timeout.
 	holdDeadline := time.Now().Add(transparentRequestTimeout(policy.Quality))
-	maxAttempts := transparentMaxAttempts(policy)
-	attempts := 0
-	last := StreamAttempt{}
-candidateLoop:
-	for {
-		if time.Until(holdDeadline) < minVerifyWindow(policy.Quality) {
-			break
+	run := s.runTransparentAttempts(ctx, req, facts, policy, selection, true, holdDeadline, func(execution pluginapi.HostModelExecutionRequest, info attemptInfo) transparentAttemptOutcome {
+		outcome := s.executeTransparentStreamAttempt(ctx, execution, req.HostCallbackID, policy.Quality, streamID, info, holdDeadline)
+		return transparentAttemptOutcome{
+			Class:       outcome.Class,
+			Verdict:     outcome.Verdict,
+			Err:         outcome.Err,
+			PreResponse: outcome.PreResponse,
+			Emitted:     outcome.Emitted,
+			Aborted:     outcome.Aborted,
+			Buffered:    outcome.Buffered,
+			Available:   outcome.Available,
+			Signals:     outcome.Signals,
 		}
-		attempt, ok := selection.Next(ctx)
-		if !ok {
-			break
+	})
+	switch run.Status {
+	case transparentRunDelivered, transparentRunEmitted:
+		if run.Final.Err != nil {
+			s.closePluginErrorStream(streamID, locale, "upstream_stream_error", http.StatusBadGateway)
+			return
 		}
-		attemptID := attempt.Account.ID
-		source := attempt.Source
-		rotated := false
-		account := attempt.Account
-		raw := attempt.Raw
-		for {
-			if attempts >= maxAttempts {
-				attempt.Release()
-				break candidateLoop
-			}
-			if raw == nil {
-				fetchedAccount, fetchedRaw, ok := s.env.ExecutableAuth(ctx, attemptID)
-				if !ok {
-					attempt.Release()
-					s.env.RefreshSelectionAccount(attemptID)
-					break
-				}
-				account, raw = fetchedAccount, fetchedRaw
-			}
-			attempts++
-			execution := buildHostExecutionWithModel(req, body, sourceFormat, requestModel, account.ID, authRawString(raw, "proxy_url"), true)
-			raw = nil
-			info := s.transparentAttemptInfo(facts, account.ID)
-			outcome := s.executeTransparentStreamAttempt(ctx, execution, req.HostCallbackID, policy.Quality, streamID, info, holdDeadline)
-			if outcome.Aborted {
-				attempt.Release()
-				s.closePluginStream(streamID, "", "", 0)
-				return
-			}
-			if outcome.Class == ClassInconclusive {
-				if outcome.Available {
-					last = outcome
-				}
-				attempt.Release()
-				break candidateLoop
-			}
-			if outcome.Emitted {
-				if outcome.Err != nil {
-					selection.MarkFailure(account.ID, source, outcome.Class)
-					attempt.Release()
-					s.closePluginErrorStream(streamID, locale, "upstream_stream_error", http.StatusBadGateway)
-					return
-				}
-				selection.MarkSuccess(account.ID, source)
-				attempt.Release()
-				s.closePluginStream(streamID, "", "", 0)
-				return
-			}
-			if outcome.Err == nil {
-				selection.MarkSuccess(account.ID, source)
-				attempt.Release()
-				s.closePluginStream(streamID, "", "", 0)
-				return
-			}
-			if ctx.Err() != nil {
-				attempt.Release()
-				s.closePluginStream(streamID, "", "", 0)
-				return
-			}
-			class := outcome.Class
-			if outcome.Verdict.Class != "" {
-				class = outcome.Verdict.Class
-			}
-			selection.MarkFailure(account.ID, source, class)
-			failureRetryable := attempts < maxAttempts && transparentFailureCanFailover(replayable, outcome.Emitted, outcome.PreResponse, class)
-			if failureRetryable && !rotated && shouldRotateTransparentFailure(selection.HasRemainingCandidates(), class) {
-				didRotate, errRotate := s.rotateAfterFailure(ctx, account.ID, class)
-				if errRotate == nil && didRotate {
-					rotated = true
-					s.settleTransparentFailure(account.ID, outcome.Verdict, class, outcome.Err, req.HostCallbackID, false)
-					continue
-				}
-			}
-			s.settleTransparentFailure(account.ID, outcome.Verdict, class, outcome.Err, req.HostCallbackID, true)
-			attempt.Release()
-			if !failureRetryable {
-				break candidateLoop
-			}
-			break
-		}
+		s.closePluginStream(streamID, "", "", 0)
+		return
+	case transparentRunAborted:
+		s.closePluginStream(streamID, "", "", 0)
+		return
 	}
+	last := run.Last
 	if policy.Quality.ExhaustedDelivers() && last.Available {
 		for _, payload := range last.Buffered {
 			if errEmit := s.emitPluginStreamChunk(streamID, payload); errEmit != nil {
@@ -806,6 +648,7 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 				continue
 			}
 			if attempt, done := applyHold(classifyHold(preview)); done {
+				attempt.Signals = preview
 				return attempt
 			}
 		}
@@ -832,7 +675,7 @@ func (s *Service) finishTransparentStreamAttempt(
 				return StreamAttempt{Err: errEmit, Aborted: true}
 			}
 		}
-		return StreamAttempt{Class: ClassNone, Emitted: true}
+		return StreamAttempt{Class: ClassNone, Emitted: true, Signals: sig}
 	}
 	verdict := classifyFinal(sig, cfg, info.ReasoningNeeded, cfg.MinHoldOutputTokens, true)
 	if cfg.ShadowMode && verdict.Class != ClassNone {
@@ -841,21 +684,21 @@ func (s *Service) finishTransparentStreamAttempt(
 		s.recordShadowVerdict(execution.AuthID, verdict)
 		if !emitted {
 			if errEmit := s.emitPluginChunks(streamID, buffer); errEmit != nil {
-				return StreamAttempt{Err: errEmit, Aborted: true, Available: true}
+				return StreamAttempt{Err: errEmit, Aborted: true, Available: true, Signals: sig}
 			}
 		}
-		return StreamAttempt{Class: verdict.Class, Verdict: verdict, Emitted: true}
+		return StreamAttempt{Class: verdict.Class, Verdict: verdict, Emitted: true, Signals: sig}
 	}
 	if emitted {
 		s.settleTransparentVerdict(execution.AuthID, verdict, callbackID)
-		return StreamAttempt{Class: verdict.Class, Verdict: verdict, Emitted: true}
+		return StreamAttempt{Class: verdict.Class, Verdict: verdict, Emitted: true, Signals: sig}
 	}
 	if verdict.Class == ClassNone {
 		if errEmit := s.emitPluginChunks(streamID, buffer); errEmit != nil {
-			return StreamAttempt{Err: errEmit, Aborted: true, Available: true}
+			return StreamAttempt{Err: errEmit, Aborted: true, Available: true, Signals: sig}
 		}
 		s.settleTransparentVerdict(execution.AuthID, verdict, callbackID)
-		return StreamAttempt{Emitted: true}
+		return StreamAttempt{Emitted: true, Signals: sig}
 	}
-	return StreamAttempt{Class: verdict.Class, Verdict: verdict, Err: fmt.Errorf("quality gate rejected stream: %s", verdict.Class), Buffered: buffer, Available: true}
+	return StreamAttempt{Class: verdict.Class, Verdict: verdict, Err: fmt.Errorf("quality gate rejected stream: %s", verdict.Class), Buffered: buffer, Available: true, Signals: sig}
 }
