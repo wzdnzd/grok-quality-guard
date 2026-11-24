@@ -52,6 +52,9 @@ type Result struct {
 	// PreResponse marks a transport failure before any upstream response was
 	// returned, which makes failover safe even for a non-replayable body.
 	PreResponse bool
+	// Signals carries the analysed counters of the attempt so the optional
+	// diagnostic event can explain why a verdict was chosen.
+	Signals QualitySignals
 }
 
 type StreamAttempt struct {
@@ -62,6 +65,7 @@ type StreamAttempt struct {
 	Emitted   bool
 	Available bool
 	Aborted   bool
+	Signals   QualitySignals
 	// PreResponse marks a transport failure before the model stream was opened.
 	// Read failures after this point require a replayable request to fail over.
 	PreResponse bool
