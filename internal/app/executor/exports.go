@@ -10,6 +10,10 @@ func ClassifyUpstreamStatus(status int, body []byte) (string, string) {
 }
 func ClassifyTransportError(err error) string { return classifyTransportError(err) }
 
+// RequestIDFromMetadata returns the host request lifecycle id stored in
+// execution or completion metadata.
+func RequestIDFromMetadata(metadata map[string]any) string { return requestIDFromMetadata(metadata) }
+
 func ExecutorRequestInput(req Request) ([]byte, string, error) { return executorRequestInput(req) }
 func ExecutionModel(req Request, body []byte) string           { return executionModel(req, body) }
 func EnsureTransparentReasoningEvidence(body []byte, sourceFormat string, required bool) []byte {

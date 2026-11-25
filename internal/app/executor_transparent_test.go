@@ -1642,11 +1642,15 @@ func TestTransparentStreamStopsFailoverWhenClientCancels(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait until the first account is serving, then report the disconnect the
-	// way the host does.
+	// Wait until the first account is serving, then report the disconnect with
+	// the exact payload the host's RPC client sends.
 	waitForModelCalls(t, host, 1)
 	time.Sleep(50 * time.Millisecond)
-	plugin.executorSvc.CancelRequest("req-cancel-e2e")
+	plugin.HandleRequestComplete(hostRequestCompletionPayload(t, pluginapi.RequestCompletion{
+		RequestID: "req-cancel-e2e",
+		Outcome:   pluginapi.RequestCompletionCanceled,
+		Stream:    true,
+	}))
 
 	select {
 	case <-done:
@@ -1660,6 +1664,46 @@ func TestTransparentStreamStopsFailoverWhenClientCancels(t *testing.T) {
 	account, ok := plugin.stateAccount("auth-1")
 	if ok && account.LastAttempt != nil && account.LastAttempt.Class != "" {
 		t.Fatalf("client cancellation was recorded as a failure: %#v", account.LastAttempt)
+	}
+}
+
+// hostRequestCompletionPayload encodes a completion the way the host's RPC
+// client does: the untagged SDK struct embedded next to the callback id, so
+// the wire keys are the Go field names.
+func hostRequestCompletionPayload(t *testing.T, completion pluginapi.RequestCompletion) []byte {
+	t.Helper()
+	raw, errMarshal := json.Marshal(struct {
+		pluginapi.RequestCompletion
+		HostCallbackID string `json:"host_callback_id,omitempty"`
+	}{RequestCompletion: completion, HostCallbackID: "callback-1"})
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	return raw
+}
+
+func TestHandleRequestCompleteReadsHostPayload(t *testing.T) {
+	cases := []struct {
+		name       string
+		completion pluginapi.RequestCompletion
+		wantCancel bool
+	}{
+		{name: "top-level id", completion: pluginapi.RequestCompletion{RequestID: "req-1", Outcome: pluginapi.RequestCompletionCanceled}, wantCancel: true},
+		{name: "metadata id", completion: pluginapi.RequestCompletion{Outcome: pluginapi.RequestCompletionCanceled, Metadata: map[string]any{"request_id": "req-1"}}, wantCancel: true},
+		{name: "succeeded", completion: pluginapi.RequestCompletion{RequestID: "req-1", Outcome: pluginapi.RequestCompletionSucceeded}},
+		{name: "failed", completion: pluginapi.RequestCompletion{RequestID: "req-1", Outcome: pluginapi.RequestCompletionFailed}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, auths := twoGrokAuths(t)
+			plugin := newTestPlugin(t, newMockHostCall(entries, auths), enableTransparentForTest)
+			canceled := false
+			plugin.executorSvc.RegisterRequestCancel("req-1", func() { canceled = true })
+			plugin.HandleRequestComplete(hostRequestCompletionPayload(t, tc.completion))
+			if canceled != tc.wantCancel {
+				t.Fatalf("canceled = %v, want %v", canceled, tc.wantCancel)
+			}
+		})
 	}
 }
 

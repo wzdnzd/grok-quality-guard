@@ -454,6 +454,8 @@ plugins:
 
 客户端断开连接时，宿主通过 `request.complete`（`outcome=canceled`）通知插件，插件立即取消该请求的尝试上下文并关闭上游流。取消不换号、不结算、不写账号状态，也不记失败事件。实现上注册 `request_lifecycle_plugin` 能力，用请求元数据里的 `request_id` 关联到对应的尝试
 
+宿主发送的是没有 JSON tag 的 `pluginapi.RequestCompletion`，线上字段名是 `RequestID`、`Outcome`，插件直接按 SDK 类型解码；顶层 `RequestID` 为空时回落到 `Metadata.request_id`。按 `request_id` 解码会永远拿不到 ID，取消信号被丢弃，被取消的请求会在后台继续换号直到预算耗尽
+
 ### 传输错误与无代理运行
 
 网络、代理和探测传输错误（`probe_error` / `proxy_error`）不是质量失败：不增加质量 strike，不进入质量冷却，也不写 `disabled=true`。账号转为 `unreachable`，退避从 `30s` 起翻倍、最长 `10m`，到期后重新探测，探测健康即恢复候选资格。
