@@ -15,6 +15,24 @@ var errTransparentStreamIncomplete = errors.New("upstream stream ended without a
 var errTransparentAttemptTimeout = errors.New("transparent attempt exceeded attempt_timeout")
 var errTransparentBudgetExhausted = errors.New("transparent verification budget exhausted")
 
+// errTransparentThinkingTimeout ends a request whose upstream had not sent its
+// first byte when attempt_timeout ran out. Grok sends nothing until hidden
+// reasoning ends, and that silence lasted 15 s to over 200 s for healthy xhigh
+// answers in the quality lab. Another account would think just as long, so
+// the request stops here instead of failing over, and the account is not
+// blamed. Silence after the first chunk is still a stall and keeps the idle
+// window.
+var errTransparentThinkingTimeout = errors.New("upstream was still thinking when attempt_timeout ran out")
+
+const transparentThinkingTimeoutReason = "reason.detail.upstream_thinking_timeout"
+
+// thinkingTimeoutVerdict marks an attempt cut off while the upstream was still
+// thinking. Inconclusive stops the run without failover and without settling
+// the account.
+func thinkingTimeoutVerdict() QualityVerdict {
+	return QualityVerdict{Class: ClassInconclusive, Reason: transparentThinkingTimeoutReason}
+}
+
 // startTransparentStreamBridge ties the request-lifetime goroutine to the
 // plugin lifecycle so Quiesce/Shutdown can cancel and wait for it. The request's
 // own context is cancelled by the host completion callback: the host detaches
@@ -104,6 +122,9 @@ func (s *Service) transparentExecuteBufferedStream(ctx context.Context, req Requ
 	case transparentRunAborted:
 		return Result{}, errTransparentAttemptAborted
 	default:
+		if errors.Is(run.Final.Err, errTransparentThinkingTimeout) {
+			return Result{}, errTransparentThinkingTimeout
+		}
 		return Result{}, fmt.Errorf("no healthy Grok account produced a valid response")
 	}
 }
@@ -146,8 +167,12 @@ func (s *Service) executeTransparentOnce(ctx context.Context, execution pluginap
 	return result, verdict, fmt.Errorf("quality gate rejected response: %s", verdict.Class)
 }
 
-func (s *Service) openTransparentModelStream(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, cfg QualityConfig) (pluginapi.HostModelStreamResponse, error) {
-	openCtx, cancel := context.WithTimeout(ctx, transparentStreamIdleTimeout(cfg))
+// openTransparentModelStream waits for the host to return the stream, which it
+// does only once the first upstream chunk is readable. For Grok that is after
+// hidden reasoning ends, so the wait is thinking time and is bounded by the
+// attempt deadline rather than the idle window.
+func (s *Service) openTransparentModelStream(ctx context.Context, execution pluginapi.HostModelExecutionRequest, callbackID string, deadline time.Time) (pluginapi.HostModelStreamResponse, error) {
+	openCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	stream, errExecute := s.env.ExecuteModelStream(openCtx, execution, callbackID)
 	if errExecute != nil {
@@ -158,7 +183,7 @@ func (s *Service) openTransparentModelStream(ctx context.Context, execution plug
 			return pluginapi.HostModelStreamResponse{}, errTransparentRequestCanceled
 		}
 		if errors.Is(openCtx.Err(), context.DeadlineExceeded) {
-			return pluginapi.HostModelStreamResponse{}, errTransparentStreamIdleTimeout
+			return pluginapi.HostModelStreamResponse{}, errTransparentThinkingTimeout
 		}
 		return pluginapi.HostModelStreamResponse{}, errExecute
 	}
@@ -169,7 +194,7 @@ func (s *Service) openTransparentModelStream(ctx context.Context, execution plug
 		if ctx != nil && ctx.Err() != nil {
 			return pluginapi.HostModelStreamResponse{}, ctx.Err()
 		}
-		return pluginapi.HostModelStreamResponse{}, errTransparentStreamIdleTimeout
+		return pluginapi.HostModelStreamResponse{}, errTransparentThinkingTimeout
 	}
 	return stream, nil
 }
@@ -182,14 +207,13 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 	// first token as well as the hold. The idle window bounds silence only, so
 	// the two are enforced separately.
 	attemptDeadline := attemptStartedAt.Add(transparentAttemptTimeout(cfg))
-	stream, errExecute := s.openTransparentModelStream(ctx, execution, callbackID, cfg)
+	stream, errExecute := s.openTransparentModelStream(ctx, execution, callbackID, attemptDeadline)
 	if errExecute != nil {
 		if isTransparentCancelError(ctx, errExecute) {
 			return Result{}, QualityVerdict{}, errTransparentAttemptAborted
 		}
-		if errors.Is(errExecute, errTransparentStreamIdleTimeout) {
-			verdict := QualityVerdict{Class: ClassProbeError, Reason: "reason.detail.upstream_stream_idle_timeout"}
-			return Result{PreResponse: true}, verdict, errExecute
+		if errors.Is(errExecute, errTransparentThinkingTimeout) {
+			return Result{PreResponse: true}, thinkingTimeoutVerdict(), errExecute
 		}
 		class, reason := classifyTransparentTransportFailure(errExecute)
 		return Result{PreResponse: true}, QualityVerdict{Class: class, Reason: reason}, errExecute
@@ -309,7 +333,7 @@ func (s *Service) executeTransparentBufferedAttempt(ctx context.Context, executi
 
 func (s *Service) runTransparentStreamBridge(ctx context.Context, req Request, streamID string) {
 	locale := executorRequestLocale(req.Headers)
-	runCtx, cancelRun := context.WithTimeout(ctx, 10*time.Minute)
+	runCtx, cancelRun := context.WithTimeout(ctx, transparentRunLimit(s.env.Policy().Quality))
 	defer cancelRun()
 	// The host detaches client cancellation from the model stream it owns, so
 	// the request-scoped context is only stopped by request.complete. Register
@@ -370,6 +394,10 @@ func (s *Service) runTransparentStreamBridge(ctx context.Context, req Request, s
 		s.closePluginStream(streamID, "", "", 0)
 		return
 	}
+	if errors.Is(run.Final.Err, errTransparentThinkingTimeout) {
+		s.closePluginErrorStream(streamID, locale, "upstream_thinking_timeout", http.StatusGatewayTimeout)
+		return
+	}
 	last := run.Last
 	if policy.Quality.ExhaustedDelivers() && last.Available {
 		for _, payload := range last.Buffered {
@@ -403,14 +431,16 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 		return StreamAttempt{Class: ClassInconclusive, Verdict: QualityVerdict{Class: ClassInconclusive, Reason: "reason.detail.budget_exhausted"}, Err: errTransparentBudgetExhausted, PreResponse: true}
 	}
 	budgetClipped := holdLimit < cfg.HoldTimeout.Duration
-	stream, errExecute := s.openTransparentModelStream(ctx, execution, callbackID, cfg)
+	// Thinking silence is bounded by the attempt deadline and the request
+	// budget, whichever ends first.
+	thinkingDeadline := earlierDeadline(attemptDeadline, holdDeadline)
+	stream, errExecute := s.openTransparentModelStream(ctx, execution, callbackID, thinkingDeadline)
 	if errExecute != nil {
 		if isTransparentCancelError(ctx, errExecute) {
 			return StreamAttempt{Err: errTransparentAttemptAborted, Aborted: true}
 		}
-		if errors.Is(errExecute, errTransparentStreamIdleTimeout) {
-			verdict := QualityVerdict{Class: ClassProbeError, Reason: "reason.detail.upstream_stream_idle_timeout"}
-			return StreamAttempt{Class: ClassProbeError, Verdict: verdict, Err: errExecute, PreResponse: true}
+		if errors.Is(errExecute, errTransparentThinkingTimeout) {
+			return StreamAttempt{Class: ClassInconclusive, Verdict: thinkingTimeoutVerdict(), Err: errExecute, PreResponse: true}
 		}
 		class, reason := classifyTransparentTransportFailure(errExecute)
 		return StreamAttempt{Class: class, Verdict: QualityVerdict{Class: class, Reason: reason}, Err: errExecute, PreResponse: true}
@@ -562,7 +592,7 @@ func (s *Service) executeTransparentStreamAttempt(ctx context.Context, execution
 	classifyHold := func(preview QualitySignals) QualityVerdict {
 		preview = info.decorate(preview)
 		preview.HoldExpired = holdExpired
-		return ClassifyQualityHold(preview, cfg.MinHoldOutputTokens)
+		return ClassifyQualityHold(preview, cfg.MinHoldOutputTokens, cfg.BurstGuard)
 	}
 	// applyHold acts on a hold verdict and reports whether the attempt ends.
 	applyHold := func(verdict QualityVerdict) (StreamAttempt, bool) {

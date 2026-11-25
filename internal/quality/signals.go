@@ -37,13 +37,17 @@ const (
 	defaultQualityCipherVisible    = int64(1024)
 	defaultQualityMaxVisibleTPS    = int64(1000)
 	defaultEncryptedBytes          = int64(256)
-	defaultEncryptedBytesPerToken  = int64(2)
+	defaultEncryptedBytesPerToken  = int64(1)
 	thinkingGuardMinOutputTokens   = int64(64)
 	// A reasoning stream that already delivered at least two visible chunks or
 	// a short visible window has settled: evidence is emitted before the
 	// answer, so waiting longer cannot change a missing-thinking verdict.
 	defaultQualitySettleSpanMS = int64(40)
 	defaultQualitySettleChunks = 2
+	// Visible text below this size next to a client tool call is the call's
+	// preamble, not an answer. Until the stream ends, such short text may still
+	// be followed by its tool call, so a missing-thinking verdict waits.
+	defaultQualityPreambleTokens = int64(64)
 	// Silence followed by one short burst is the signature of a buffered dump.
 	defaultQualityBurstGapMS = int64(1500)
 	// Evidence this far ahead of the first visible chunk is ordered thinking.
@@ -82,7 +86,14 @@ type Signals struct {
 	// HasToolCall marks a turn that emits a tool call. Its visible text is a
 	// preamble rather than the answer, and healthy accounts deliver tool
 	// arguments in one burst, so visible-window dump timing does not apply.
-	HasToolCall       bool
+	HasToolCall bool
+	// ToolCallValid marks a turn with at least one complete client tool call
+	// whose arguments are well formed (a JSON object for function calls).
+	ToolCallValid bool
+	// ReasoningSkipped marks a valid client tool call the model made without
+	// billing any reasoning. The turn is delivered but says nothing either way
+	// about the account's thinking, so it neither strikes nor clears it.
+	ReasoningSkipped  bool
 	Streaming         bool
 	ReasoningRequired bool
 	// ReasoningExplicit is true when the client itself asked for reasoning

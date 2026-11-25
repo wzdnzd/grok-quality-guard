@@ -1752,150 +1752,149 @@ func waitForModelCalls(t *testing.T, host *mockHostCall, count int) {
 	t.Fatalf("timed out waiting for %d model calls: %#v", count, modelCallAuthIDs(host))
 }
 
-func TestTransparentStreamOpenIdleTimeoutFailsOverBeforeFirstChunk(t *testing.T) {
-	entries, auths := twoGrokAuths(t)
-	host := newMockHostCall(entries, auths)
-	host.scriptStream("auth-2", goodResponsesStreamScript()...)
-	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		enableTransparentForTest(cfg)
-	})
-	setTransparentTimingForTest(plugin, 0, 60*time.Millisecond)
+// setThinkingTimingForTest installs a short idle window and a longer attempt
+// budget, so a test can tell which of the two bounded the wait.
+func setThinkingTimingForTest(plugin *Plugin, idle, attempt time.Duration) {
+	policy := plugin.Policy()
+	policy.Quality.StreamIdleTimeout = appconfig.NewDuration(idle)
+	policy.Quality.AttemptTimeout = appconfig.NewDuration(attempt)
+	policy.Quality.RequestTimeout = appconfig.NewDuration(time.Minute)
+	plugin.SetPolicy(policy)
+}
 
-	innerHostCall := hostCall
-	releaseOpen := make(chan struct{})
+// blockStreamOpen holds ExecuteStream for the given auth (every auth when
+// empty) until the returned release runs, like Grok thinking before it sends
+// its first byte.
+func blockStreamOpen(authID string) (release func()) {
+	inner := hostCall
+	gate := make(chan struct{})
 	hostCall = func(method string, payload any) (json.RawMessage, error) {
 		if method == pluginabi.MethodHostModelExecuteStream {
-			if req, ok := payload.(hostModelExecutionRequest); ok && req.AuthID == "auth-1" {
-				<-releaseOpen
+			if req, ok := payload.(hostModelExecutionRequest); ok && (authID == "" || req.AuthID == authID) {
+				<-gate
 			}
 		}
-		return innerHostCall(method, payload)
+		return inner(method, payload)
 	}
-	defer func() {
-		close(releaseOpen)
-		waitForModelCalls(t, host, 2)
-		hostCall = innerHostCall
-	}()
-
-	streamID := "plugin-stream-open-idle-failover"
-	done := make(chan struct{})
-	go func() {
-		plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.6", true), streamID)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("stream open silence was not bounded by stream_idle_timeout")
-	}
-
-	host.mu.Lock()
-	emitted := append([][]byte(nil), host.emitted[streamID]...)
-	closeDetail := host.closes[streamID]
-	host.mu.Unlock()
-	var joined strings.Builder
-	for _, payload := range emitted {
-		joined.Write(payload)
-	}
-	if !strings.Contains(joined.String(), "good answer") {
-		t.Fatalf("healthy account was not delivered after stream-open timeout: %s", joined.String())
-	}
-	if closeDetail != nil {
-		t.Fatalf("stream-open timeout closed the client stream: %#v", closeDetail)
-	}
-
-	account, ok := plugin.stateAccount("auth-1")
-	if !ok || account.LastAttempt == nil || account.LastAttempt.Class != "probe_error" || account.LastAttempt.Reason != "reason.detail.upstream_stream_idle_timeout" {
-		t.Fatalf("stream-open timeout was not recorded as a provider transport failure: %#v", account.LastAttempt)
+	return func() {
+		close(gate)
+		hostCall = inner
 	}
 }
 
-func TestTransparentStreamOpenIdleTimeoutDoesNotFailOpen(t *testing.T) {
-	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+// Grok sends nothing until hidden reasoning ends, so the wait for the first
+// byte is thinking time. It outlasts the idle window, is bounded by
+// attempt_timeout, and ends the request without failing over to an account
+// that would think just as long or blaming the one that was thinking.
+func TestTransparentStreamOpenWaitsForThinkingWithoutFailover(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
 	host := newMockHostCall(entries, auths)
-	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		enableTransparentForTest(cfg)
-		cfg.Quality.OnExhausted = "fail_unverified"
-	})
-	setTransparentTimingForTest(plugin, 0, 60*time.Millisecond)
-
-	innerHostCall := hostCall
-	releaseOpen := make(chan struct{})
-	hostCall = func(method string, payload any) (json.RawMessage, error) {
-		if method == pluginabi.MethodHostModelExecuteStream {
-			<-releaseOpen
-		}
-		return innerHostCall(method, payload)
-	}
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+	setThinkingTimingForTest(plugin, 40*time.Millisecond, 300*time.Millisecond)
+	release := blockStreamOpen("auth-1")
 	defer func() {
-		close(releaseOpen)
+		release()
 		waitForModelCalls(t, host, 1)
-		hostCall = innerHostCall
 	}()
 
-	streamID := "plugin-stream-open-idle-fail-closed"
+	streamID := "plugin-stream-open-thinking"
+	started := time.Now()
 	done := make(chan struct{})
 	go func() {
 		plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.6", true), streamID)
 		close(done)
 	}()
-
 	select {
 	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("single silent stream did not end within stream_idle_timeout")
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream open wait was not bounded by attempt_timeout")
+	}
+	if elapsed := time.Since(started); elapsed < 250*time.Millisecond {
+		t.Fatalf("stream open wait ended after %s, inside the idle window instead of attempt_timeout", elapsed)
 	}
 
 	host.mu.Lock()
 	emitted := len(host.emitted[streamID])
 	closeDetail := host.closes[streamID]
 	host.mu.Unlock()
-	if emitted != 0 {
-		t.Fatalf("fail_open emitted empty content after stream-open timeout: %d chunks", emitted)
+	if closeDetail == nil || closeDetail.Code != "upstream_thinking_timeout" || closeDetail.HTTPStatus != http.StatusGatewayTimeout {
+		t.Fatalf("thinking timeout close = %#v, want upstream_thinking_timeout 504", closeDetail)
 	}
-	if closeDetail == nil || closeDetail.Code != "quality_degraded" || closeDetail.HTTPStatus != http.StatusServiceUnavailable {
-		t.Fatalf("stream-open timeout did not fail closed: %#v", closeDetail)
+	if emitted != 0 {
+		t.Fatalf("thinking timeout emitted %d chunks", emitted)
+	}
+	// The blocked open is only recorded once released; no other account may
+	// have been tried meanwhile.
+	for _, id := range modelCallAuthIDs(host) {
+		if id != "auth-1" {
+			t.Fatalf("thinking timeout failed over to %s", id)
+		}
+	}
+	if account, ok := plugin.stateAccount("auth-1"); ok && account.LastAttempt != nil && account.LastAttempt.Class == "probe_error" {
+		t.Fatalf("thinking timeout counted against the account: %#v", account.LastAttempt)
 	}
 }
 
-func TestTransparentBufferedStreamOpenIdleTimeoutFailsOver(t *testing.T) {
+func TestTransparentStreamOpenThinkingTimeoutDoesNotFailOpen(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
+	host := newMockHostCall(entries, auths)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		enableTransparentForTest(cfg)
+		cfg.Quality.OnExhausted = "fail_unverified"
+	})
+	setThinkingTimingForTest(plugin, 40*time.Millisecond, 150*time.Millisecond)
+	release := blockStreamOpen("")
+	defer func() {
+		release()
+		waitForModelCalls(t, host, 1)
+	}()
+
+	streamID := "plugin-stream-open-thinking-fail-closed"
+	done := make(chan struct{})
+	go func() {
+		plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.6", true), streamID)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("single thinking stream did not end at attempt_timeout")
+	}
+	host.mu.Lock()
+	emitted := len(host.emitted[streamID])
+	closeDetail := host.closes[streamID]
+	host.mu.Unlock()
+	if emitted != 0 {
+		t.Fatalf("thinking timeout emitted empty content: %d chunks", emitted)
+	}
+	if closeDetail == nil || closeDetail.Code != "upstream_thinking_timeout" || closeDetail.HTTPStatus != http.StatusGatewayTimeout {
+		t.Fatalf("thinking timeout did not fail closed with 504: %#v", closeDetail)
+	}
+}
+
+func TestTransparentBufferedStreamOpenThinkingTimeoutStops(t *testing.T) {
 	entries, auths := twoGrokAuths(t)
 	host := newMockHostCall(entries, auths)
 	host.scriptStream("auth-2", goodResponsesStreamScript()...)
-	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
-		enableTransparentForTest(cfg)
-	})
-	setTransparentTimingForTest(plugin, 0, 60*time.Millisecond)
-
-	innerHostCall := hostCall
-	releaseOpen := make(chan struct{})
-	hostCall = func(method string, payload any) (json.RawMessage, error) {
-		if method == pluginabi.MethodHostModelExecuteStream {
-			if req, ok := payload.(hostModelExecutionRequest); ok && req.AuthID == "auth-1" {
-				<-releaseOpen
-			}
-		}
-		return innerHostCall(method, payload)
-	}
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+	setThinkingTimingForTest(plugin, 40*time.Millisecond, 200*time.Millisecond)
+	release := blockStreamOpen("auth-1")
 	defer func() {
-		close(releaseOpen)
-		waitForModelCalls(t, host, 2)
-		hostCall = innerHostCall
+		release()
+		waitForModelCalls(t, host, 1)
 	}()
 
 	req := responsesRequestForTest("grok-4.6", true)
 	req.StreamID = ""
-	ok, result, raw := executeBufferedStreamForTest(t, plugin, req)
-	if !ok {
-		t.Fatalf("buffered stream-open timeout did not fail over: %s", raw)
+	ok, _, raw := executeBufferedStreamForTest(t, plugin, req)
+	if ok || !strings.Contains(string(raw), "upstream_thinking_timeout") || !strings.Contains(string(raw), "504") {
+		t.Fatalf("buffered thinking timeout = %s, want upstream_thinking_timeout 504", raw)
 	}
-	var joined strings.Builder
-	for _, chunk := range result.Chunks {
-		joined.Write(chunk.Payload)
-	}
-	if !strings.Contains(joined.String(), "good answer") {
-		t.Fatalf("buffered stream-open timeout did not deliver the healthy account response: %s", joined.String())
+	for _, id := range modelCallAuthIDs(host) {
+		if id != "auth-1" {
+			t.Fatalf("buffered thinking timeout failed over to %s", id)
+		}
 	}
 }
 
@@ -2202,60 +2201,88 @@ func TestTransparentToolCallPreambleWithEncryptedReasoningIsDelivered(t *testing
 // 245-294 reasoning tokens. Delivering them let an agent run for nine minutes
 // without reasoning until the quota ran out. grok2api keeps such 0-thinking
 // tool turns behind the gate, and so does the plugin.
-func TestTransparentToolCallWithoutReasoningFailsOver(t *testing.T) {
-	scripts := map[string][]pluginapi.HostModelStreamReadResponse{
-		"bare call": {
-			streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_call\",\"model\":\"grok-4.7\"}}\n\n"),
-			streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"exec_command\",\"arguments\":\"\"}}\n\n"),
-			streamData("data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{\\\"cmd\\\":\\\"sed -n 1,200p internal/quality/verdict.go\\\"}\"}\n\n"),
-			streamData("data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"sed -n 1,200p internal/quality/verdict.go\\\"}\"}}\n\n"),
-			streamData("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_call\",\"usage\":{\"output_tokens\":75,\"output_tokens_details\":{\"reasoning_tokens\":0}}}}\n\n"),
-			{Done: true},
-		},
-		"preamble after empty reasoning item": {
-			streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_call\",\"model\":\"grok-4.7\"}}\n\n"),
-			streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[]}}\n\n"),
-			streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n"),
-			streamData("data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"delta\":\"Let me read the verdict \"}\n\n"),
-			streamData("data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"delta\":\"code before changing it.\"}\n\n"),
-			streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":2,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"exec_command\",\"arguments\":\"\"}}\n\n"),
-			streamData("data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":2,\"delta\":\"{\\\"cmd\\\":\\\"ls\\\"}\"}\n\n"),
-			streamData("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_call\",\"usage\":{\"output_tokens\":61,\"output_tokens_details\":{\"reasoning_tokens\":0}}}}\n\n"),
-			{Done: true},
-		},
-	}
-	for name, script := range scripts {
-		t.Run(name, func(t *testing.T) {
-			entries, auths := twoGrokAuths(t)
-			host := newMockHostCall(entries, auths)
-			host.scriptStream("auth-1", script...)
-			host.scriptStream("auth-2", goodResponsesStreamScript()...)
-			plugin := newTestPlugin(t, host, enableTransparentForTest)
-			streamID := "plugin-stream-no-reasoning-call"
-			plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.7", true), streamID)
-			plugin.waitSettled()
+// A well-formed tool call without a reasoning bill depends on the request,
+// not the account: the quality lab sent a real Codex continuation to three
+// accounts and every one answered this way. Failing over only repeated the
+// same turn on the next account until the pool ran out.
+func TestTransparentValidToolCallWithoutReasoningIsDelivered(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1",
+		streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_call\",\"model\":\"grok-4.7\"}}\n\n"),
+		streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"exec_command\",\"arguments\":\"\"}}\n\n"),
+		streamData("data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{\\\"cmd\\\":\\\"sed -n 1,200p internal/quality/verdict.go\\\"}\"}\n\n"),
+		streamData("data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"sed -n 1,200p internal/quality/verdict.go\\\"}\"}}\n\n"),
+		streamData("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_call\",\"usage\":{\"output_tokens\":75,\"output_tokens_details\":{\"reasoning_tokens\":0}}}}\n\n"),
+		pluginapi.HostModelStreamReadResponse{Done: true},
+	)
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+	streamID := "plugin-stream-no-reasoning-call"
+	plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.7", true), streamID)
+	plugin.waitSettled()
 
-			host.mu.Lock()
-			emitted := append([][]byte(nil), host.emitted[streamID]...)
-			closeDetail := host.closes[streamID]
-			host.mu.Unlock()
-			var joined strings.Builder
-			for _, payload := range emitted {
-				joined.Write(payload)
-			}
-			if strings.Contains(joined.String(), "exec_command") || strings.Contains(joined.String(), "resp_call") {
-				t.Fatalf("no-reasoning tool call leaked to the client: %s", joined.String())
-			}
-			if !strings.Contains(joined.String(), "good answer") || closeDetail != nil {
-				t.Fatalf("reasoning account was not delivered: close=%#v output=%s", closeDetail, joined.String())
-			}
-			if calls := modelCallAuthIDs(host); len(calls) != 2 || calls[0] != "auth-1" || calls[1] != "auth-2" {
-				t.Fatalf("no-reasoning tool call attempts = %v, want auth-1 then auth-2", calls)
-			}
-			account, ok := plugin.stateAccount("auth-1")
-			if !ok || account.LastAttempt == nil || account.LastAttempt.Class != "missing_thinking" {
-				t.Fatalf("no-reasoning tool call was not judged missing_thinking: %#v", account.LastAttempt)
-			}
-		})
+	host.mu.Lock()
+	emitted := append([][]byte(nil), host.emitted[streamID]...)
+	closeDetail := host.closes[streamID]
+	host.mu.Unlock()
+	var joined strings.Builder
+	for _, payload := range emitted {
+		joined.Write(payload)
+	}
+	if !strings.Contains(joined.String(), "exec_command") || closeDetail != nil {
+		t.Fatalf("valid tool call was not delivered: close=%#v output=%s", closeDetail, joined.String())
+	}
+	if calls := modelCallAuthIDs(host); len(calls) != 1 || calls[0] != "auth-1" {
+		t.Fatalf("tool call attempts = %v, want auth-1 only", calls)
+	}
+	account, ok := plugin.stateAccount("auth-1")
+	if !ok || account.ThinkingStrikes != 0 || (account.LastAttempt != nil && account.LastAttempt.Class == "missing_thinking") {
+		t.Fatalf("valid tool call counted against the account: %#v", account)
+	}
+}
+
+// An announced reasoning item that never carries evidence, followed by
+// visible text, is still the degraded signature even when a call follows.
+func TestTransparentEmptyReasoningBeforeToolCallFailsOver(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	host.scriptStream("auth-1",
+		streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_call\",\"model\":\"grok-4.7\"}}\n\n"),
+		streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[]}}\n\n"),
+		streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n"),
+		streamData("data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"delta\":\"Let me read the verdict \"}\n\n"),
+		streamData("data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"delta\":\"code before changing it.\"}\n\n"),
+		streamData("data: {\"type\":\"response.output_item.added\",\"output_index\":2,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"exec_command\",\"arguments\":\"\"}}\n\n"),
+		streamData("data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":2,\"delta\":\"{\\\"cmd\\\":\\\"ls\\\"}\"}\n\n"),
+		streamData("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_call\",\"usage\":{\"output_tokens\":61,\"output_tokens_details\":{\"reasoning_tokens\":0}}}}\n\n"),
+		pluginapi.HostModelStreamReadResponse{Done: true},
+	)
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+	streamID := "plugin-stream-empty-reasoning-call"
+	plugin.runTransparentStreamBridge(context.Background(), responsesRequestForTest("grok-4.7", true), streamID)
+	plugin.waitSettled()
+
+	host.mu.Lock()
+	emitted := append([][]byte(nil), host.emitted[streamID]...)
+	closeDetail := host.closes[streamID]
+	host.mu.Unlock()
+	var joined strings.Builder
+	for _, payload := range emitted {
+		joined.Write(payload)
+	}
+	if strings.Contains(joined.String(), "exec_command") || strings.Contains(joined.String(), "resp_call") {
+		t.Fatalf("empty-reasoning tool turn leaked to the client: %s", joined.String())
+	}
+	if !strings.Contains(joined.String(), "good answer") || closeDetail != nil {
+		t.Fatalf("reasoning account was not delivered: close=%#v output=%s", closeDetail, joined.String())
+	}
+	if calls := modelCallAuthIDs(host); len(calls) != 2 || calls[0] != "auth-1" || calls[1] != "auth-2" {
+		t.Fatalf("attempts = %v, want auth-1 then auth-2", calls)
+	}
+	account, ok := plugin.stateAccount("auth-1")
+	if !ok || account.LastAttempt == nil || account.LastAttempt.Class != "missing_thinking" {
+		t.Fatalf("empty-reasoning tool turn was not judged missing_thinking: %#v", account.LastAttempt)
 	}
 }

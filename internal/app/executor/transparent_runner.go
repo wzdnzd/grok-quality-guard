@@ -113,6 +113,9 @@ candidateLoop:
 				if outcome.Available {
 					run.Last = outcome
 				}
+				// Keep the reason so the caller can tell a thinking timeout from
+				// an exhausted verification budget.
+				run.Final = outcome
 				attempt.Release()
 				break candidateLoop
 			case outcome.Delivered:

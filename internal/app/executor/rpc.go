@@ -3,10 +3,10 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
@@ -87,6 +87,9 @@ func (s *Service) ExecuteStream(request []byte) ([]byte, error) {
 			if ctx.Err() != nil {
 				return localizedErrorEnvelope(executorRequestLocale(req.Headers), "client_canceled", "api.error.client_canceled", 499), nil
 			}
+			if errors.Is(errExecute, errTransparentThinkingTimeout) {
+				return localizedErrorEnvelope(executorRequestLocale(req.Headers), "upstream_thinking_timeout", "api.error.upstream_thinking_timeout", http.StatusGatewayTimeout), nil
+			}
 			return localizedErrorEnvelope(executorRequestLocale(req.Headers), "quality_degraded", "api.error.quality_degraded", http.StatusServiceUnavailable), nil
 		}
 		return okEnvelope(StreamResponse{Headers: result.Headers, Chunks: result.Chunks})
@@ -99,7 +102,7 @@ func (s *Service) ExecuteStream(request []byte) ([]byte, error) {
 // lifecycle id, registers it so a client disconnect can stop the attempt
 // instead of failing over to another account.
 func (s *Service) trackedRequestContext(req Request) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), transparentRunLimit(s.env.Policy().Quality))
 	requestID := requestIDFromMetadata(req.Metadata)
 	if s.RegisterRequestCancel(requestID, cancel) {
 		return ctx, func() {

@@ -296,8 +296,8 @@ func NewStreamAnalyzerWithProtocolAt(protocol string, startedAt time.Time) *qual
 	return quality.NewStreamAnalyzerWithProtocolAt(protocol, startedAt)
 }
 
-func ClassifyQualityHold(sig quality.Signals, minOutput int64) quality.QualityVerdict {
-	return quality.ClassifyQualityHold(sig, minOutput)
+func ClassifyQualityHold(sig quality.Signals, minOutput int64, burstGuard bool) quality.QualityVerdict {
+	return quality.ClassifyQualityHold(sig, minOutput, burstGuard)
 }
 
 func qualityIsBurstDump(sig quality.Signals, minOutput int64) bool {

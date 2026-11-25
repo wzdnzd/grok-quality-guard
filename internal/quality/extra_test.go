@@ -87,11 +87,73 @@ func TestHiddenReasoningIsTimedOverTheWholeStream(t *testing.T) {
 	}
 }
 
+// hiddenReasoningAnswerSignals is a healthy grok-4.7 xhigh answer captured by
+// the quality lab: 23 s of silent reasoning, then the reasoning item and a
+// five-token answer flushed together. Its 1.83 encrypted bytes per reasoning
+// token sit inside the 1.25 to 5.95 range measured over 194 healthy samples.
+func hiddenReasoningAnswerSignals() Signals {
+	return Signals{
+		Streaming:         true,
+		Terminal:          true,
+		UsageReported:     true,
+		ReasoningRequired: true,
+		ReasoningExplicit: true,
+		CapabilityKnown:   true,
+		EvidenceCapable:   true,
+		FirstTokenKnown:   true,
+		FirstTokenMS:      22918,
+		DurationMS:        26876,
+		OutputTokens:      1646,
+		ReasoningTokens:   1641,
+		VisibleTokens:     5,
+		EncryptedBytes:    2995,
+		FirstVisible:      true,
+		VisibleSpanMS:     40,
+		VisibleChunks:     4,
+	}
+}
+
+func TestHiddenReasoningAnswerIsDeliveredByDefault(t *testing.T) {
+	cfg := config.DefaultQualityConfig()
+	sig := hiddenReasoningAnswerSignals()
+	if verdict := classifyFinal(sig, cfg, true, cfg.MinHoldOutputTokens, true); verdict.Action != QualityActionDeliver || verdict.Class != ClassNone {
+		t.Fatalf("healthy hidden-reasoning answer = %#v, want delivered", verdict)
+	}
+	if verdict := ClassifyQualityHold(sig, cfg.MinHoldOutputTokens, cfg.BurstGuard); verdict.Action != QualityActionDeliver {
+		t.Fatalf("hold verdict = %#v, want delivered", verdict)
+	}
+
+	// The former settings rejected it twice over: the 2 bytes/token floor
+	// read the evidence as missing, and the timing dump check fired.
+	strict := cfg
+	strict.EncryptedBytesPerReasoningToken = 2
+	if verdict := classifyFinal(sig, strict, true, cfg.MinHoldOutputTokens, true); verdict.Class != ClassMissingThinking {
+		t.Fatalf("2 bytes/token floor = %#v, want missing_thinking", verdict)
+	}
+	burst := cfg
+	burst.BurstGuard = true
+	if verdict := classifyFinal(sig, burst, true, cfg.MinHoldOutputTokens, true); verdict.Class != ClassBufferedBurst {
+		t.Fatalf("burst_guard on = %#v, want buffered_burst", verdict)
+	}
+
+	// Evidence is still required: the same answer without its reasoning item
+	// remains missing thinking.
+	bare := sig
+	bare.EncryptedBytes = 0
+	bare.ReasoningTokens = 0
+	bare.OutputTokens = 12
+	bare.VisibleTokens = 12
+	if verdict := classifyFinal(bare, cfg, true, cfg.MinHoldOutputTokens, true); verdict.Class != ClassMissingThinking {
+		t.Fatalf("answer without reasoning = %#v, want missing_thinking", verdict)
+	}
+}
+
 func TestEncryptedContentDeduplication(t *testing.T) {
 	// One copy stays below the 3000-byte floor, while a double count would
 	// clear it, so the test fails if the repeated item is summed.
 	encrypted := strings.Repeat("A", 2500)
 	analyzer := NewStreamAnalyzer()
+	analyzer.SetEncryptedConfig(256, 2)
 	payload := `data: {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning","encrypted_content":"` + encrypted + `"}}` + "\n\n" +
 		`data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","encrypted_content":"` + encrypted + `"}}` + "\n\n" +
 		`data: {"type":"response.completed","response":{"usage":{"output_tokens":1600,"output_tokens_details":{"reasoning_tokens":1500}}}}` + "\n\n"
@@ -210,45 +272,45 @@ func TestReasoningStubSettlesMissingThinkingOnceVisibleOutputStreams(t *testing.
 		VisibleSpanMS:    600,
 		VisibleChunks:    8,
 	}
-	if verdict := ClassifyQualityHold(streaming, 8); verdict.Action != QualityActionWithhold || verdict.Class != ClassMissingThinking {
+	if verdict := ClassifyQualityHold(streaming, 8, true); verdict.Action != QualityActionWithhold || verdict.Class != ClassMissingThinking {
 		t.Fatalf("stub stream with settled visible output = %#v, want missing_thinking withhold", verdict)
 	}
 	stubOnly := streaming
 	stubOnly.VisibleTokens = 0
 	stubOnly.VisibleSpanMS = 0
 	stubOnly.VisibleChunks = 0
-	if verdict := ClassifyQualityHold(stubOnly, 8); verdict.Action != QualityActionWait {
+	if verdict := ClassifyQualityHold(stubOnly, 8, true); verdict.Action != QualityActionWait {
 		t.Fatalf("stub-only stream = %#v, want wait", verdict)
 	}
 	pending := streaming
 	pending.VisibleTokens = 3
 	pending.VisibleSpanMS = 40
 	pending.VisibleChunks = 1
-	if verdict := ClassifyQualityHold(pending, 8); verdict.Action != QualityActionWait {
+	if verdict := ClassifyQualityHold(pending, 8, true); verdict.Action != QualityActionWait {
 		t.Fatalf("visible output below the hold floor = %#v, want wait", verdict)
 	}
 	starting := streaming
 	starting.VisibleSpanMS = 20
 	starting.VisibleChunks = 1
-	if verdict := ClassifyQualityHold(starting, 8); verdict.Action != QualityActionWait {
+	if verdict := ClassifyQualityHold(starting, 8, true); verdict.Action != QualityActionWait {
 		t.Fatalf("first visible burst without a settled window = %#v, want wait", verdict)
 	}
 	twoChunks := streaming
 	twoChunks.VisibleSpanMS = 20
 	twoChunks.VisibleChunks = 2
-	if verdict := ClassifyQualityHold(twoChunks, 8); verdict.Class != ClassMissingThinking {
+	if verdict := ClassifyQualityHold(twoChunks, 8, true); verdict.Class != ClassMissingThinking {
 		t.Fatalf("two visible chunks did not settle = %#v, want missing_thinking", verdict)
 	}
 	spanOnly := streaming
 	spanOnly.VisibleSpanMS = 40
 	spanOnly.VisibleChunks = 1
-	if verdict := ClassifyQualityHold(spanOnly, 8); verdict.Class != ClassMissingThinking {
+	if verdict := ClassifyQualityHold(spanOnly, 8, true); verdict.Class != ClassMissingThinking {
 		t.Fatalf("visible span did not settle = %#v, want missing_thinking", verdict)
 	}
 	withThinking := streaming
 	withThinking.HasThinking = true
 	withThinking.HasReasoningDelta = true
-	if verdict := ClassifyQualityHold(withThinking, 8); verdict.Action != QualityActionDeliver {
+	if verdict := ClassifyQualityHold(withThinking, 8, true); verdict.Action != QualityActionDeliver {
 		t.Fatalf("reasoning delta stream = %#v, want deliver", verdict)
 	}
 }
@@ -282,42 +344,42 @@ func TestMissingThinkingRespectsExplicitCapabilityAndAccountPrior(t *testing.T) 
 	explicit.ReasoningExplicit = true
 	explicit.CapabilityKnown = true
 	explicit.EvidenceCapable = true
-	if verdict := ClassifyQualityHold(explicit, 8); verdict.Action != QualityActionWithhold || verdict.Class != ClassMissingThinking {
+	if verdict := ClassifyQualityHold(explicit, 8, true); verdict.Action != QualityActionWithhold || verdict.Class != ClassMissingThinking {
 		t.Fatalf("explicit reasoning without evidence = %#v, want missing_thinking", verdict)
 	}
 
 	inferred := base
 	inferred.CapabilityKnown = true
 	inferred.EvidenceCapable = true
-	if verdict := ClassifyQualityHold(inferred, 8); verdict.Action != QualityActionWithhold {
+	if verdict := ClassifyQualityHold(inferred, 8, true); verdict.Action != QualityActionWithhold {
 		t.Fatalf("inferred reasoning without history = %#v, want missing_thinking", verdict)
 	}
 	history := inferred
 	history.AccountEvidenceSamples = 5
 	history.AccountEvidenceRate = 1
-	if verdict := ClassifyQualityHold(history, 8); verdict.Action != QualityActionDeliver || verdict.Class != ClassNone {
+	if verdict := ClassifyQualityHold(history, 8, true); verdict.Action != QualityActionDeliver || verdict.Class != ClassNone {
 		t.Fatalf("first inferred miss on an evidence account = %#v, want deliver", verdict)
 	}
-	if verdict := ClassifyQualityHold(history, 8); verdict.Reason != "reason.detail.inferred_reasoning_unconfirmed_by_account_history" {
+	if verdict := ClassifyQualityHold(history, 8, true); verdict.Reason != "reason.detail.inferred_reasoning_unconfirmed_by_account_history" {
 		t.Fatalf("inferred release reason = %q", verdict.Reason)
 	}
 	weak := history
 	weak.AccountEvidenceRate = 0.2
-	if verdict := ClassifyQualityHold(weak, 8); verdict.Action != QualityActionWithhold {
+	if verdict := ClassifyQualityHold(weak, 8, true); verdict.Action != QualityActionWithhold {
 		t.Fatalf("inferred miss on a weak account = %#v, want missing_thinking", verdict)
 	}
 	struck := history
 	struck.AccountThinkingStrikes = 1
-	if verdict := ClassifyQualityHold(struck, 8); verdict.Action != QualityActionWithhold {
+	if verdict := ClassifyQualityHold(struck, 8, true); verdict.Action != QualityActionWithhold {
 		t.Fatalf("inferred miss on a struck account = %#v, want missing_thinking", verdict)
 	}
 
 	captiveChat := inferred
 	captiveChat.EvidenceCapable = false
-	if verdict := ClassifyQualityHold(captiveChat, 8); verdict.Action != QualityActionDeliver {
+	if verdict := ClassifyQualityHold(captiveChat, 8, true); verdict.Action != QualityActionDeliver {
 		t.Fatalf("chat path without evidence support = %#v, want deliver", verdict)
 	}
-	if verdict := ClassifyQualityHold(captiveChat, 8); verdict.Reason != "reason.detail.reasoning_evidence_not_exposed_by_protocol" {
+	if verdict := ClassifyQualityHold(captiveChat, 8, true); verdict.Reason != "reason.detail.reasoning_evidence_not_exposed_by_protocol" {
 		t.Fatalf("capability release reason = %q", verdict.Reason)
 	}
 }
@@ -362,12 +424,12 @@ func TestEvidenceOrderedStreamIsNotCipherDrool(t *testing.T) {
 		FirstVisibleMS:   900,
 		ReasoningStartMS: 100,
 	}
-	if verdict := ClassifyQualityHold(sig, 8); verdict.Class == ClassCipherDrool {
+	if verdict := ClassifyQualityHold(sig, 8, true); verdict.Class == ClassCipherDrool {
 		t.Fatalf("ordered evidence was judged cipher drool: %#v", verdict)
 	}
 	late := sig
 	late.EvidenceAtMS = 0
-	if verdict := ClassifyQualityHold(late, 8); verdict.Class != ClassCipherDrool {
+	if verdict := ClassifyQualityHold(late, 8, true); verdict.Class != ClassCipherDrool {
 		t.Fatalf("evidence-free cipher stream class = %q, want cipher_drool", verdict.Class)
 	}
 }
@@ -384,19 +446,19 @@ func TestSilenceThenBurstIsBufferedBurst(t *testing.T) {
 		EncryptedBytes:  2048,
 		EncryptedFloor:  256,
 	}
-	if verdict := ClassifyQualityHold(sig, 8); verdict.Class != ClassBufferedBurst {
+	if verdict := ClassifyQualityHold(sig, 8, true); verdict.Class != ClassBufferedBurst {
 		t.Fatalf("silence-then-burst class = %q, want buffered_burst", verdict.Class)
 	}
 	steady := sig
 	steady.VisibleGapMaxMS = 40
-	if verdict := ClassifyQualityHold(steady, 8); verdict.Class == ClassBufferedBurst {
+	if verdict := ClassifyQualityHold(steady, 8, true); verdict.Class == ClassBufferedBurst {
 		t.Fatalf("steady stream was judged a burst: %#v", verdict)
 	}
 	cheap := sig
 	cheap.ReasoningTokens = 0
 	cheap.EncryptedBytes = 0
 	cheap.EncryptedFloor = 0
-	if verdict := ClassifyQualityHold(cheap, 8); verdict.Class == ClassBufferedBurst {
+	if verdict := ClassifyQualityHold(cheap, 8, true); verdict.Class == ClassBufferedBurst {
 		t.Fatalf("bill-free burst was judged a burst: %#v", verdict)
 	}
 }
@@ -545,12 +607,12 @@ func toolCallTurnSignals() Signals {
 
 func TestToolCallTurnSkipsVisibleWindowDumpChecks(t *testing.T) {
 	burst := toolCallTurnSignals()
-	if verdict := ClassifyQualityHold(burst, 8); verdict.Action != QualityActionDeliver || verdict.Class != ClassNone {
+	if verdict := ClassifyQualityHold(burst, 8, true); verdict.Action != QualityActionDeliver || verdict.Class != ClassNone {
 		t.Fatalf("tool call with a short preamble = %#v, want deliver", verdict)
 	}
 	textOnly := burst
 	textOnly.HasToolCall = false
-	if verdict := ClassifyQualityHold(textOnly, 8); verdict.Class != ClassBufferedBurst {
+	if verdict := ClassifyQualityHold(textOnly, 8, true); verdict.Class != ClassBufferedBurst {
 		t.Fatalf("text-only short dump class = %q, want buffered_burst", verdict.Class)
 	}
 
@@ -558,22 +620,22 @@ func TestToolCallTurnSkipsVisibleWindowDumpChecks(t *testing.T) {
 	longPreamble.VisibleTokens = 40
 	longPreamble.VisibleSpanMS = 150
 	longPreamble.VisibleChunks = 3
-	if verdict := ClassifyQualityHold(longPreamble, 8); verdict.Action != QualityActionDeliver {
+	if verdict := ClassifyQualityHold(longPreamble, 8, true); verdict.Action != QualityActionDeliver {
 		t.Fatalf("tool call with a fast preamble = %#v, want deliver", verdict)
 	}
 	longPreamble.HasToolCall = false
-	if verdict := ClassifyQualityHold(longPreamble, 8); verdict.Class != ClassFakeEncryptedDump {
+	if verdict := ClassifyQualityHold(longPreamble, 8, true); verdict.Class != ClassFakeEncryptedDump {
 		t.Fatalf("text-only fast dump class = %q, want fake_encrypted_dump", verdict.Class)
 	}
 
 	summarized := burst
 	summarized.HasReasoningDelta = true
 	summarized.HasThinking = true
-	if verdict := ClassifyQualityHold(summarized, 8); verdict.Action != QualityActionDeliver {
+	if verdict := ClassifyQualityHold(summarized, 8, true); verdict.Action != QualityActionDeliver {
 		t.Fatalf("summarized tool call = %#v, want deliver", verdict)
 	}
 	summarized.HasToolCall = false
-	if verdict := ClassifyQualityHold(summarized, 8); verdict.Class != ClassFastReasoningRatio {
+	if verdict := ClassifyQualityHold(summarized, 8, true); verdict.Class != ClassFastReasoningRatio {
 		t.Fatalf("summarized text dump class = %q, want fast_reasoning_ratio_dump", verdict.Class)
 	}
 
@@ -595,7 +657,7 @@ func TestToolCallWithoutEvidenceIsStillMissingThinking(t *testing.T) {
 	if verdict := classifyFinal(sig, cfg, true, 8, true); verdict.Class != ClassMissingThinking {
 		t.Fatalf("tool call without reasoning evidence = %#v, want missing_thinking", verdict)
 	}
-	sig.EncryptedBytes = 300
+	sig.EncryptedBytes = 200
 	if verdict := classifyFinal(sig, cfg, true, 8, true); verdict.Class != ClassMissingThinking {
 		t.Fatalf("tool call with an encrypted stub below the floor = %#v, want missing_thinking", verdict)
 	}
@@ -611,12 +673,12 @@ func TestEncryptedEvidenceReleasesToolCallBeforeTerminal(t *testing.T) {
 	sig.FirstVisible = false
 	sig.VisibleTokens = 0
 	sig.VisibleChunks = 0
-	verdict := ClassifyQualityHold(sig, 8)
+	verdict := ClassifyQualityHold(sig, 8, true)
 	if verdict.Action != QualityActionDeliver || verdict.Reason != "reason.detail.encrypted_reasoning_preceded_a_tool_call" {
 		t.Fatalf("tool call after encrypted reasoning = %#v, want deliver", verdict)
 	}
 	sig.HasToolCall = false
-	if verdict := ClassifyQualityHold(sig, 8); verdict.Action != QualityActionWait {
+	if verdict := ClassifyQualityHold(sig, 8, true); verdict.Action != QualityActionWait {
 		t.Fatalf("encrypted reasoning before any output = %#v, want wait", verdict)
 	}
 }
@@ -632,18 +694,18 @@ func TestEncryptedEvidenceReleasesAtHoldExpiry(t *testing.T) {
 		VisibleChunks:    5,
 		EncryptedBytes:   2048,
 	}
-	if verdict := ClassifyQualityHold(sig, 8); verdict.Action != QualityActionWait {
+	if verdict := ClassifyQualityHold(sig, 8, true); verdict.Action != QualityActionWait {
 		t.Fatalf("short visible text inside the hold = %#v, want wait", verdict)
 	}
 	sig.HoldExpired = true
-	verdict := ClassifyQualityHold(sig, 8)
+	verdict := ClassifyQualityHold(sig, 8, true)
 	if verdict.Action != QualityActionDeliver || verdict.Reason != "reason.detail.encrypted_reasoning_held_until_timeout" {
 		t.Fatalf("expired hold with encrypted reasoning = %#v, want deliver", verdict)
 	}
 	dumped := sig
 	dumped.VisibleSpanMS = 0
 	dumped.VisibleChunks = 1
-	if verdict := ClassifyQualityHold(dumped, 8); verdict.Class != ClassFakeEncryptedDump {
+	if verdict := ClassifyQualityHold(dumped, 8, true); verdict.Class != ClassFakeEncryptedDump {
 		t.Fatalf("single burst at hold expiry class = %q, want fake_encrypted_dump", verdict.Class)
 	}
 }

@@ -75,7 +75,7 @@ grok2api 的关键实现位于：
 1. `usage.reasoning_tokens` 不是思考证据。降智账号可能报告几百 reasoning tokens，但流里没有 reasoning delta。
 2. `: grok2api-reasoning-start` 只是 timing stub，不是思考证据。
 3. 空 reasoning item 不等于思考。
-4. `encrypted_content` 非空也不够，按输出 item 累加的密文字节（`encrypted_bytes`）必须达到密文下限：`max(min_encrypted_bytes, reasoning_tokens * encrypted_bytes_per_reasoning_token)`，默认 `max(256, reasoning_tokens * 2)`。
+4. `encrypted_content` 非空也不够，按输出 item 累加的密文字节（`encrypted_bytes`）必须达到密文下限：`max(min_encrypted_bytes, reasoning_tokens * encrypted_bytes_per_reasoning_token)`，默认 `max(256, reasoning_tokens * 1)`。
 5. 密文长度按 trim 后的字符串字节长度计算，与 grok2api 当前实现一致。
 6. visible token 只能从可见 content delta 推导，不能用 `usage.output - usage.reasoning` 代替。
 7. 判断速度异常时，TPS 使用总 output tokens，其中包含 reasoning tokens。
@@ -130,8 +130,9 @@ TPS = outputTokens * 1000 / generationWindow
 | `min_passive_output_tokens` | 32 | 被动速度审计最小输出 |
 | `min_hold_output_tokens` | 8 | 透明流式 hold 最小可见输出 |
 | `hold_timeout` | 30s | 首个可判定输出前的最长扣留时间，`5s..10m` |
-| `attempt_timeout` | 60s | 单账号无新增生成输出的空闲计时，不小于 `hold_timeout + 10s`，最大 `10m` |
-| `request_timeout` | 120s | 单次请求所有账号尝试共享的总预算，不小于 `attempt_timeout`，最大 `30m` |
+| `stream_idle_timeout` | 90s | 首个 chunk 到达后上游静默的上限，每个可解析事件重置，`5s..10m` |
+| `attempt_timeout` | 600s | 单账号单次尝试的总时长，也是等待首个 chunk（隐藏推理）的上限，不小于 `max(hold_timeout + 10s, stream_idle_timeout)`，最大 `10m` |
+| `request_timeout` | 900s | 单次请求所有账号尝试共享的总预算，不小于 `attempt_timeout`，最大 `30m` |
 | `hold_keepalive` | 5s | 扣留期间向客户端发送 SSE 保活注释的间隔，`1s..1m` |
 | `hold_max_buffer_bytes` | 4 MiB | 扣留的最大缓冲，`1..64 MiB` |
 | `max_attempts` | 4 | 透明模式总上游尝试次数，最大 8 |
@@ -144,8 +145,8 @@ TPS = outputTokens * 1000 / generationWindow
 | `strike_decay_min_healthy` | 10 | 窗口内至少积累的连续健康观测/探测次数 |
 | `empty_stream_cooldown` | 15m | 空流/空闲流冷却 |
 | `min_encrypted_bytes` | 256 | encrypted thinking 字节下限 |
-| `encrypted_bytes_per_reasoning_token` | 2 | 每 reasoning token 的密文下限，按线上健康样本 2.44 至 8.67 字节/token 校准 |
-| `burst_guard` | false | 短生成窗口和高 TPS 是否直接判为 burst，以及窗口不足是否单独分类 |
+| `encrypted_bytes_per_reasoning_token` | 1 | 每 reasoning token 的密文下限。质量实验在 194 个答对的健康 grok-4.7 响应上测得 1.25 至 5.95 字节/token，且随推理档位变化（xhigh 中位数 3.64，low 中位数 1.93）；取 2 时 low 档 54% 的健康响应被误判 |
+| `burst_guard` | false | 短生成窗口和高 TPS 是否直接判为 burst，以及窗口不足是否单独分类；同时控制扣留与探测中基于时序的 dump 检测（`buffered_burst`、`fake_encrypted_dump`、`fast_reasoning_ratio_dump`） |
 | `cross_verify` | `thinking` | 达到阈值后先用主动探测确认的异常类型：`off`、`soft`、`thinking`、`all` |
 | `shadow_mode` | false | 透明模式只记录结论，不扣留响应、不处置账号 |
 | `debug_logging` | false | 每次透明判定额外写入 `quality_debug` 诊断事件 |
@@ -513,7 +514,9 @@ usage.output_tokens - usage.reasoning_tokens
 
 含客户端工具调用的轮次（Responses 的 `function_call`、`custom_tool_call`、`local_shell_call`、`shell_call`、`apply_patch_call`、`computer_call`，Chat 的 `tool_calls` / `function_call`，Anthropic 的 `tool_use`）跳过 `buffered_burst`、`fake_encrypted_dump`、`fast_reasoning_ratio_dump`：这类轮次的可见文本只是工具调用前的简短说明，健康账号也会在推理结束后一次性下发说明和工具参数，可见窗口时序无法区分 dump。`cipher_drool` 不受影响。
 
-思考证据要求保持不变：推理账单为 0、没有思考证据的工具调用仍判 `missing_thinking`。线上 Codex 会话里同一请求在健康账号上带有 245–294 个推理 token，而 0 推理的同样轮次在 9 分钟内连续消耗了多个账号的额度，这正是 `missing_thinking` 要拦住的 0-thinking 降智流。
+完整且参数为合法 JSON 对象的客户端工具调用（`ToolCallValid`），若推理账单为 0、没有思考证据、旁边的可见文本不足 64 token，以 `tool_call_without_reasoning_bill` 放行，并标记 `ReasoningSkipped`：不计思考失败，也不清除已有的思考失败、不推进 strike 衰减、不计入证据样本。依据是质量实验：一个真实的 Codex 续轮请求在 3 个不同账号上都返回 0 推理的合法工具调用，是否推理取决于请求而不是账号；按 `missing_thinking` 换号只会在每个账号上重复同样结果，直到号池耗尽返回 503。参数不完整或无法解析、有推理账单却没有证据、或带长段回答的工具调用仍判 `missing_thinking`。
+
+参数完整性按协议判断：Responses 取 `output_item.done` 或 `function_call_arguments.done` 中的 `arguments`（`custom_tool_call` 取非空 `input`，其余结构化调用要求带 `action` / `operation`）；Chat 按 `index` 拼接 `tool_calls` 参数，在 `finish_reason` 时校验；Anthropic 按内容块拼接 `input_json_delta`，在 `content_block_stop` 时校验，空输入视为空对象。尚未开始推理的流中，不足 64 token 的可见文本可能是工具调用前的说明，等终止事件或扣留到期再判定。
 
 宿主侧执行的 `web_search_call`、hosted MCP 和 Anthropic `server_tool_use` 之后的文本仍是答案，照常检测。
 
@@ -745,6 +748,8 @@ disabled_by_guard
 4. 恢复探测成功：恢复 `disabled=false`，清除 cooldown，状态 `healthy`，保留 `strike_missing_thinking=true`。
 5. 恢复探测再次确认 `missing_thinking`：auth 写 `disabled=true`，state 写 `disable_kind=permanent`，状态 `disabled_by_guard`。
 6. 恢复探测网络错误：重新写回 cooldown，增加 backoff，不直接永久禁用，不计入质量 strike。
+
+恢复探测先把 auth 写回 `disabled=false` 再以固定 AuthID 发起请求，而宿主通过文件监听异步重新加载 auth，加载完成前会以 `auth_not_found: no auth available` 拒绝该请求。线上在宿主负载较高时，这一竞态让约 290 个账号每小时在冷却到期后被判 `probe_error` 并立即重新冷却，冷却账号无法恢复，号池单向收缩。因此重新启用后遇到这一拒绝时按 0.25、0.5、1、2、4 秒退避重试；仍未加载则记为 `ignored`（`host_auth_not_ready`），不计入账号失败，由 `holdProbeRecoveryLocked` 把账号写回原冷却等待下次探测。未重新启用时出现同样的拒绝也按 `ignored` 处理，它描述的是宿主调度状态而不是账号质量。
 
 上游账号状态错误独立于质量 strike：`credential_invalid` 直接禁用并等待凭据更新；`quota_exhausted` 使用固定 24 小时冷却，因为 Grok 免费额度按滚动 24 小时窗口恢复。这两类处置不受 `auto_action: observe` 限制，避免失效凭据或耗尽额度继续参与路由。
 
@@ -980,20 +985,24 @@ if terminal and no verdict:
 
 #### 6.5.1 超时与请求预算
 
-透明流使用三级超时，加载时强制 `hold_timeout + 10s <= attempt_timeout <= request_timeout`：
+透明流使用以下超时，加载时强制 `hold_timeout + 10s <= attempt_timeout`、`stream_idle_timeout <= attempt_timeout` 与 `attempt_timeout <= request_timeout`：
 
 | 配置 | 默认值 | 作用 |
 | --- | ---: | --- |
 | `hold_timeout` | 30s | 单次扣留的上限：出现首个可判定输出前最多缓冲多久 |
-| `attempt_timeout` | 60s | 单账号空闲计时：打开流或读取期间超过该时间没有新增生成输出即终止当前尝试并换号 |
-| `request_timeout` | 120s | 单次请求的总预算，由该请求的所有账号尝试共享 |
+| `stream_idle_timeout` | 90s | 首个 chunk 到达后上游静默的上限，超时视为卡死并换号 |
+| `attempt_timeout` | 600s | 单账号单次尝试的总时长，也是等待首个 chunk 的上限 |
+| `request_timeout` | 900s | 单次请求的总预算，由该请求的所有账号尝试共享 |
 
 规则：
 
 - 每次尝试的扣留上限取 `hold_timeout` 与剩余请求预算的较小值
 - 最小校验窗口为 `hold_timeout` 的一半，最多 3s；剩余预算小于该窗口时不再发起新尝试，当前尝试以 `inconclusive`（`budget_exhausted`）结束
 - 扣留因预算被截短时，到期的 `missing_thinking` 改记为 `inconclusive`，不计入账号质量，避免一池降智账号把健康账号拖成误判
-- `attempt_timeout` 是空闲计时，不缩短扣留；`request_timeout` 防止多个降智账号累计把客户端拖过自身超时
+- `request_timeout` 防止多个降智账号累计把客户端拖过自身超时
+- 等待首个 chunk 只受 `attempt_timeout` 与剩余请求预算约束，不受 `stream_idle_timeout` 约束：宿主在首个上游 chunk 可读后才返回流，Grok 在隐藏推理结束前不发送任何字节，这段等待是思考时间。质量实验中答对的 xhigh 响应首字节等待 15 至 225 秒，Codex agent 任务（生成 SVG 动画）为 145 至 210 秒，旧的 90 秒空闲窗口会把它们全部判为卡死并换号，新账号同样要思考这么久，最终 503
+- 首个 chunk 在上限内仍未到达时，请求以 `inconclusive`（`upstream_thinking_timeout`）结束，返回 504，不换号、不计入账号失败；首个 chunk 之后的静默仍按 `stream_idle_timeout` 换号
+- 请求 goroutine 的硬上限为 `request_timeout + 1m`（至少 10 分钟），不再固定为 10 分钟
 
 `shadow_mode=true` 时质量门只记录本应采取的结论（`quality_shadow` 事件），不扣留响应、不换号、不处置账号。
 `debug_logging=true` 时每次透明判定额外写入 `quality_debug` 事件，带原因码与可见/输出/推理 Token、密文与下限、生成窗口、首 Token、TPS 和扣留是否到期，用于复核误判；默认关闭，避免事件量翻倍。
@@ -2208,14 +2217,15 @@ plugins:
         min_passive_output_tokens: 32
         min_hold_output_tokens: 8
         hold_timeout: "30s"
-        attempt_timeout: "60s"
-        request_timeout: "120s"
+        stream_idle_timeout: "90s"
+        attempt_timeout: "600s"
+        request_timeout: "900s"
         hold_keepalive: "5s"
         shadow_mode: false
         debug_logging: false
         hold_max_buffer_bytes: 4194304
         min_encrypted_bytes: 256
-        encrypted_bytes_per_reasoning_token: 2
+        encrypted_bytes_per_reasoning_token: 1
         missing_thinking_cooldown: "12h"
         empty_stream_cooldown: "15m"
         max_attempts: 4
@@ -2268,7 +2278,7 @@ plugins:
 
 不存在全局 `resin:` YAML 配置块。Resin 来源的连接信息、账号格式、占位符和本地轮换模式通过管理页或 `proxy.sources.create/update` 的 `kind=resin` 配置。
 
-YAML 使用严格字段校验，未知字段会直接报错。旧 `resin.*` 注册字段、环境变量回退和单例 Resin 配置不再读取；已移除的 `passive_guard`、`transparent_guard`、`quality.soft_cross_verify`、`quality.thinking_cross_verify`、`quality.fail_closed`、`quality.stream_idle_timeout`、`quality.max_hold_total` 同样按未知字段拒绝。
+YAML 使用严格字段校验，未知字段会直接报错。旧 `resin.*` 注册字段、环境变量回退和单例 Resin 配置不再读取；已移除的 `passive_guard`、`transparent_guard`、`quality.soft_cross_verify`、`quality.thinking_cross_verify`、`quality.fail_closed`、`quality.max_hold_total` 同样按未知字段拒绝。
 
 ### 11.2 配置来源与优先级
 
@@ -2327,8 +2337,9 @@ YAML 决定以下部署级字段：
 - `quality.cross_verify=thinking`
 - `quality.burst_guard=false`
 - `quality.hold_timeout=30s`
-- `quality.attempt_timeout=60s`
-- `quality.request_timeout=120s`
+- `quality.stream_idle_timeout=90s`
+- `quality.attempt_timeout=600s`
+- `quality.request_timeout=900s`
 - `quality.hold_keepalive=5s`
 - `quality.shadow_mode=false`
 - `quality.debug_logging=false`

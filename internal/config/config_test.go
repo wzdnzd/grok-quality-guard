@@ -28,13 +28,13 @@ func TestDecodeConfigPartialKeepsDefaults(t *testing.T) {
 	if cfg.Quality.SoftTPS != 500 || cfg.Quality.HardTPS != 1000 || cfg.Quality.MinGenerationMS != 1000 {
 		t.Fatalf("unexpected quality defaults: %#v", cfg.Quality)
 	}
-	if cfg.Quality.HoldTimeout.Duration != 30*time.Second || cfg.Quality.StreamIdleTimeout.Duration != 90*time.Second || cfg.Quality.AttemptTimeout.Duration != 120*time.Second || cfg.Quality.RequestTimeout.Duration != 240*time.Second || cfg.Quality.HoldKeepalive.Duration != 5*time.Second || cfg.Quality.MissingThinkingCooldown.Duration != 12*time.Hour {
+	if cfg.Quality.HoldTimeout.Duration != 30*time.Second || cfg.Quality.StreamIdleTimeout.Duration != 90*time.Second || cfg.Quality.AttemptTimeout.Duration != 600*time.Second || cfg.Quality.RequestTimeout.Duration != 900*time.Second || cfg.Quality.HoldKeepalive.Duration != 5*time.Second || cfg.Quality.MissingThinkingCooldown.Duration != 12*time.Hour {
 		t.Fatalf("unexpected durations: %#v", cfg.Quality)
 	}
 	if cfg.Quality.ShadowMode {
 		t.Fatalf("shadow mode defaulted to enabled: %#v", cfg.Quality)
 	}
-	if cfg.Quality.MinEncryptedBytes != 256 || cfg.Quality.EncryptedBytesPerReasoningToken != 2 {
+	if cfg.Quality.MinEncryptedBytes != 256 || cfg.Quality.EncryptedBytesPerReasoningToken != 1 {
 		t.Fatalf("unexpected encrypted floor defaults: min=%d per_token=%d", cfg.Quality.MinEncryptedBytes, cfg.Quality.EncryptedBytesPerReasoningToken)
 	}
 }

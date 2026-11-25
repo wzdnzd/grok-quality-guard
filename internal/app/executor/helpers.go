@@ -129,6 +129,6 @@ func classifyFinal(sig domain.Signals, cfg QualityConfig, reasoningRequired bool
 func classifyNonStreamResult(sig domain.Signals, cfg QualityConfig, reasoningRequired bool, minOutput int64) QualityVerdict {
 	return domain.ClassifyNonStreamResult(sig, cfg, reasoningRequired, minOutput)
 }
-func ClassifyQualityHold(sig domain.Signals, minOutput int64) QualityVerdict {
-	return domain.ClassifyQualityHold(sig, minOutput)
+func ClassifyQualityHold(sig domain.Signals, minOutput int64, burstGuard bool) QualityVerdict {
+	return domain.ClassifyQualityHold(sig, minOutput, burstGuard)
 }

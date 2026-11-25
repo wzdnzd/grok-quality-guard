@@ -9,6 +9,14 @@ import (
 
 type Scheduler = probeScheduler
 
+// SetAuthReadyWaits replaces the retry spacing used while the host loads a
+// re-enabled auth and returns a function that restores the previous spacing.
+func SetAuthReadyWaits(waits []time.Duration) (restore func()) {
+	previous := probeAuthReadyWaits
+	probeAuthReadyWaits = waits
+	return func() { probeAuthReadyWaits = previous }
+}
+
 func NewScheduler(service *Service, ctx context.Context) *Scheduler {
 	return newProbeScheduler(service, ctx)
 }
