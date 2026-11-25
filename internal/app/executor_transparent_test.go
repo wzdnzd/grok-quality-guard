@@ -96,7 +96,16 @@ func setTransparentTimingForTest(plugin *Plugin, hold, attempt time.Duration) {
 		policy.Quality.HoldTimeout = appconfig.NewDuration(hold)
 	}
 	if attempt > 0 {
-		policy.Quality.AttemptTimeout = appconfig.NewDuration(attempt)
+		// These timing tests exercise the idle window, so the attempt argument
+		// sets that window. attempt_timeout caps a whole attempt and must stay
+		// well above it, otherwise a healthy long stream is cut off before the
+		// idle logic under test can run.
+		policy.Quality.StreamIdleTimeout = appconfig.NewDuration(attempt)
+		attemptBudget := attempt * 20
+		if attemptBudget < 30*time.Second {
+			attemptBudget = 30 * time.Second
+		}
+		policy.Quality.AttemptTimeout = appconfig.NewDuration(attemptBudget)
 	}
 	policy.Quality.RequestTimeout = appconfig.NewDuration(time.Minute)
 	plugin.SetPolicy(policy)
@@ -1592,6 +1601,65 @@ func TestTransparentStreamIdleTimeoutResetsOnProgress(t *testing.T) {
 	}
 	if detail := host.closes[streamID]; detail != nil {
 		t.Fatalf("steady stream was closed as idle: %#v", detail)
+	}
+}
+
+// TestTransparentStreamStopsFailoverWhenClientCancels covers the disconnect
+// path end to end: the host reports a canceled request through request.complete,
+// and the transparent bridge must stop instead of trying the next account.
+func TestTransparentStreamStopsFailoverWhenClientCancels(t *testing.T) {
+	entries, auths := twoGrokAuths(t)
+	host := newMockHostCall(entries, auths)
+	// The first account sends one control frame and then stalls, so the attempt
+	// can only end through cancellation. The second account would answer if
+	// failover ran.
+	stalled := "data: " + `{"type":"response.created","response":{"id":"resp_stall","model":"grok-4.6"}}` + "\n\n"
+	host.scriptStream("auth-1", streamData(stalled), streamData(stalled), streamData(stalled))
+	host.scriptStream("auth-2", goodResponsesStreamScript()...)
+	plugin := newTestPlugin(t, host, enableTransparentForTest)
+	setTransparentTimingForTest(plugin, 20*time.Millisecond, time.Minute)
+
+	innerHostCall := hostCall
+	releaseRead := make(chan struct{})
+	var readCount atomic.Int32
+	hostCall = func(method string, payload any) (json.RawMessage, error) {
+		if method == pluginabi.MethodHostModelStreamRead && readCount.Add(1) >= 3 {
+			<-releaseRead
+		}
+		return innerHostCall(method, payload)
+	}
+	defer func() {
+		close(releaseRead)
+		hostCall = innerHostCall
+	}()
+
+	streamID := "plugin-stream-client-cancel"
+	req := responsesRequestForTest("grok-4.6", true)
+	req.Metadata = map[string]any{"request_id": "req-cancel-e2e"}
+	done := make(chan struct{})
+	go func() {
+		plugin.runTransparentStreamBridge(context.Background(), req, streamID)
+		close(done)
+	}()
+
+	// Wait until the first account is serving, then report the disconnect the
+	// way the host does.
+	waitForModelCalls(t, host, 1)
+	time.Sleep(50 * time.Millisecond)
+	plugin.executorSvc.CancelRequest("req-cancel-e2e")
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("canceled request kept running")
+	}
+
+	if calls := len(host.modelCalls); calls != 1 {
+		t.Fatalf("canceled request used %d accounts, want 1", calls)
+	}
+	account, ok := plugin.stateAccount("auth-1")
+	if ok && account.LastAttempt != nil && account.LastAttempt.Class != "" {
+		t.Fatalf("client cancellation was recorded as a failure: %#v", account.LastAttempt)
 	}
 }
 

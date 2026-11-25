@@ -130,7 +130,8 @@ type Environment interface {
 }
 
 type Service struct {
-	env Environment
+	env     Environment
+	cancels requestCancels
 }
 
 func NewService(env Environment) *Service { return &Service{env: env} }

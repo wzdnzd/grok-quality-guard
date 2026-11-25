@@ -173,6 +173,9 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case pluginabi.MethodUsageHandle:
 		globalApp.HandleUsage(request)
 		return abi.OK(map[string]any{})
+	case pluginabi.MethodRequestComplete:
+		globalApp.HandleRequestComplete(request)
+		return abi.OK(map[string]any{})
 	default:
 		return abiLocalizedError(locale, "unknown_method", 404, map[string]any{"method": method}), nil
 	}

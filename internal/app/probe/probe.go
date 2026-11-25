@@ -697,7 +697,12 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 			break
 		}
 	}
+	// Finalize only reports a completed body when the upstream sent a terminal
+	// event. A closed channel without one means the stream was truncated, and
+	// classifyProbeResult turns that into a transport failure instead of a
+	// quality verdict.
 	sig := analyzer.Finalize(terminal)
+	terminal = sig.Terminal
 	sig.DurationMS = time.Since(probeStartedAt).Milliseconds()
 	markerOK := matchProbeMarker(sig.VisibleText, probeMarker)
 	probeReasoningRequired := reasoningRequiredForModelWithNonReasoning(probeCfg.Model, body, qualityCfg.NonReasoningModels)

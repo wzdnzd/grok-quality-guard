@@ -61,8 +61,9 @@ func (info attemptInfo) decorate(sig domain.Signals) domain.Signals {
 	return sig
 }
 
-const defaultTransparentAttemptTimeout = 60 * time.Second
-const defaultTransparentRequestTimeout = 120 * time.Second
+const defaultTransparentStreamIdleTimeout = 90 * time.Second
+const defaultTransparentAttemptTimeout = 120 * time.Second
+const defaultTransparentRequestTimeout = 240 * time.Second
 
 // maxVerifyWindow caps the shortest hold that can still produce a verdict
 const maxVerifyWindow = 3 * time.Second
@@ -75,11 +76,34 @@ func transparentMaxAttempts(policy Policy) int {
 	return maxAttempts
 }
 
+// transparentStreamIdleTimeout bounds how long the upstream may stay silent.
+// It is an inactivity window that restarts on every chunk, not a total
+// budget: a long reasoning step that keeps the connection alive must not be
+// mistaken for a dead stream.
+func transparentStreamIdleTimeout(cfg QualityConfig) time.Duration {
+	if cfg.StreamIdleTimeout.Duration > 0 {
+		return cfg.StreamIdleTimeout.Duration
+	}
+	return defaultTransparentStreamIdleTimeout
+}
+
 func transparentAttemptTimeout(cfg QualityConfig) time.Duration {
 	if cfg.AttemptTimeout.Duration > 0 {
 		return cfg.AttemptTimeout.Duration
 	}
 	return defaultTransparentAttemptTimeout
+}
+
+// earlierDeadline returns whichever deadline comes first. A zero deadline means
+// unbounded and defers to the other one.
+func earlierDeadline(first, second time.Time) time.Time {
+	if first.IsZero() {
+		return second
+	}
+	if second.IsZero() || first.Before(second) {
+		return first
+	}
+	return second
 }
 
 func transparentRequestTimeout(cfg QualityConfig) time.Duration {

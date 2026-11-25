@@ -1605,6 +1605,31 @@ test('Every settings field puts its explanation behind an info icon', () => {
   assert.equal(fields.length + toggles.length, controls.length);
 });
 
+test('Stream idle timeout round-trips as its own field', () => {
+  // The idle window is separate from attempt_timeout: one bounds upstream
+  // silence, the other bounds the whole attempt.
+  assert.match(html, /<input id="p_stream_idle_timeout" type="text" placeholder="90s">/);
+  assert.match(html, /'p_stream_idle_timeout',/);
+  assert.match(html, /p_stream_idle_timeout: 'quality\.stream_idle_timeout',/);
+  assert.match(html, /setValue\('p_stream_idle_timeout', quality\.stream_idle_timeout \|\| '90s'\);/);
+  assert.match(html, /policy\.quality\.stream_idle_timeout = valueOf\('p_stream_idle_timeout'\);/);
+});
+
+test('Settings keep the requested field layout', () => {
+  const settings = html.slice(html.indexOf('id="policyForm"'), html.indexOf('class="form-actions policy-actions"'));
+  // model_prefixes and state_file share one full-width row split 1:2.
+  assert.match(settings, /<div class="field-pair">\s*<div class="field"><span class="field-head"><label for="p_model_prefixes">/);
+  assert.match(settings, /<div class="field-pair">[\s\S]*?<div class="field"><span class="field-head"><label for="p_state_file">/);
+  assert.match(html, /\.policy-group \.field-pair\s*\{[\s\S]*?grid-column: 1 \/ -1;[\s\S]*?grid-template-columns: minmax\(0, 1fr\) minmax\(0, 2fr\);/);
+  // non_reasoning_models sits directly after empty_stream_cooldown on the same row.
+  const emptyIndex = settings.indexOf('<label for="p_empty_cooldown">');
+  const nonReasoningIndex = settings.indexOf('<label for="p_non_reasoning_models">');
+  assert.ok(emptyIndex > 0 && nonReasoningIndex > emptyIndex);
+  const between = settings.slice(emptyIndex, nonReasoningIndex);
+  assert.equal((between.match(/<div class="field/g) || []).length, 1);
+  assert.match(settings, /<div class="field"><span class="field-head"><label for="p_non_reasoning_models">/);
+});
+
 test('Overview cards pair into equal-height rows', () => {
   assert.doesNotMatch(html, /<div class="overview-grid">\s*<div class="stack">/);
   assert.match(html, /<div class="overview-grid">\s*<section class="card overview-card" aria-labelledby="qualityTitle">[\s\S]*?aria-labelledby="policySummaryTitle"[\s\S]*?aria-labelledby="recentTitle"[\s\S]*?aria-labelledby="resinSummaryTitle"/);

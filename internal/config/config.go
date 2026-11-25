@@ -110,6 +110,7 @@ type QualityConfig struct {
 	MinPassiveOutputTokens          int64    `yaml:"min_passive_output_tokens" json:"min_passive_output_tokens"`
 	MinHoldOutputTokens             int64    `yaml:"min_hold_output_tokens" json:"min_hold_output_tokens"`
 	HoldTimeout                     Duration `yaml:"hold_timeout" json:"hold_timeout"`
+	StreamIdleTimeout               Duration `yaml:"stream_idle_timeout" json:"stream_idle_timeout"`
 	AttemptTimeout                  Duration `yaml:"attempt_timeout" json:"attempt_timeout"`
 	RequestTimeout                  Duration `yaml:"request_timeout" json:"request_timeout"`
 	HoldKeepalive                   Duration `yaml:"hold_keepalive" json:"hold_keepalive"`
@@ -313,8 +314,9 @@ func DefaultQualityConfig() QualityConfig {
 		MinPassiveOutputTokens:          32,
 		MinHoldOutputTokens:             8,
 		HoldTimeout:                     NewDuration(30 * time.Second),
-		AttemptTimeout:                  NewDuration(60 * time.Second),
-		RequestTimeout:                  NewDuration(120 * time.Second),
+		StreamIdleTimeout:               NewDuration(90 * time.Second),
+		AttemptTimeout:                  NewDuration(120 * time.Second),
+		RequestTimeout:                  NewDuration(240 * time.Second),
 		HoldKeepalive:                   NewDuration(5 * time.Second),
 		ShadowMode:                      false,
 		HoldMaxBufferBytes:              4 * 1024 * 1024,
@@ -654,6 +656,12 @@ func normalizeQuality(q *QualityConfig) error {
 	if errField := validateFieldValue("quality.hold_timeout", q.HoldTimeout.Duration.Seconds()); errField != nil {
 		return errField
 	}
+	if q.StreamIdleTimeout.Duration <= 0 {
+		q.StreamIdleTimeout = defaults.StreamIdleTimeout
+	}
+	if errField := validateFieldValue("quality.stream_idle_timeout", q.StreamIdleTimeout.Duration.Seconds()); errField != nil {
+		return errField
+	}
 	if q.AttemptTimeout.Duration <= 0 {
 		q.AttemptTimeout = defaults.AttemptTimeout
 	}
@@ -662,6 +670,9 @@ func normalizeQuality(q *QualityConfig) error {
 	}
 	if errField := validateFieldValue("quality.attempt_timeout", q.AttemptTimeout.Duration.Seconds()); errField != nil {
 		return errField
+	}
+	if q.AttemptTimeout.Duration < q.StreamIdleTimeout.Duration {
+		return fmt.Errorf("quality.attempt_timeout must be >= stream_idle_timeout")
 	}
 	if q.RequestTimeout.Duration <= 0 {
 		q.RequestTimeout = defaults.RequestTimeout
