@@ -38,7 +38,7 @@ func ProbeDueForAccount(account *AccountState, okState bool, authID string, poli
 func UnknownProbeJitter(authID string, max time.Duration) time.Duration {
 	return unknownProbeJitter(authID, max)
 }
-func ProbeBody(cfg ProbeConfig) []byte { return probeBody(cfg) }
+func ProbeBody(cfg ProbeConfig, reasoning bool) []byte { return probeBody(cfg, reasoning) }
 func NextProbeBackoff(cfg ProbeConfig, previous AccountState) time.Duration {
 	return nextProbeBackoff(cfg, previous)
 }

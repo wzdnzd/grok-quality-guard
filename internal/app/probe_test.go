@@ -173,11 +173,50 @@ func TestProbeTPSIncludesPreStreamLatency(t *testing.T) {
 		t.Fatalf("probe TPS = %.1f, want a sane grok2api-scale value: %#v", account.Metrics.TPS, account.Metrics)
 	}
 }
+
+func TestProbeSendsReasoningEffortUpstream(t *testing.T) {
+	entries, auths := singleGrokAuth(t, "auth-1", "probe-effort@example.com", nil)
+	host := newMockHostCall(entries, auths)
+	visible := strings.Repeat("reliable systems need careful design. ", 10) + "\\nQUALITY_OK"
+	host.scriptStream("auth-1",
+		streamData("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"plan carefully\"}}]}\n\n"),
+		streamData("data: {\"choices\":[{\"delta\":{\"content\":\""+visible+"\"}}]}\n\n"),
+		streamData("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"completion_tokens\":120,\"completion_tokens_details\":{\"reasoning_tokens\":1}}}\n\n"),
+		pluginapi.HostModelStreamReadResponse{Done: true},
+	)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.Quality.SoftTPS = 1e9
+		cfg.Quality.HardTPS = 2e9
+	})
+	if errProbe := plugin.ProbeAccount(context.Background(), "auth-1", true, "callback-1"); errProbe != nil {
+		t.Fatal(errProbe)
+	}
+	host.mu.Lock()
+	calls := append([]pluginapi.HostModelExecutionRequest(nil), host.modelCalls...)
+	host.mu.Unlock()
+	if len(calls) != 1 {
+		t.Fatalf("probe model calls = %d, want 1", len(calls))
+	}
+	var body struct {
+		Reasoning struct {
+			Effort string `json:"effort"`
+		} `json:"reasoning"`
+	}
+	if errUnmarshal := json.Unmarshal(calls[0].Body, &body); errUnmarshal != nil {
+		t.Fatal(errUnmarshal)
+	}
+	if body.Reasoning.Effort != "high" {
+		t.Fatalf("probe sent reasoning effort %q, want high: %s", body.Reasoning.Effort, calls[0].Body)
+	}
+}
 func TestProbeBodyUsesQualityMarkerProfilePrompt(t *testing.T) {
-	body := probeBody(appconfig.DefaultProbeConfig())
+	body := probeBody(appconfig.DefaultProbeConfig(), true)
 	var payload struct {
-		Include []string `json:"include"`
-		Input   []struct {
+		Include   []string `json:"include"`
+		Reasoning *struct {
+			Effort string `json:"effort"`
+		} `json:"reasoning"`
+		Input []struct {
 			Content []struct {
 				Text string `json:"text"`
 			} `json:"content"`
@@ -197,6 +236,14 @@ func TestProbeBodyUsesQualityMarkerProfilePrompt(t *testing.T) {
 	// carry no thinking evidence and fail every probe as missing_thinking.
 	if len(payload.Include) != 1 || payload.Include[0] != "reasoning.encrypted_content" {
 		t.Fatalf("probe include = %#v, want reasoning.encrypted_content", payload.Include)
+	}
+	// The probe verdict treats missing thinking as explicitly requested, so the
+	// body must request it instead of leaving the effort to the upstream.
+	if payload.Reasoning == nil || payload.Reasoning.Effort != "high" {
+		t.Fatalf("probe reasoning = %#v, want effort high: %s", payload.Reasoning, body)
+	}
+	if plain := probeBody(appconfig.DefaultProbeConfig(), false); strings.Contains(string(plain), `"reasoning"`) {
+		t.Fatalf("non-reasoning probe requested reasoning: %s", plain)
 	}
 }
 
