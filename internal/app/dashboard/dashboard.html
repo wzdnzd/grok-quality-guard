@@ -1482,6 +1482,14 @@
       grid-column: 1 / -1;
     }
 
+    .policy-group .field-pair {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+      gap: 10px 12px;
+      align-items: start;
+    }
+
     .field-head {
       display: flex;
       align-items: center;
@@ -3302,6 +3310,10 @@
         grid-template-columns: 1fr;
       }
 
+      .policy-group .field-pair {
+        grid-template-columns: 1fr;
+      }
+
 
       .page {
         padding: 18px 14px 42px;
@@ -4969,8 +4981,10 @@
                       <option value="cooldown_then_disable">ui.cool_down_then_permanently_disable</option>
                     </select></div>
                   <div class="field"><span class="field-head"><label for="p_events_limit">ui.event_retention_limit</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.trim_the_oldest_events_when_the_limit_is_exceeded" title="ui.trim_the_oldest_events_when_the_limit_is_exceeded"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_events_limit" type="number" min="1" max="10000"></div>
-                  <div class="field full"><span class="field-head"><label for="p_model_prefixes">ui.model_prefixes</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.identifies_custom_model_aliases_that_do_not_contain_grok" title="ui.identifies_custom_model_aliases_that_do_not_contain_grok"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_model_prefixes" type="text" autocomplete="off" placeholder="grok-"></div>
-                  <div class="field full"><span class="field-head"><label for="p_state_file">ui.state_file_path</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.the_yaml_state_file_is_the_bootstrap_path_saving" title="ui.the_yaml_state_file_is_the_bootstrap_path_saving"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_state_file" type="text" autocomplete="off" spellcheck="false" placeholder="/CLIProxyAPI/plugins/data/grok-quality-guard/state.json"></div>
+                  <div class="field-pair">
+                    <div class="field"><span class="field-head"><label for="p_model_prefixes">ui.model_prefixes</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.identifies_custom_model_aliases_that_do_not_contain_grok" title="ui.identifies_custom_model_aliases_that_do_not_contain_grok"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_model_prefixes" type="text" autocomplete="off" placeholder="grok-"></div>
+                    <div class="field"><span class="field-head"><label for="p_state_file">ui.state_file_path</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.the_yaml_state_file_is_the_bootstrap_path_saving" title="ui.the_yaml_state_file_is_the_bootstrap_path_saving"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_state_file" type="text" autocomplete="off" spellcheck="false" placeholder="/CLIProxyAPI/plugins/data/grok-quality-guard/state.json"></div>
+                  </div>
                 </div>
               </section>
               <section class="policy-group columns-3">
@@ -5036,7 +5050,7 @@
                   <div class="field"><span class="field-head"><label for="p_encrypted_per_token">ui.ciphertext_bytes_per_reasoning_token</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.encrypted_per_token_help" title="ui.encrypted_per_token_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_encrypted_per_token" type="number" min="1"></div>
                   <div class="field"><span class="field-head"><label for="p_missing_cooldown">ui.missing_reasoning_cooldown</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.missing_cooldown_help" title="ui.missing_cooldown_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_missing_cooldown" type="text" placeholder="12h"></div>
                   <div class="field"><span class="field-head"><label for="p_empty_cooldown">ui.empty_stream_cooldown</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.empty_cooldown_help" title="ui.empty_cooldown_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_empty_cooldown" type="text" placeholder="15m"></div>
-                  <div class="field full"><span class="field-head"><label for="p_non_reasoning_models">ui.non_reasoning_models</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.non_reasoning_models_help" title="ui.non_reasoning_models_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_non_reasoning_models" type="text" autocomplete="off"></div>
+                  <div class="field"><span class="field-head"><label for="p_non_reasoning_models">ui.non_reasoning_models</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.non_reasoning_models_help" title="ui.non_reasoning_models_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_non_reasoning_models" type="text" autocomplete="off"></div>
                 </div>
                 <div class="toggle-list">
                   <label class="toggle-row"><input id="p_thinking_guard" type="checkbox"><span class="toggle-title">ui.enable_missing_reasoning_detection<span class="hint-icon" tabindex="0" role="img" aria-label="ui.when_disabled_only_tps_empty_stream_and_similar_quality" title="ui.when_disabled_only_tps_empty_stream_and_similar_quality"><svg class="icon"><use href="#i-info"></use></svg></span></span></label>
@@ -5052,6 +5066,7 @@
                 <div class="field-grid">
                   <div class="field"><span class="field-head"><label for="p_min_hold_output">ui.minimum_buffered_output_tokens</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.min_hold_output_help" title="ui.min_hold_output_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_min_hold_output" type="number" min="1"></div>
                   <div class="field"><span class="field-head"><label for="p_hold_timeout">ui.buffer_timeout</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.hold_timeout_help" title="ui.hold_timeout_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_hold_timeout" type="text" placeholder="30s"></div>
+                  <div class="field"><span class="field-head"><label for="p_stream_idle_timeout">ui.stream_idle_timeout</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.stream_idle_timeout_help" title="ui.stream_idle_timeout_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_stream_idle_timeout" type="text" placeholder="90s"></div>
                   <div class="field"><span class="field-head"><label for="p_attempt_timeout">ui.attempt_timeout</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.attempt_timeout_help" title="ui.attempt_timeout_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_attempt_timeout" type="text" placeholder="60s"></div>
                   <div class="field"><span class="field-head"><label for="p_request_timeout">ui.request_timeout</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.request_timeout_help" title="ui.request_timeout_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_request_timeout" type="text" placeholder="120s"></div>
                   <div class="field"><span class="field-head"><label for="p_hold_keepalive">ui.hold_keepalive_interval</label><span class="hint-icon" tabindex="0" role="img" aria-label="ui.hold_keepalive_help" title="ui.hold_keepalive_help"><svg class="icon"><use href="#i-info"></use></svg></span></span><input id="p_hold_keepalive" type="text" placeholder="5s"></div>
@@ -6895,7 +6910,7 @@
         policyChip(i18n.t('ui.tps_thresholds'), i18n.t('ui.soft_hard_values', { soft: num(quality.soft_tps, 1), hard: num(quality.hard_tps, 1) })),
         policyChip(i18n.t('ui.consecutive_thresholds'), i18n.t('ui.soft_error_missing_thinking_values', { soft: num(quality.consecutive_soft || 2), errors: num(quality.consecutive_errors || 2), thinking: num(quality.consecutive_missing_thinking || 2) })),
         policyChip(i18n.t('ui.cross_verify'), i18n.t('ui.cross_verify_' + (quality.cross_verify || 'thinking'))),
-        policyChip(i18n.t('ui.transparent_stream_protection'), i18n.t('ui.transparent_budget_values', { hold: quality.hold_timeout || '30s', attempt: quality.attempt_timeout || '60s', request: quality.request_timeout || '120s', attempts: num(quality.max_attempts || 4) })),
+        policyChip(i18n.t('ui.transparent_stream_protection'), i18n.t('ui.transparent_budget_values', { hold: quality.hold_timeout || '30s', idle: quality.stream_idle_timeout || '90s', attempt: quality.attempt_timeout || '120s', request: quality.request_timeout || '240s', attempts: num(quality.max_attempts || 4) })),
         policyChip(i18n.t('ui.active_probes'), i18n.t('ui.scan_concurrency_queue_values', { scan: String(probe.scan_interval || '15s'), concurrency: num(probe.concurrency || 1), queue: num(probe.queue_size || 10000) }))
       ].join('');
       document.getElementById('policyModeBadge').textContent = modeLabel(policy);
@@ -9861,6 +9876,7 @@
       'p_missing_cooldown',
       'p_empty_cooldown',
       'p_hold_timeout',
+      'p_stream_idle_timeout',
       'p_attempt_timeout',
       'p_request_timeout',
       'p_hold_keepalive',
@@ -9909,6 +9925,7 @@
       p_empty_cooldown: 'quality.empty_stream_cooldown',
       p_min_hold_output: 'quality.min_hold_output_tokens',
       p_hold_timeout: 'quality.hold_timeout',
+      p_stream_idle_timeout: 'quality.stream_idle_timeout',
       p_attempt_timeout: 'quality.attempt_timeout',
       p_request_timeout: 'quality.request_timeout',
       p_hold_keepalive: 'quality.hold_keepalive',
@@ -10201,8 +10218,9 @@
       setValue('p_min_passive_output', quality.min_passive_output_tokens || 32);
       setValue('p_min_hold_output', quality.min_hold_output_tokens || 8);
       setValue('p_hold_timeout', quality.hold_timeout || '30s');
-      setValue('p_attempt_timeout', quality.attempt_timeout || '60s');
-      setValue('p_request_timeout', quality.request_timeout || '120s');
+      setValue('p_stream_idle_timeout', quality.stream_idle_timeout || '90s');
+      setValue('p_attempt_timeout', quality.attempt_timeout || '120s');
+      setValue('p_request_timeout', quality.request_timeout || '240s');
       setValue('p_hold_keepalive', quality.hold_keepalive || '5s');
       setChecked('p_shadow_mode', quality.shadow_mode === true);
       setChecked('p_debug_logging', quality.debug_logging === true);
@@ -10278,6 +10296,7 @@
       policy.quality.min_passive_output_tokens = numberValue('p_min_passive_output', 32);
       policy.quality.min_hold_output_tokens = numberValue('p_min_hold_output', 8);
       policy.quality.hold_timeout = valueOf('p_hold_timeout');
+      policy.quality.stream_idle_timeout = valueOf('p_stream_idle_timeout');
       policy.quality.attempt_timeout = valueOf('p_attempt_timeout');
       policy.quality.request_timeout = valueOf('p_request_timeout');
       policy.quality.hold_keepalive = valueOf('p_hold_keepalive');

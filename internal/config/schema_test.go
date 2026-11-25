@@ -42,7 +42,7 @@ func TestFieldSpecsCoverSettingsPageFields(t *testing.T) {
 		"routing.affinity.enabled", "routing.affinity.ttl", "routing.affinity.max_entries",
 		"routing.scoring.enabled", "routing.scoring.half_life_hours",
 		"quality.thinking_guard", "quality.burst_guard", "quality.shadow_mode", "quality.debug_logging",
-		"quality.cross_verify", "quality.on_exhausted", "quality.attempt_timeout", "quality.request_timeout",
+		"quality.cross_verify", "quality.on_exhausted", "quality.stream_idle_timeout", "quality.attempt_timeout", "quality.request_timeout",
 		"probe.scan_interval", "task_history.enabled", "task_history.max_bytes",
 	} {
 		if _, ok := declared[path]; !ok {
@@ -79,6 +79,11 @@ func TestNormalizeRejectsOutOfRangeValues(t *testing.T) {
 		{"hard not above soft", func(c *Config) { c.Quality.HardTPS = c.Quality.SoftTPS }, "quality.hard_tps"},
 		{"attempt below hold", func(c *Config) { c.Quality.AttemptTimeout = NewDuration(c.Quality.HoldTimeout.Duration) }, "quality.attempt_timeout"},
 		{"attempt above ceiling", func(c *Config) { c.Quality.AttemptTimeout = NewDuration(20 * time.Minute) }, "quality.attempt_timeout"},
+		{"attempt below stream idle", func(c *Config) {
+			c.Quality.StreamIdleTimeout = NewDuration(5 * time.Minute)
+			c.Quality.AttemptTimeout = NewDuration(2 * time.Minute)
+		}, "quality.attempt_timeout"},
+		{"stream idle above ceiling", func(c *Config) { c.Quality.StreamIdleTimeout = NewDuration(20 * time.Minute) }, "quality.stream_idle_timeout"},
 		{"request below attempt", func(c *Config) {
 			c.Quality.AttemptTimeout = NewDuration(90 * time.Second)
 			c.Quality.RequestTimeout = NewDuration(60 * time.Second)

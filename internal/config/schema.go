@@ -120,8 +120,9 @@ func FieldSpecs() []FieldSpec {
 
 		{Path: "quality.min_hold_output_tokens", Group: "transparent", Type: FieldTypeInteger, Min: 1, Max: 10000, Default: 8},
 		{Path: "quality.hold_timeout", Group: "transparent", Type: FieldTypeDuration, Min: 5, Max: 600, Default: "30s"},
-		{Path: "quality.attempt_timeout", Group: "transparent", Type: FieldTypeDuration, Min: 5, Max: 600, Default: "60s"},
-		{Path: "quality.request_timeout", Group: "transparent", Type: FieldTypeDuration, Min: 5, Max: 1800, Default: "120s"},
+		{Path: "quality.stream_idle_timeout", Group: "transparent", Type: FieldTypeDuration, Min: 5, Max: 600, Default: "90s"},
+		{Path: "quality.attempt_timeout", Group: "transparent", Type: FieldTypeDuration, Min: 5, Max: 600, Default: "120s"},
+		{Path: "quality.request_timeout", Group: "transparent", Type: FieldTypeDuration, Min: 5, Max: 1800, Default: "240s"},
 		{Path: "quality.hold_keepalive", Group: "transparent", Type: FieldTypeDuration, Min: 1, Max: 60, Default: "5s"},
 		{Path: "quality.hold_max_buffer_bytes", Group: "transparent", Type: FieldTypeInteger, Min: 1048576, Max: 67108864, Default: 4194304},
 		{Path: "quality.max_attempts", Group: "transparent", Type: FieldTypeInteger, Min: 1, Max: 8, Default: 4},

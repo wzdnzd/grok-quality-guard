@@ -267,8 +267,9 @@ plugins:
         min_passive_output_tokens: 32
         min_hold_output_tokens: 8
         hold_timeout: "30s"            # 首个可判定输出前的最长扣留
-        attempt_timeout: "60s"         # 单账号无新输出的超时，>= hold_timeout + 10s
-        request_timeout: "120s"        # 单次请求跨账号共享的总预算，>= attempt_timeout
+        stream_idle_timeout: "90s"     # 上游静默多久判定卡死，每收到一个可解析事件重置
+        attempt_timeout: "120s"        # 单账号单次尝试的总时长，>= max(hold_timeout + 10s, stream_idle_timeout)
+        request_timeout: "240s"        # 单次请求跨账号共享的总预算，>= attempt_timeout
         hold_keepalive: "5s"
         shadow_mode: false
         debug_logging: false             # 开启后每次判定额外写入诊断事件
@@ -325,7 +326,7 @@ plugins:
       events_limit: 1000
 ```
 
-配置使用严格 YAML 解码，未知字段（包括旧 `resin:` 配置块，以及已移除的 `passive_guard`、`transparent_guard`、`quality.soft_cross_verify`、`quality.thinking_cross_verify`、`quality.fail_closed`、`quality.stream_idle_timeout`、`quality.max_hold_total`）会直接报错，不会静默忽略。各字段都有取值范围校验，超出范围的值在加载时拒绝。
+配置使用严格 YAML 解码，未知字段（包括旧 `resin:` 配置块，以及已移除的 `passive_guard`、`transparent_guard`、`quality.soft_cross_verify`、`quality.thinking_cross_verify`、`quality.fail_closed`、`quality.max_hold_total`）会直接报错，不会静默忽略。各字段都有取值范围校验，超出范围的值在加载时拒绝。
 
 ### 自动处置
 
@@ -434,15 +435,24 @@ plugins:
 
 ### 超时与请求预算
 
-透明流使用三级超时，加载时校验 `hold_timeout + 10s <= attempt_timeout <= request_timeout`：
+透明流使用三级超时，加载时校验 `hold_timeout + 10s <= attempt_timeout`、`stream_idle_timeout <= attempt_timeout` 与 `attempt_timeout <= request_timeout`：
 
 | 配置 | 默认值 | 范围 | 说明 |
 | --- | ---: | ---: | --- |
 | `quality.hold_timeout` | `30s` | `5s..10m` | 出现首个可判定输出前的最长扣留时间 |
-| `quality.attempt_timeout` | `60s` | `hold_timeout+10s..10m` | 单账号无新增生成输出的空闲计时，超时即终止当前尝试并换号 |
-| `quality.request_timeout` | `120s` | `attempt_timeout..30m` | 单次请求所有账号尝试共享的总预算 |
+| `quality.stream_idle_timeout` | `90s` | `5s..10m` | 上游静默多久判定卡死；每收到一个可解析的上游事件就重置，注释 stub 与无法解析的字节不算 |
+| `quality.attempt_timeout` | `120s` | `hold_timeout+10s..10m` | 单账号单次尝试的总时长，覆盖首 Token 等待与扣留，超时即换号且不产生质量结论 |
+| `quality.request_timeout` | `240s` | `attempt_timeout..30m` | 单次请求所有账号尝试共享的总预算 |
+
+三个参数各管一件事：`stream_idle_timeout` 是活动性窗口，只要上游持续产生可解析事件就一直等待，长推理不会被误判卡死；`attempt_timeout` 是单账号单次尝试的累计上限；`request_timeout` 是整请求上限，超出后按耗尽策略收尾而不判质量。`stream_idle_timeout` 不能由 `attempt_timeout` 兼任，因为后者是累计值，会把首 Token 等待与扣留窗口叠加计算，健康的长推理会被提前斩断
 
 剩余预算不足最小校验窗口（`hold_timeout` 的一半，最多 `3s`）时，本次尝试以 `inconclusive` 结束，不判 `missing_thinking`，也不计入账号质量。仅有 `response.created` 或 reasoning stub 的静默流不会永久等待
+
+上游流在没有终止事件时关闭，按 `upstream_stream_incomplete` 归入传输失败：换号重试，不产生质量判定，也不计入账号 strike
+
+### 客户端取消
+
+客户端断开连接时，宿主通过 `request.complete`（`outcome=canceled`）通知插件，插件立即取消该请求的尝试上下文并关闭上游流。取消不换号、不结算、不写账号状态，也不记失败事件。实现上注册 `request_lifecycle_plugin` 能力，用请求元数据里的 `request_id` 关联到对应的尝试
 
 ### 传输错误与无代理运行
 

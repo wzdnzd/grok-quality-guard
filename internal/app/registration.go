@@ -31,6 +31,7 @@ type registrationCapability struct {
 	ExecutorModelScope     pluginapi.ExecutorModelScope `json:"executor_model_scope"`
 	ExecutorInputFormats   []string                     `json:"executor_input_formats,omitempty"`
 	ExecutorOutputFormats  []string                     `json:"executor_output_formats,omitempty"`
+	RequestLifecyclePlugin bool                         `json:"request_lifecycle_plugin"`
 	ResponseInterceptor    bool                         `json:"response_interceptor"`
 	StreamChunkInterceptor bool                         `json:"response_stream_interceptor"`
 	UsagePlugin            bool                         `json:"usage_plugin"`
@@ -93,8 +94,9 @@ func pluginRegistrationForLocale(locale string) registration {
 				{Name: "quality.min_passive_output_tokens", Type: pluginapi.ConfigFieldTypeInteger, Default: 32, Description: configDescription(locale, "quality.min_passive_output_tokens")},
 				{Name: "quality.min_hold_output_tokens", Type: pluginapi.ConfigFieldTypeInteger, Default: 8, Description: configDescription(locale, "quality.min_hold_output_tokens")},
 				{Name: "quality.hold_timeout", Type: pluginapi.ConfigFieldTypeString, Default: "30s", Description: configDescription(locale, "quality.hold_timeout")},
-				{Name: "quality.attempt_timeout", Type: pluginapi.ConfigFieldTypeString, Default: "60s", Description: configDescription(locale, "quality.attempt_timeout")},
-				{Name: "quality.request_timeout", Type: pluginapi.ConfigFieldTypeString, Default: "120s", Description: configDescription(locale, "quality.request_timeout")},
+				{Name: "quality.stream_idle_timeout", Type: pluginapi.ConfigFieldTypeString, Default: "90s", Description: configDescription(locale, "quality.stream_idle_timeout")},
+				{Name: "quality.attempt_timeout", Type: pluginapi.ConfigFieldTypeString, Default: "120s", Description: configDescription(locale, "quality.attempt_timeout")},
+				{Name: "quality.request_timeout", Type: pluginapi.ConfigFieldTypeString, Default: "240s", Description: configDescription(locale, "quality.request_timeout")},
 				{Name: "quality.hold_keepalive", Type: pluginapi.ConfigFieldTypeString, Default: "5s", Description: configDescription(locale, "quality.hold_keepalive")},
 				{Name: "quality.shadow_mode", Type: pluginapi.ConfigFieldTypeBoolean, Default: false, Description: configDescription(locale, "quality.shadow_mode")},
 				{Name: "quality.hold_max_buffer_bytes", Type: pluginapi.ConfigFieldTypeInteger, Default: 4194304, Description: configDescription(locale, "quality.hold_max_buffer_bytes")},
@@ -149,6 +151,7 @@ func pluginRegistrationForLocale(locale string) registration {
 			ExecutorModelScope:     pluginapi.ExecutorModelScopeBoth,
 			ExecutorInputFormats:   []string{"codex"},
 			ExecutorOutputFormats:  []string{"codex", "openai-response"},
+			RequestLifecyclePlugin: true,
 			ResponseInterceptor:    true,
 			StreamChunkInterceptor: true,
 			UsagePlugin:            true,

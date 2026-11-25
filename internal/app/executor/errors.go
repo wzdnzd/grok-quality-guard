@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -120,6 +121,40 @@ func (s *Service) readModelStreamErrorBody(ctx context.Context, streamID string)
 		}
 	}
 	return body
+}
+
+// errTransparentRequestCanceled marks a failure caused by the request context
+// ending, which is a client disconnect rather than an upstream or account
+// fault. Callers must treat it as an abort: no failover, no verdict, no strike.
+var errTransparentRequestCanceled = errors.New("transparent request canceled")
+
+// isTransparentCancelError reports whether a failure was caused by the request
+// context ending. The host reports a closed callback context as a plain error
+// string, so the text markers are checked alongside the context itself.
+func isTransparentCancelError(ctx context.Context, errValue error) bool {
+	if ctx != nil && ctx.Err() != nil {
+		return true
+	}
+	if errValue == nil {
+		return false
+	}
+	if errors.Is(errValue, context.Canceled) || errors.Is(errValue, errTransparentRequestCanceled) {
+		return true
+	}
+	// Only markers the host emits when the request's own callback context or
+	// model stream was torn down count. A generic "not open" or a plain read
+	// failure can be a real upstream fault that must still fail over.
+	text := strings.ToLower(errValue.Error())
+	for _, marker := range []string{
+		"host plugin callback instance is closed",
+		"host callback context closed",
+		"host model stream closed during startup",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func classifyTransparentTransportFailure(errValue error) (string, string) {

@@ -61,10 +61,13 @@ func (s *Service) Execute(request []byte) ([]byte, error) {
 	if len(request) == 0 || json.Unmarshal(request, &req) != nil {
 		return localizedErrorEnvelope(i18n.DefaultLocale, "invalid_request", "api.error.invalid_request", http.StatusBadRequest), nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := s.trackedRequestContext(req)
 	defer cancel()
 	result, errExecute := s.transparentExecute(ctx, req)
 	if errExecute != nil {
+		if ctx.Err() != nil {
+			return localizedErrorEnvelope(executorRequestLocale(req.Headers), "client_canceled", "api.error.client_canceled", 499), nil
+		}
 		return localizedErrorEnvelope(executorRequestLocale(req.Headers), "quality_degraded", "api.error.quality_degraded", http.StatusServiceUnavailable), nil
 	}
 	return okEnvelope(pluginapi.ExecutorResponse{Payload: result.Payload, Headers: result.Headers})
@@ -77,14 +80,32 @@ func (s *Service) ExecuteStream(request []byte) ([]byte, error) {
 	}
 	streamID := strings.TrimSpace(req.StreamID)
 	if streamID == "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		ctx, cancel := s.trackedRequestContext(req)
 		defer cancel()
 		result, errExecute := s.transparentExecuteBufferedStream(ctx, req)
 		if errExecute != nil {
+			if ctx.Err() != nil {
+				return localizedErrorEnvelope(executorRequestLocale(req.Headers), "client_canceled", "api.error.client_canceled", 499), nil
+			}
 			return localizedErrorEnvelope(executorRequestLocale(req.Headers), "quality_degraded", "api.error.quality_degraded", http.StatusServiceUnavailable), nil
 		}
 		return okEnvelope(StreamResponse{Headers: result.Headers, Chunks: result.Chunks})
 	}
 	s.startTransparentStreamBridge(req, streamID)
 	return okEnvelope(StreamResponse{Headers: sseHeaders()})
+}
+
+// trackedRequestContext builds the request budget and, when the host supplied a
+// lifecycle id, registers it so a client disconnect can stop the attempt
+// instead of failing over to another account.
+func (s *Service) trackedRequestContext(req Request) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	requestID := requestIDFromMetadata(req.Metadata)
+	if s.RegisterRequestCancel(requestID, cancel) {
+		return ctx, func() {
+			s.ReleaseRequestCancel(requestID)
+			cancel()
+		}
+	}
+	return ctx, cancel
 }

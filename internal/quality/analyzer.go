@@ -140,6 +140,19 @@ func (a *StreamAnalyzer) ProgressEvents() int {
 	return a.signals.ProgressEvents
 }
 
+// ParsedEventCount reports how many well-formed upstream events have been
+// observed. It counts control frames such as response.created, which carry no
+// quality signal but do prove the upstream is still working, and ignores
+// keepalive comments and unparseable bytes. The idle timer uses it so a long
+// reasoning step stays alive while a stream that only repeats comment stubs
+// still trips the timeout.
+func (a *StreamAnalyzer) ParsedEventCount() int {
+	if a == nil {
+		return 0
+	}
+	return a.signals.ParsedEvents
+}
+
 // Revision changes whenever an observed chunk changes a signal a quality
 // verdict depends on. Control frames such as response.created, empty item
 // announcements or keepalive comments leave it untouched, so the hold loop can
