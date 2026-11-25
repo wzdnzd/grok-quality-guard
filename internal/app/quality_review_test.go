@@ -130,7 +130,7 @@ func TestReviewEncryptedStreamNotBurst(t *testing.T) {
 			VisibleSpanMS:   test.span,
 			VisibleChunks:   6,
 		}
-		verdict := ClassifyQualityHold(sig, 8)
+		verdict := ClassifyQualityHold(sig, 8, true)
 		if verdict.Class != test.want {
 			t.Fatalf("span %d class = %q, want %q", test.span, verdict.Class, test.want)
 		}
@@ -158,32 +158,34 @@ func TestReviewHoldExpiryKeepsVisibleEncryptedStream(t *testing.T) {
 		VisibleSpanMS:   3000,
 		VisibleChunks:   6,
 	}
-	if verdict := ClassifyQualityHold(sig, 8); verdict.Action != qualitypkg.QualityActionDeliver || verdict.Class != qualitypkg.ClassNone {
+	if verdict := ClassifyQualityHold(sig, 8, true); verdict.Action != qualitypkg.QualityActionDeliver || verdict.Class != qualitypkg.ClassNone {
 		t.Fatalf("sustained stream at hold expiry = %#v, want deliver", verdict)
 	}
 	early := sig
 	early.VisibleSpanMS = 1000
-	if verdict := ClassifyQualityHold(early, 8); verdict.Action != qualitypkg.QualityActionDeliver || verdict.Class != qualitypkg.ClassNone {
+	if verdict := ClassifyQualityHold(early, 8, true); verdict.Action != qualitypkg.QualityActionDeliver || verdict.Class != qualitypkg.ClassNone {
 		t.Fatalf("visible stream at hold expiry = %#v, want deliver", verdict)
 	}
 	dump := sig
 	dump.VisibleChunks = 1
 	dump.VisibleSpanMS = 0
 	dump.VisibleTokens = 4
-	if verdict := ClassifyQualityHold(dump, 8); verdict.Class != qualitypkg.ClassBufferedBurst {
+	if verdict := ClassifyQualityHold(dump, 8, true); verdict.Class != qualitypkg.ClassBufferedBurst {
 		t.Fatalf("single-chunk hold dump = %#v, want buffered burst", verdict)
 	}
 	tiny := sig
 	tiny.VisibleChunks = 8
 	tiny.VisibleSpanMS = 3000
 	tiny.VisibleTokens = 4
-	if verdict := ClassifyQualityHold(tiny, 8); verdict.Class != qualitypkg.ClassBufferedBurst {
+	if verdict := ClassifyQualityHold(tiny, 8, true); verdict.Class != qualitypkg.ClassBufferedBurst {
 		t.Fatalf("long-span tiny hold dump = %#v, want buffered burst", verdict)
 	}
 }
 
 func TestReviewProbeRejectsBufferedBurst(t *testing.T) {
 	config := appconfig.DefaultQualityConfig()
+	// Probe dump checks follow burst_guard like every other timing check.
+	config.BurstGuard = true
 	sig := qualitypkg.Signals{
 		Terminal:        true,
 		FirstTokenMS:    100,
@@ -202,6 +204,10 @@ func TestReviewProbeRejectsBufferedBurst(t *testing.T) {
 	verdict := classifyProbeResult(sig, config, true, true)
 	if verdict.Class != qualitypkg.ClassBufferedBurst || verdict.Action != qualitypkg.QualityActionWithhold {
 		t.Fatalf("probe verdict = %#v, want buffered_burst withhold", verdict)
+	}
+	config.BurstGuard = false
+	if verdict := classifyProbeResult(sig, config, true, true); verdict.Action != qualitypkg.QualityActionDeliver {
+		t.Fatalf("probe verdict with burst_guard off = %#v, want deliver", verdict)
 	}
 }
 
@@ -459,7 +465,7 @@ func TestReviewEncryptedFastDeltasNotDump(t *testing.T) {
 		analyzer.ObserveChunk([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"word \"}\n\n"))
 		preview := analyzer.Preview()
 		preview.ReasoningRequired = true
-		if verdict := ClassifyQualityHold(preview, config.MinHoldOutputTokens); verdict.Action == qualitypkg.QualityActionWithhold {
+		if verdict := ClassifyQualityHold(preview, config.MinHoldOutputTokens, true); verdict.Action == qualitypkg.QualityActionWithhold {
 			t.Fatalf("healthy fast stream withheld at delta %d: %#v", index+1, verdict)
 		}
 	}
@@ -475,6 +481,7 @@ func TestReviewEncryptedFastDeltasNotDump(t *testing.T) {
 
 func TestReviewProbeSingleChunkDumpRejects(t *testing.T) {
 	config := appconfig.DefaultQualityConfig()
+	config.BurstGuard = true
 	sig := qualitypkg.Signals{
 		Terminal:        true,
 		HasThinking:     true,
@@ -751,8 +758,8 @@ func TestStreamingSemanticOnlyWithUsageIsNotABypass(t *testing.T) {
 	config.SoftTPS = 1e9
 	config.HardTPS = 2e9
 	analyzer := NewStreamAnalyzerWithProtocol(qualitypkg.ProtocolResponses)
-	// The stub stays just below the 710-byte floor for 355 reasoning tokens.
-	encrypted := strings.Repeat("A", 700)
+	// The stub stays just below the 355-byte floor for 355 reasoning tokens.
+	encrypted := strings.Repeat("A", 350)
 	analyzer.ObserveChunk([]byte(`data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","encrypted_content":"` + encrypted + `"}}` + "\n\n"))
 	analyzer.ObserveChunk([]byte(`data: {"type":"response.output_item.done","item":{"id":"call_1","type":"function_call","call_id":"call_1","name":"exec","arguments":"{}"}}` + "\n\n"))
 	analyzer.ObserveChunk([]byte(`data: {"type":"response.completed","response":{"id":"resp_1","usage":{"output_tokens":421,"output_tokens_details":{"reasoning_tokens":355}}}}` + "\n\n"))
@@ -767,8 +774,8 @@ func TestStreamingSemanticOnlyWithUsageIsNotABypass(t *testing.T) {
 	if !verdict.Signals.ReasoningRequired {
 		t.Fatalf("reasoning requirement was not preserved in evidence: %#v", verdict.Signals)
 	}
-	if verdict.Signals.EncryptedFloor != 710 {
-		t.Fatalf("encrypted floor = %d, want 710", verdict.Signals.EncryptedFloor)
+	if verdict.Signals.EncryptedFloor != 355 {
+		t.Fatalf("encrypted floor = %d, want 355", verdict.Signals.EncryptedFloor)
 	}
 }
 

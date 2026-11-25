@@ -640,7 +640,7 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 	probeReasoningRequired := reasoningRequiredForModelWithNonReasoning(probeModel(probeCfg), nil, qualityCfg.NonReasoningModels)
 	body := probeBody(probeCfg, probeReasoningRequired)
 	probeStartedAt := time.Now()
-	stream, errStream := s.executeModelStream(probeCtx, pluginapi.HostModelExecutionRequest{
+	probeRequest := pluginapi.HostModelExecutionRequest{
 		EntryProtocol:  probeCfg.EntryProtocol,
 		ExitProtocol:   probeCfg.ExitProtocol,
 		Model:          probeCfg.Model,
@@ -650,7 +650,18 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 		ForcedProvider: "xai",
 		AuthID:         account.ID,
 		ProxyURL:       strings.TrimSpace(authRawString(raw, "proxy_url")),
-	}, callbackID)
+	}
+	stream, errStream := s.executeModelStream(probeCtx, probeRequest, callbackID)
+	if reEnabled {
+		// The host picks the re-enabled auth up from its file asynchronously;
+		// give it time instead of reading the refusal as the account's fault.
+		for _, wait := range probeAuthReadyWaits {
+			if errStream == nil || !hostAuthNotReady(errStream) || !sleepContext(probeCtx, wait) {
+				break
+			}
+			stream, errStream = s.executeModelStream(probeCtx, probeRequest, callbackID)
+		}
+	}
 	if errStream != nil {
 		class, reason := classifyProbeTransportFailure(errStream)
 		return handleFailure(QualityVerdict{Class: class, Reason: reason}, errStream)

@@ -62,8 +62,23 @@ func (info attemptInfo) decorate(sig domain.Signals) domain.Signals {
 }
 
 const defaultTransparentStreamIdleTimeout = 90 * time.Second
-const defaultTransparentAttemptTimeout = 120 * time.Second
-const defaultTransparentRequestTimeout = 240 * time.Second
+
+// Grok keeps hidden reasoning silent until it ends; healthy xhigh answers took
+// up to 225 s to send their first byte in the quality lab, and agent turns with
+// large contexts think longer. One attempt must outlast that.
+const defaultTransparentAttemptTimeout = 600 * time.Second
+const defaultTransparentRequestTimeout = 900 * time.Second
+
+// transparentRunLimit is the hard ceiling of one request's goroutine: the
+// request budget plus room to report the outcome, and never under the former
+// fixed ten minutes.
+func transparentRunLimit(cfg QualityConfig) time.Duration {
+	limit := transparentRequestTimeout(cfg) + time.Minute
+	if limit < 10*time.Minute {
+		limit = 10 * time.Minute
+	}
+	return limit
+}
 
 // maxVerifyWindow caps the shortest hold that can still produce a verdict
 const maxVerifyWindow = 3 * time.Second

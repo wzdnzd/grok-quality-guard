@@ -38,6 +38,10 @@ type StreamAnalyzer struct {
 	retainText     bool
 	revision       uint64
 	signals        Signals
+	// Streamed tool-call arguments by call index, validated once the call is
+	// complete (chat finish_reason, anthropic content_block_stop).
+	chatToolArgs      map[int]*strings.Builder
+	anthropicToolArgs map[int]*strings.Builder
 }
 
 func NewStreamAnalyzer() *StreamAnalyzer {
@@ -177,6 +181,7 @@ type analyzerMark struct {
 	terminal   bool
 	semantic   bool
 	toolCall   bool
+	toolValid  bool
 	visibleNow bool
 }
 
@@ -192,6 +197,7 @@ func (a *StreamAnalyzer) mark() analyzerMark {
 		terminal:   a.signals.Terminal,
 		semantic:   a.signals.SemanticOutput,
 		toolCall:   a.signals.HasToolCall,
+		toolValid:  a.signals.ToolCallValid,
 		visibleNow: !a.firstVisibleAt.IsZero(),
 	}
 }
@@ -391,6 +397,7 @@ func (a *StreamAnalyzer) observeChat(payload map[string]any, now time.Time) {
 			if finish := strings.TrimSpace(asString(choice["finish_reason"])); finish != "" {
 				a.signals.Terminal = true
 				a.terminalAt = now
+				a.settleToolArguments(a.chatToolArgs)
 			}
 		}
 	}
@@ -405,6 +412,7 @@ func (a *StreamAnalyzer) observeChatDelta(delta map[string]any, now time.Time) {
 	}
 	if toolCalls, ok := delta["tool_calls"].([]any); ok && len(toolCalls) > 0 {
 		a.noteToolCall(now)
+		a.appendChatToolArguments(toolCalls)
 	}
 	if functionCall := delta["function_call"]; functionCall != nil {
 		a.noteToolCall(now)
@@ -424,6 +432,13 @@ func (a *StreamAnalyzer) observeChatMessage(message map[string]any, now time.Tim
 	}
 	if toolCalls, ok := message["tool_calls"].([]any); ok && len(toolCalls) > 0 {
 		a.noteToolCall(now)
+		for _, rawCall := range toolCalls {
+			call, _ := rawCall.(map[string]any)
+			function, _ := call["function"].(map[string]any)
+			if function != nil && validToolArguments(asString(function["arguments"])) {
+				a.signals.ToolCallValid = true
+			}
+		}
 	}
 }
 
@@ -461,6 +476,11 @@ func (a *StreamAnalyzer) observeResponses(payload map[string]any, now time.Time)
 	case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
 		if strings.TrimSpace(asString(payload["delta"])) != "" {
 			a.noteToolCall(now)
+		}
+	case "response.function_call_arguments.done":
+		if validToolArguments(asString(payload["arguments"])) {
+			a.noteToolCall(now)
+			a.signals.ToolCallValid = true
 		}
 	case "response.mcp_call_arguments.delta":
 		// Hosted MCP calls run server-side, so the answer still follows them.
@@ -537,11 +557,75 @@ func (a *StreamAnalyzer) observeResponsesItemMap(item map[string]any, now time.T
 		a.markFirstToken(now)
 		if responsesClientToolCall(itemType) {
 			a.signals.HasToolCall = true
+			if responsesToolCallComplete(itemType, item) {
+				a.signals.ToolCallValid = true
+			}
 		}
 		if responsesItemHasIdentity(item) {
 			a.noteProgress()
 		}
 		return 0
+	}
+}
+
+// responsesToolCallComplete reports a finished client tool call the client can
+// execute. The added event announces a function call with empty arguments, so
+// only the done item or the final output array satisfies it.
+func responsesToolCallComplete(itemType string, item map[string]any) bool {
+	switch itemType {
+	case "function_call":
+		return validToolArguments(asString(item["arguments"]))
+	case "custom_tool_call":
+		return strings.TrimSpace(asString(item["input"])) != ""
+	default:
+		return item["action"] != nil || item["operation"] != nil
+	}
+}
+
+// validToolArguments reports complete, well-formed function arguments: a JSON
+// object. Truncated or garbled arguments are not a call the client can run.
+func validToolArguments(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	return strings.HasPrefix(raw, "{") && json.Valid([]byte(raw))
+}
+
+// appendChatToolArguments collects streamed chat tool-call argument fragments
+// by call index until finish_reason marks them complete.
+func (a *StreamAnalyzer) appendChatToolArguments(toolCalls []any) {
+	for position, rawCall := range toolCalls {
+		call, _ := rawCall.(map[string]any)
+		function, _ := call["function"].(map[string]any)
+		if function == nil {
+			continue
+		}
+		index := position
+		if value, ok := call["index"].(float64); ok {
+			index = int(value)
+		}
+		a.chatToolArgs = appendToolArguments(a.chatToolArgs, index, asString(function["arguments"]))
+	}
+}
+
+func appendToolArguments(args map[int]*strings.Builder, index int, fragment string) map[int]*strings.Builder {
+	if args == nil {
+		args = make(map[int]*strings.Builder)
+	}
+	builder := args[index]
+	if builder == nil {
+		builder = &strings.Builder{}
+		args[index] = builder
+	}
+	builder.WriteString(fragment)
+	return args
+}
+
+// settleToolArguments validates the collected arguments of completed calls.
+func (a *StreamAnalyzer) settleToolArguments(args map[int]*strings.Builder) {
+	for _, builder := range args {
+		if validToolArguments(builder.String()) {
+			a.signals.ToolCallValid = true
+			return
+		}
 	}
 }
 
@@ -634,6 +718,17 @@ func (a *StreamAnalyzer) observeAnthropic(payload map[string]any, now time.Time)
 	case "message_stop":
 		a.signals.Terminal = true
 		a.terminalAt = now
+		a.settleToolArguments(a.anthropicToolArgs)
+	case "content_block_stop":
+		index := anthropicBlockIndex(payload)
+		if builder, ok := a.anthropicToolArgs[index]; ok {
+			// A tool_use block streams its input as JSON fragments; no fragment
+			// at all means the empty input object of the start event.
+			if raw := strings.TrimSpace(builder.String()); raw == "" || validToolArguments(raw) {
+				a.signals.ToolCallValid = true
+			}
+			delete(a.anthropicToolArgs, index)
+		}
 	case "", "message":
 		if content, ok := payload["content"]; ok {
 			a.observeAnthropicContent(content, now)
@@ -662,6 +757,7 @@ func (a *StreamAnalyzer) observeAnthropic(payload map[string]any, now time.Time)
 			a.signals.SemanticOutput = true
 		case "tool_use":
 			a.noteToolCall(now)
+			a.anthropicToolArgs = appendToolArguments(a.anthropicToolArgs, anthropicBlockIndex(payload), "")
 		case "server_tool_use":
 			a.signals.SemanticOutput = true
 			a.markFirstToken(now)
@@ -686,9 +782,18 @@ func (a *StreamAnalyzer) observeAnthropic(payload map[string]any, now time.Time)
 				a.markFirstToken(now)
 				a.noteProgress()
 			}
+			if builder, ok := a.anthropicToolArgs[anthropicBlockIndex(payload)]; ok {
+				builder.WriteString(asString(delta["partial_json"]))
+			}
 		}
 	}
 }
+
+func anthropicBlockIndex(payload map[string]any) int {
+	index, _ := payload["index"].(float64)
+	return int(index)
+}
+
 func (a *StreamAnalyzer) observeAnthropicContent(value any, now time.Time) {
 	parts, ok := value.([]any)
 	if !ok {
@@ -711,6 +816,9 @@ func (a *StreamAnalyzer) observeAnthropicContent(value any, now time.Time) {
 			a.signals.SemanticOutput = true
 		case "tool_use":
 			a.noteToolCall(now)
+			if _, ok := part["input"].(map[string]any); ok {
+				a.signals.ToolCallValid = true
+			}
 		case "server_tool_use":
 			a.signals.SemanticOutput = true
 			a.markFirstToken(now)

@@ -804,23 +804,23 @@ func TestDumpVerdictReleasesSustainedVisibleStream(t *testing.T) {
 		VisibleChunks:   12,
 		VisibleSpanMS:   224,
 	}
-	if verdict := ClassifyQualityHold(base, config.MinHoldOutputTokens); verdict.Action != qualitypkg.QualityActionDeliver || verdict.Class != qualitypkg.ClassNone {
+	if verdict := ClassifyQualityHold(base, config.MinHoldOutputTokens, true); verdict.Action != qualitypkg.QualityActionDeliver || verdict.Class != qualitypkg.ClassNone {
 		t.Fatalf("sustained visible stream with encrypted evidence produced %s/%s, want deliver", verdict.Action, verdict.Class)
 	}
 	starting := base
 	starting.VisibleChunks = 1
 	starting.VisibleSpanMS = 100
-	if verdict := ClassifyQualityHold(starting, config.MinHoldOutputTokens); verdict.Action != qualitypkg.QualityActionWait {
+	if verdict := ClassifyQualityHold(starting, config.MinHoldOutputTokens, true); verdict.Action != qualitypkg.QualityActionWait {
 		t.Fatalf("first visible chunk produced %s/%s, want wait", verdict.Action, verdict.Class)
 	}
 	base.Terminal = true
-	if verdict := ClassifyQualityHold(base, config.MinHoldOutputTokens); verdict.Action != qualitypkg.QualityActionDeliver || verdict.Class != qualitypkg.ClassNone {
+	if verdict := ClassifyQualityHold(base, config.MinHoldOutputTokens, true); verdict.Action != qualitypkg.QualityActionDeliver || verdict.Class != qualitypkg.ClassNone {
 		t.Fatalf("terminal fast stream produced %s/%s, want deliver", verdict.Action, verdict.Class)
 	}
 	single := base
 	single.VisibleChunks = 1
 	single.VisibleSpanMS = 0
-	if verdict := ClassifyQualityHold(single, config.MinHoldOutputTokens); !isDumpClass(verdict.Class) {
+	if verdict := ClassifyQualityHold(single, config.MinHoldOutputTokens, true); !isDumpClass(verdict.Class) {
 		t.Fatalf("single-chunk terminal dump was not caught: %#v", verdict)
 	}
 }

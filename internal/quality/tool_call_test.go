@@ -6,11 +6,11 @@ import (
 	"grok-quality-guard/internal/config"
 )
 
-// noReasoningToolCallSignals models the Codex continuation turns from the
-// field reports: grok-4.7 at xhigh effort emitted ~75-token function calls
-// with no reasoning bill and no evidence, in one burst after a 2.1s prefill.
-// Healthy turns of the same size carried 245-294 reasoning tokens, so these
-// are the 0-thinking degraded stream grok2api keeps behind the gate.
+// noReasoningToolCallSignals models a Codex continuation turn: grok-4.7 at
+// xhigh effort emitted a ~75-token function call with no reasoning bill and
+// no evidence, in one burst after a 2.1s prefill. The quality lab sent the
+// same real continuation to three different accounts and all three answered
+// this way with a well-formed call, so the turn reflects the request.
 func noReasoningToolCallSignals() Signals {
 	return Signals{
 		Protocol:          ProtocolResponses,
@@ -22,6 +22,7 @@ func noReasoningToolCallSignals() Signals {
 		EvidenceCapable:   true,
 		SemanticOutput:    true,
 		HasToolCall:       true,
+		ToolCallValid:     true,
 		UsageReported:     true,
 		OutputTokens:      75,
 		FirstTokenKnown:   true,
@@ -30,36 +31,64 @@ func noReasoningToolCallSignals() Signals {
 	}
 }
 
-func TestToolCallWithoutReasoningIsMissingThinking(t *testing.T) {
+func TestValidToolCallWithoutReasoningIsDelivered(t *testing.T) {
 	cfg := config.DefaultQualityConfig()
 	sig := noReasoningToolCallSignals()
-	if verdict := ClassifyQualityHold(sig, cfg.MinHoldOutputTokens); verdict.Action != QualityActionWithhold || verdict.Class != ClassMissingThinking {
-		t.Fatalf("hold verdict = %#v, want missing_thinking withhold", verdict)
+	skipped := func(name string, verdict QualityVerdict) {
+		t.Helper()
+		if verdict.Action != QualityActionDeliver || verdict.Class != ClassNone || !verdict.Signals.ReasoningSkipped ||
+			verdict.Reason != "reason.detail.tool_call_without_reasoning_bill" {
+			t.Fatalf("%s = %#v, want delivered as a skipped-reasoning tool turn", name, verdict)
+		}
 	}
-	if verdict := classifyFinal(sig, cfg, true, cfg.MinHoldOutputTokens, true); verdict.Class != ClassMissingThinking {
-		t.Fatalf("final verdict = %#v, want missing_thinking", verdict)
-	}
+	skipped("hold", ClassifyQualityHold(sig, cfg.MinHoldOutputTokens, cfg.BurstGuard))
+	skipped("final", classifyFinal(sig, cfg, true, cfg.MinHoldOutputTokens, true))
+	nonStream := sig
+	nonStream.Streaming = false
+	skipped("non-stream", classifyNonStreamResult(nonStream, cfg, true, cfg.MinHoldOutputTokens))
+	passive := sig
+	passive.OutputTokens = 75
+	skipped("passive", classifyPassiveAudit(passive, cfg))
 
+	// A short preamble before the call is still a tool turn.
 	preamble := sig
 	preamble.FirstVisible = true
 	preamble.VisibleTokens = 12
 	preamble.VisibleChunks = 3
 	preamble.VisibleSpanMS = 30
-	if verdict := classifyFinal(preamble, cfg, true, cfg.MinHoldOutputTokens, true); verdict.Class != ClassMissingThinking {
-		t.Fatalf("tool call with a preamble = %#v, want missing_thinking", verdict)
-	}
+	skipped("preamble", classifyFinal(preamble, cfg, true, cfg.MinHoldOutputTokens, true))
+}
 
-	nonStream := sig
-	nonStream.Streaming = false
-	if verdict := classifyNonStreamResult(nonStream, cfg, true, cfg.MinHoldOutputTokens); verdict.Class != ClassMissingThinking {
-		t.Fatalf("non-stream tool call = %#v, want missing_thinking", verdict)
+func TestToolCallExemptionStaysNarrow(t *testing.T) {
+	cfg := config.DefaultQualityConfig()
+	missing := func(name string, sig Signals) {
+		t.Helper()
+		if verdict := classifyFinal(sig, cfg, true, cfg.MinHoldOutputTokens, true); verdict.Class != ClassMissingThinking {
+			t.Fatalf("%s = %#v, want missing_thinking", name, verdict)
+		}
 	}
-	if verdict := classifyPassiveAudit(noReasoningToolCallSignals(), cfg); verdict.Class != ClassMissingThinking {
-		t.Fatalf("passive tool call = %#v, want missing_thinking", verdict)
-	}
+	// Arguments that never became a well-formed call are not a usable turn.
+	malformed := noReasoningToolCallSignals()
+	malformed.ToolCallValid = false
+	missing("malformed tool call", malformed)
+
+	// Billed reasoning without its evidence is the degraded signature.
+	billed := noReasoningToolCallSignals()
+	billed.ReasoningTokens = 190
+	billed.OutputTokens = 265
+	missing("billed reasoning without evidence", billed)
+
+	// A full answer next to the call is judged as an answer.
+	answer := noReasoningToolCallSignals()
+	answer.FirstVisible = true
+	answer.VisibleTokens = 120
+	answer.VisibleChunks = 20
+	answer.VisibleSpanMS = 900
+	missing("long answer beside the call", answer)
 
 	// Only a turn with neither output nor a bill is semantic-only.
-	semantic := sig
+	semantic := noReasoningToolCallSignals()
+	semantic.ToolCallValid = false
 	semantic.OutputTokens = 0
 	semantic.UsageReported = false
 	if verdict := classifyFinal(semantic, cfg, true, cfg.MinHoldOutputTokens, true); verdict.Class != ClassNone {
@@ -73,9 +102,10 @@ func TestToolCallInProgressWaitsForItsBill(t *testing.T) {
 		SemanticOutput:    true,
 		HasToolCall:       true,
 	}
-	if verdict := ClassifyQualityHold(calling, 8); verdict.Action != QualityActionWait {
+	if verdict := ClassifyQualityHold(calling, 8, false); verdict.Action != QualityActionWait {
 		t.Fatalf("tool call before its terminal event = %#v, want wait", verdict)
 	}
+	// Short text may still be followed by a tool call and the terminal bill.
 	preamble := Signals{
 		ReasoningExplicit: true,
 		FirstVisible:      true,
@@ -83,10 +113,72 @@ func TestToolCallInProgressWaitsForItsBill(t *testing.T) {
 		VisibleChunks:     3,
 		VisibleSpanMS:     60,
 	}
-	// grok2api withholds a no-evidence visible stream once it reaches the
-	// hold floor; a preamble is not given extra room.
-	if verdict := ClassifyQualityHold(preamble, 8); verdict.Class != ClassMissingThinking {
-		t.Fatalf("no-evidence preamble = %#v, want missing_thinking", verdict)
+	if verdict := ClassifyQualityHold(preamble, 8, false); verdict.Action != QualityActionWait {
+		t.Fatalf("short preamble mid-stream = %#v, want wait", verdict)
+	}
+	// Once the hold expires, or the text outgrows a preamble, it is an answer.
+	expired := preamble
+	expired.HoldExpired = true
+	if verdict := ClassifyQualityHold(expired, 8, false); verdict.Class != ClassMissingThinking {
+		t.Fatalf("preamble at hold expiry = %#v, want missing_thinking", verdict)
+	}
+	long := preamble
+	long.VisibleTokens = 64
+	if verdict := ClassifyQualityHold(long, 8, false); verdict.Class != ClassMissingThinking {
+		t.Fatalf("64 visible tokens without evidence = %#v, want missing_thinking", verdict)
+	}
+}
+
+func TestAnalyzerMarksCompleteToolCalls(t *testing.T) {
+	sse := func(lines ...string) []byte {
+		out := ""
+		for _, line := range lines {
+			out += "data: " + line + "\n\n"
+		}
+		return []byte(out)
+	}
+
+	responses := NewStreamAnalyzerWithProtocol(ProtocolResponses)
+	responses.ObserveChunk(sse(`{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"exec_command","arguments":""}}`))
+	if sig := responses.Preview(); !sig.HasToolCall || sig.ToolCallValid {
+		t.Fatalf("announced call = %#v, want a tool call that is not complete yet", sig)
+	}
+	responses.ObserveChunk(sse(`{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{\"cmd\":\"ls\"}"}}`))
+	if !responses.Preview().ToolCallValid {
+		t.Fatal("completed function call was not marked valid")
+	}
+
+	truncated := NewStreamAnalyzerWithProtocol(ProtocolResponses)
+	truncated.ObserveChunk(sse(`{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"ls"}}`))
+	if sig := truncated.Preview(); !sig.HasToolCall || sig.ToolCallValid {
+		t.Fatalf("truncated arguments = %#v, want an invalid tool call", sig)
+	}
+
+	chat := NewStreamAnalyzerWithProtocol(ProtocolChat)
+	chat.ObserveChunk(sse(
+		`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"exec_command","arguments":"{\"cmd\":"}}]}}]}`,
+		`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"ls\"}"}}]}}]}`,
+	))
+	if chat.Preview().ToolCallValid {
+		t.Fatal("chat call counted as complete before finish_reason")
+	}
+	chat.ObserveChunk(sse(`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`))
+	if !chat.Preview().ToolCallValid {
+		t.Fatal("chat call with complete arguments was not marked valid")
+	}
+
+	anthropic := NewStreamAnalyzerWithProtocol(ProtocolAnthropic)
+	anthropic.ObserveChunk(sse(
+		`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{}}}`,
+		`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":"}}`,
+		`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"ls\"}"}}`,
+	))
+	if anthropic.Preview().ToolCallValid {
+		t.Fatal("anthropic call counted as complete before content_block_stop")
+	}
+	anthropic.ObserveChunk(sse(`{"type":"content_block_stop","index":1}`))
+	if !anthropic.Preview().ToolCallValid {
+		t.Fatal("anthropic call with complete input was not marked valid")
 	}
 }
 

@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 
 	appauth "grok-quality-guard/internal/app/auth"
+	probeapp "grok-quality-guard/internal/app/probe"
 	appstate "grok-quality-guard/internal/app/state"
 	appconfig "grok-quality-guard/internal/config"
 	qualitypkg "grok-quality-guard/internal/quality"
@@ -109,6 +111,89 @@ func TestProbeSuccessReenablesCooldownAndPreservesStrike(t *testing.T) {
 		t.Fatal("successful probe left auth disabled")
 	}
 	assertNoGuardMetadata(t, saved)
+}
+
+// cooledAccountForProbe marks auth-1 as a guard cooldown that has expired, so
+// the probe re-enables it before probing.
+func cooledAccountForProbe(t *testing.T, plugin *Plugin) {
+	t.Helper()
+	if errUpdate := plugin.stateStore().Update(func(state *appstate.State) error {
+		account := plugin.ensureStateAccount(state, "auth-1")
+		account.State = appstate.StateCooling
+		account.DisableKind = appstate.DisableKindCooldown
+		account.CooldownUntil = time.Now().UTC().Add(-time.Minute)
+		return nil
+	}); errUpdate != nil {
+		t.Fatal(errUpdate)
+	}
+}
+
+// The host loads a re-enabled auth file asynchronously and refuses a pinned
+// request until then. Live, this refusal cooled about 290 accounts an hour
+// again right after their cooldown ended; the probe must wait it out.
+func TestProbeWaitsForHostToLoadReenabledAuth(t *testing.T) {
+	restore := probeapp.SetAuthReadyWaits([]time.Duration{time.Millisecond, time.Millisecond, time.Millisecond})
+	defer restore()
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{"disabled": true})
+	host := newMockHostCall(entries, auths)
+	notLoaded := errors.New("host_call_failed: auth_not_found: no auth available (providers=xai, model=grok-4.7)")
+	host.scriptStreamError("auth-1", notLoaded, notLoaded)
+	visible := strings.Repeat("reliable systems need careful design. ", 10) + "\\nQUALITY_OK"
+	host.scriptStream("auth-1", []pluginapi.HostModelStreamReadResponse{
+		streamData("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"plan carefully\"}}]}\n\n"),
+		streamData("data: {\"choices\":[{\"delta\":{\"content\":\"" + visible + "\"}}]}\n\n"),
+		streamData("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"completion_tokens\":120,\"completion_tokens_details\":{\"reasoning_tokens\":1}}}\n\n"),
+		{Done: true},
+	}...)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.Quality.SoftTPS = 1e9
+		cfg.Quality.HardTPS = 2e9
+	})
+	cooledAccountForProbe(t, plugin)
+	if errProbe := plugin.ProbeAccount(context.Background(), "auth-1", true, "callback-1"); errProbe != nil {
+		t.Fatal(errProbe)
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.State != appstate.StateHealthy || account.ErrorStrikes != 0 {
+		t.Fatalf("probe did not recover once the host loaded the auth: %#v", account)
+	}
+	saved, errDecode := rawAuthToMap(host.saves["auth-1"])
+	if errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	if appauth.Disabled(saved) {
+		t.Fatal("recovered auth was left disabled")
+	}
+}
+
+// When the host never loads the auth, the refusal still says nothing about
+// the account: no strike, and the auth goes back to its cooldown for a later
+// probe instead of a probe_error cooldown.
+func TestProbeHostAuthNotReadyIsNotBlamed(t *testing.T) {
+	restore := probeapp.SetAuthReadyWaits([]time.Duration{time.Millisecond, time.Millisecond})
+	defer restore()
+	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", map[string]any{"disabled": true})
+	host := newMockHostCall(entries, auths)
+	notLoaded := errors.New("host_call_failed: auth_not_found: no auth available (providers=xai, model=grok-4.7)")
+	host.scriptStreamError("auth-1", notLoaded, notLoaded, notLoaded)
+	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
+		cfg.Quality.ConsecutiveErrors = 1
+	})
+	cooledAccountForProbe(t, plugin)
+	if errProbe := plugin.ProbeAccount(context.Background(), "auth-1", true, "callback-1"); errProbe != nil {
+		t.Fatal(errProbe)
+	}
+	account, _ := plugin.stateAccount("auth-1")
+	if account.ErrorStrikes != 0 || (account.LastAttempt != nil && account.LastAttempt.Class == qualitypkg.ClassProbeError) {
+		t.Fatalf("host refusal counted against the account: %#v", account)
+	}
+	saved, errDecode := rawAuthToMap(host.saves["auth-1"])
+	if errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	if !appauth.Disabled(saved) {
+		t.Fatal("auth the host never loaded was left enabled without a passing probe")
+	}
 }
 
 func TestProbeParsesHostLineChunksWithoutNewlines(t *testing.T) {
@@ -961,7 +1046,7 @@ func TestProbeStrongCredentialRejectionDisablesAuth(t *testing.T) {
 func TestProbeBroadTransportErrorCountsAndStopsPendingLoop(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "user@example.com", nil)
 	host := newMockHostCall(entries, auths)
-	readError := "no auth available"
+	readError := "read tcp: connection reset by peer"
 	host.scriptStreamSequence("auth-1",
 		[]pluginapi.HostModelStreamReadResponse{{Error: readError, Done: true}},
 		[]pluginapi.HostModelStreamReadResponse{{Error: readError, Done: true}},

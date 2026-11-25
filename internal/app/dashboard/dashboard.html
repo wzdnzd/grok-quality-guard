@@ -6910,7 +6910,7 @@
         policyChip(i18n.t('ui.tps_thresholds'), i18n.t('ui.soft_hard_values', { soft: num(quality.soft_tps, 1), hard: num(quality.hard_tps, 1) })),
         policyChip(i18n.t('ui.consecutive_thresholds'), i18n.t('ui.soft_error_missing_thinking_values', { soft: num(quality.consecutive_soft || 2), errors: num(quality.consecutive_errors || 2), thinking: num(quality.consecutive_missing_thinking || 2) })),
         policyChip(i18n.t('ui.cross_verify'), i18n.t('ui.cross_verify_' + (quality.cross_verify || 'thinking'))),
-        policyChip(i18n.t('ui.transparent_stream_protection'), i18n.t('ui.transparent_budget_values', { hold: quality.hold_timeout || '30s', idle: quality.stream_idle_timeout || '90s', attempt: quality.attempt_timeout || '120s', request: quality.request_timeout || '240s', attempts: num(quality.max_attempts || 4) })),
+        policyChip(i18n.t('ui.transparent_stream_protection'), i18n.t('ui.transparent_budget_values', { hold: quality.hold_timeout || '30s', idle: quality.stream_idle_timeout || '90s', attempt: quality.attempt_timeout || '600s', request: quality.request_timeout || '900s', attempts: num(quality.max_attempts || 4) })),
         policyChip(i18n.t('ui.active_probes'), i18n.t('ui.scan_concurrency_queue_values', { scan: String(probe.scan_interval || '15s'), concurrency: num(probe.concurrency || 1), queue: num(probe.queue_size || 10000) }))
       ].join('');
       document.getElementById('policyModeBadge').textContent = modeLabel(policy);
@@ -10219,14 +10219,14 @@
       setValue('p_min_hold_output', quality.min_hold_output_tokens || 8);
       setValue('p_hold_timeout', quality.hold_timeout || '30s');
       setValue('p_stream_idle_timeout', quality.stream_idle_timeout || '90s');
-      setValue('p_attempt_timeout', quality.attempt_timeout || '120s');
-      setValue('p_request_timeout', quality.request_timeout || '240s');
+      setValue('p_attempt_timeout', quality.attempt_timeout || '600s');
+      setValue('p_request_timeout', quality.request_timeout || '900s');
       setValue('p_hold_keepalive', quality.hold_keepalive || '5s');
       setChecked('p_shadow_mode', quality.shadow_mode === true);
       setChecked('p_debug_logging', quality.debug_logging === true);
       setValue('p_hold_max_bytes', quality.hold_max_buffer_bytes || 4194304);
       setValue('p_min_encrypted_bytes', quality.min_encrypted_bytes || 256);
-      setValue('p_encrypted_per_token', quality.encrypted_bytes_per_reasoning_token || 2);
+      setValue('p_encrypted_per_token', quality.encrypted_bytes_per_reasoning_token || 1);
       setValue('p_missing_cooldown', quality.missing_thinking_cooldown || '12h');
       setValue('p_empty_cooldown', quality.empty_stream_cooldown || '15m');
       setValue('p_max_attempts', quality.max_attempts || 4);
@@ -10304,7 +10304,7 @@
       policy.quality.debug_logging = document.getElementById('p_debug_logging').checked;
       policy.quality.hold_max_buffer_bytes = numberValue('p_hold_max_bytes', 4194304);
       policy.quality.min_encrypted_bytes = numberValue('p_min_encrypted_bytes', 256);
-      policy.quality.encrypted_bytes_per_reasoning_token = numberValue('p_encrypted_per_token', 2);
+      policy.quality.encrypted_bytes_per_reasoning_token = numberValue('p_encrypted_per_token', 1);
       policy.quality.missing_thinking_cooldown = valueOf('p_missing_cooldown');
       policy.quality.empty_stream_cooldown = valueOf('p_empty_cooldown');
       policy.quality.max_attempts = numberValue('p_max_attempts', 4);

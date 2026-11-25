@@ -90,9 +90,14 @@ func TestTPSAndBurstClassification(t *testing.T) {
 		VisibleSpanMS:   150,
 		VisibleChunks:   2,
 	}
-	verdict := classifyFinal(sig, config, true, 8, true)
+	burstCfg := config
+	burstCfg.BurstGuard = true
+	verdict := classifyFinal(sig, burstCfg, true, 8, true)
 	if verdict.Class != ClassBufferedBurst {
 		t.Fatalf("class = %q, want buffered_burst (%#v)", verdict.Class, verdict.Signals)
+	}
+	if verdict := classifyFinal(sig, config, true, 8, true); verdict.Class == ClassBufferedBurst {
+		t.Fatalf("buffered_burst fired with burst_guard off: %#v", verdict)
 	}
 	hard := classifyFinal(Signals{
 		Terminal:          true,
@@ -114,6 +119,8 @@ func TestTPSAndBurstClassification(t *testing.T) {
 
 func TestDumpClassesHavePriority(t *testing.T) {
 	config := config.DefaultQualityConfig()
+	// The timing dump checks only run with burst_guard on.
+	config.BurstGuard = true
 	cipher := Signals{
 		Streaming:      true,
 		Terminal:       true,
