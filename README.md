@@ -40,6 +40,8 @@ max(min_encrypted_bytes, reasoning_tokens * encrypted_bytes_per_reasoning_token)
 
 主动探测与透明请求一样会请求 `include: ["reasoning.encrypted_content"]`。Grok 只有在请求时才返回推理密文，缺少该字段时不输出推理摘要的账号没有任何思考证据，每次探测都会被判为 `missing_thinking`
 
+探测模型支持推理时，探测请求同时带 `reasoning.effort: "high"`。探测把缺少思考当作明确要求推理后的结果来判定，请求体必须真的要求推理，而不是让上游自行决定档位
+
 以下内容不作为思考证据：
 
 - 空 reasoning item

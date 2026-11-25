@@ -635,7 +635,10 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	body := probeBody(probeCfg)
+	// The classifier below judges missing thinking as an explicit request, so
+	// the body must actually ask for reasoning on models that support it.
+	probeReasoningRequired := reasoningRequiredForModelWithNonReasoning(probeModel(probeCfg), nil, qualityCfg.NonReasoningModels)
+	body := probeBody(probeCfg, probeReasoningRequired)
 	probeStartedAt := time.Now()
 	stream, errStream := s.executeModelStream(probeCtx, pluginapi.HostModelExecutionRequest{
 		EntryProtocol:  probeCfg.EntryProtocol,
@@ -705,7 +708,6 @@ func (s *Service) ProbeAccount(ctx context.Context, authID string, force bool, c
 	terminal = sig.Terminal
 	sig.DurationMS = time.Since(probeStartedAt).Milliseconds()
 	markerOK := matchProbeMarker(sig.VisibleText, probeMarker)
-	probeReasoningRequired := reasoningRequiredForModelWithNonReasoning(probeCfg.Model, body, qualityCfg.NonReasoningModels)
 	// An active probe asks for reasoning on a protocol that can expose it, so
 	// its missing-thinking verdict is always a hard one.
 	sig.ReasoningExplicit = probeReasoningRequired
@@ -832,13 +834,23 @@ func matchProbeMarker(text, expected string) bool {
 	}
 	return false
 }
-func probeBody(cfg ProbeConfig) []byte {
-	model := strings.TrimSpace(cfg.Model)
-	if model == "" {
-		model = "grok-4.5"
+
+// probeReasoningEffort is requested on every reasoning probe. Without it the
+// upstream picks its own effort while the classifier treats a missing-thinking
+// result as explicitly requested reasoning. Every xAI reasoning model in the
+// host catalog accepts "high".
+const probeReasoningEffort = "high"
+
+func probeModel(cfg ProbeConfig) string {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		return model
 	}
+	return "grok-4.5"
+}
+
+func probeBody(cfg ProbeConfig, reasoning bool) []byte {
 	body := map[string]any{
-		"model":             model,
+		"model":             probeModel(cfg),
 		"stream":            true,
 		"max_output_tokens": cfg.MaxOutputTokens,
 		// Grok returns encrypted reasoning only when it is requested. Without
@@ -854,6 +866,9 @@ func probeBody(cfg ProbeConfig) []byte {
 				"text": probePrompt,
 			}},
 		}},
+	}
+	if reasoning {
+		body["reasoning"] = map[string]any{"effort": probeReasoningEffort}
 	}
 	raw, _ := json.Marshal(body)
 	return raw
