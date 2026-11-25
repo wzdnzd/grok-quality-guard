@@ -21,6 +21,10 @@ func GenerationWindowMS(durationMS, firstTokenMS int64) int64 {
 	return generationWindowMS(durationMS, firstTokenMS)
 }
 
+// SignalGenerationWindowMS is the TPS denominator for a complete sample,
+// including the hidden-reasoning correction.
+func SignalGenerationWindowMS(sig Signals) int64 { return signalGenerationWindowMS(sig) }
+
 func QualityIsBurstDump(sig Signals, minOutput int64) bool { return qualityIsBurstDump(sig, minOutput) }
 
 func IsDumpClass(class string) bool { return isDumpClass(class) }

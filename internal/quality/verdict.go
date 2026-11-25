@@ -75,6 +75,22 @@ func generationWindowMS(durationMS, firstTokenMS int64) int64 {
 	return tail
 }
 
+// signalGenerationWindowMS is the TPS denominator for one sample. Billed
+// reasoning that never streamed as text was generated while the stream stayed
+// silent, so those tokens sit inside the first-token wait and the tail after
+// it only times the answer. Dividing the whole bill by that tail turned field
+// probes with 1000-2000 hidden reasoning tokens and a 1.0-1.5s tail into
+// 1000-1500 tok/s and cooled the account as hard_tps; the burst correction
+// above misses them because their tail is just over one second. The full
+// duration is the only window that contains every billed token. Streamed
+// reasoning marks the first token itself, so its tail already covers it.
+func signalGenerationWindowMS(sig Signals) int64 {
+	if sig.ReasoningTokens > 0 && !sig.HasReasoningDelta && sig.DurationMS > 0 {
+		return sig.DurationMS
+	}
+	return generationWindowMS(sig.DurationMS, sig.FirstTokenMS)
+}
+
 func generationTailMS(durationMS, firstTokenMS int64) int64 {
 	if durationMS <= 0 {
 		return 0
@@ -397,7 +413,7 @@ func classifyOutputSpeed(sig Signals, cfg config.QualityConfig, failClosed bool)
 	if qualitySpeedSkipped(sig) {
 		return ClassNone, 0, 0
 	}
-	genMS := generationWindowMS(sig.DurationMS, sig.FirstTokenMS)
+	genMS := signalGenerationWindowMS(sig)
 	if genMS <= 0 || sig.OutputTokens <= 0 {
 		return ClassNone, 0, genMS
 	}
@@ -441,7 +457,7 @@ func classifyFinal(sig Signals, cfg config.QualityConfig, reasoningRequired bool
 	if sig.OutputTokens <= 0 {
 		sig.OutputTokens = sig.VisibleTokens
 	}
-	sig.GenerationMS = generationWindowMS(sig.DurationMS, sig.FirstTokenMS)
+	sig.GenerationMS = signalGenerationWindowMS(sig)
 	sig.TPS = tps(sig.OutputTokens, sig.GenerationMS)
 	sig.Streaming = streaming
 	if isEmptyStream(sig) {
@@ -561,7 +577,7 @@ func classifyPassiveAudit(sig Signals, cfg config.QualityConfig) QualityVerdict 
 	if sig.EncryptedBytes > 0 && sig.EncryptedBytes >= sig.EncryptedFloor {
 		sig.HasThinking = true
 	}
-	sig.GenerationMS = generationWindowMS(sig.DurationMS, sig.FirstTokenMS)
+	sig.GenerationMS = signalGenerationWindowMS(sig)
 	sig.TPS = tps(sig.OutputTokens, sig.GenerationMS)
 	thinkingOutput := qualityThinkingOutput(sig)
 	thinkingEligible := cfg.ThinkingGuard && sig.ReasoningRequired && thinkingOutput >= cfg.MinPassiveOutputTokens

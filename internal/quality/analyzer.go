@@ -994,7 +994,7 @@ func (a *StreamAnalyzer) snapshot(final bool) Signals {
 		sig.VisibleGapMaxMS, sig.VisibleGapMedMS = qualityGapStats(a.visibleGaps)
 	}
 	sig.DurationMS = durationMS(a.startedAt, end)
-	sig.GenerationMS = generationWindowMS(sig.DurationMS, sig.FirstTokenMS)
+	sig.GenerationMS = signalGenerationWindowMS(sig)
 	sig.TPS = tps(sig.OutputTokens, sig.GenerationMS)
 	if final && a.retainText {
 		sig.VisibleText = a.visibleText.String()
