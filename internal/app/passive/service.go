@@ -212,7 +212,7 @@ func (s *Service) HandleUsage(request []byte) {
 		}
 		sig.OutputTokens = record.Detail.OutputTokens
 		sig.ReasoningTokens = quality.MaxInt64(0, record.Detail.ReasoningTokens)
-		sig.GenerationMS = quality.GenerationWindowMS(sig.DurationMS, sig.FirstTokenMS)
+		sig.GenerationMS = quality.SignalGenerationWindowMS(sig)
 		sig.TPS = quality.TPS(sig.OutputTokens, sig.GenerationMS)
 	}
 	sig.ReasoningRequired = reasoningNeeded

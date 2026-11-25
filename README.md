@@ -51,9 +51,13 @@ TPS 使用总 output tokens，其中包含 reasoning tokens：
 
 ```text
 tail = duration - firstToken
-generationWindow = tail，若 tail < firstToken 且 tail < 1000ms 则取 duration
+generationWindow = duration，若有推理账单但流中没有推理增量（隐藏推理）
+generationWindow = duration，若 tail < firstToken 且 tail < 1000ms
+generationWindow = tail，其余情况
 TPS = outputTokens * 1000 / generationWindow
 ```
+
+隐藏推理在首 token 之前的静默等待中生成，尾段只覆盖之后的回答。用尾段去除整份账单，会把线上 1000–2000 个隐藏推理 token、尾段 1.0–1.5 秒的健康探测算成 1000–1500 tok/s 并按 `hard_tps` 冷却；这类尾段刚好超过 1 秒，下面的突发修正覆盖不到。只有完整时长包含了所有计费 token。流式输出推理增量时首 token 即推理开始，尾段已经覆盖推理，仍按尾段计算，真正在 1 秒内到达上千 token 的流照样命中阈值。
 
 尾段比等待时间还短且不足 1 秒，说明输出是在等待之后一次性到达的（工具调用参数、隐藏推理、中间链路缓冲），这段时间只反映传输，所以改用完整时长作为生成时间的上界。参考实现只在有推理账单时做这一修正，导致 Codex 一次 75 token、50ms 内到达的工具调用被算成 1500 tok/s。输出少于 `min_passive_output_tokens`（默认 32）的样本只记录 TPS，不做速度判定。`burst_guard` 的突发检测仍沿用参考实现的到达窗口，但不检测客户端工具调用。
 

@@ -36,6 +36,57 @@ func TestGenerationWindowCorrectionBoundaries(t *testing.T) {
 	}
 }
 
+// hiddenReasoningProbeSignals is a field probe that was cooled as hard_tps:
+// 1007 reasoning tokens were produced during a silent 15s wait, then a
+// 66-token answer streamed inside a 1004ms tail.
+func hiddenReasoningProbeSignals() Signals {
+	return Signals{
+		Protocol:        ProtocolResponses,
+		Streaming:       true,
+		Terminal:        true,
+		UsageReported:   true,
+		FirstVisible:    true,
+		FirstTokenKnown: true,
+		FirstTokenMS:    15177,
+		DurationMS:      16181,
+		OutputTokens:    1065,
+		ReasoningTokens: 1007,
+		VisibleTokens:   66,
+		VisibleChunks:   20,
+		VisibleSpanMS:   900,
+		EncryptedBytes:  4096,
+	}
+}
+
+func TestHiddenReasoningIsTimedOverTheWholeStream(t *testing.T) {
+	cfg := config.DefaultQualityConfig()
+	sig := hiddenReasoningProbeSignals()
+	if class, speed, gen := classifyOutputSpeed(sig, cfg, false); class != ClassNone || gen != sig.DurationMS || speed > 100 {
+		t.Fatalf("hidden reasoning = %q at %.0f tok/s over %dms, want none over the full stream", class, speed, gen)
+	}
+	if verdict := classifyProbeResult(sig, cfg, true, true); verdict.Class != ClassNone {
+		t.Fatalf("probe verdict = %#v, want healthy", verdict)
+	}
+
+	// Streamed reasoning starts the first-token clock, so the same counts did
+	// arrive inside the one-second tail and stay impossible.
+	streamed := sig
+	streamed.HasReasoningDelta = true
+	if class, _, gen := classifyOutputSpeed(streamed, cfg, false); class != ClassHardTPS || gen != 1004 {
+		t.Fatalf("streamed reasoning = %q over %dms, want hard_tps over the tail", class, gen)
+	}
+
+	// A fabricated bill dumped right away is still impossible over the full stream.
+	dump := sig
+	dump.FirstTokenMS = 1000
+	dump.DurationMS = 1500
+	dump.ReasoningTokens = 2000
+	dump.OutputTokens = 2100
+	if class, _, _ := classifyOutputSpeed(dump, cfg, false); class != ClassHardTPS {
+		t.Fatalf("instant reasoning dump = %q, want hard_tps", class)
+	}
+}
+
 func TestEncryptedContentDeduplication(t *testing.T) {
 	// One copy stays below the 3000-byte floor, while a double count would
 	// clear it, so the test fails if the repeated item is summed.
