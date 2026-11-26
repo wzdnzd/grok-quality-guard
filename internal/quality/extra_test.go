@@ -236,7 +236,7 @@ func TestResponsesEncryptedThinking(t *testing.T) {
 
 func TestReasoningStartCommentDoesNotHideDataInSameEvent(t *testing.T) {
 	analyzer := NewStreamAnalyzer()
-	analyzer.ObserveChunk([]byte(": grok2api-reasoning-start\ndata: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"))
+	analyzer.ObserveChunk([]byte(": provider-reasoning-start\ndata: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"))
 	sig := analyzer.Finalize(true)
 	if sig.VisibleTokens == 0 {
 		t.Fatal("visible data after a reasoning-start comment was ignored")
@@ -318,7 +318,7 @@ func TestReasoningStubSettlesMissingThinkingOnceVisibleOutputStreams(t *testing.
 func TestStreamProgressEventsTrackGeneratedOutputOnly(t *testing.T) {
 	analyzer := NewStreamAnalyzerWithProtocol(qualityProtocolResponses)
 	analyzer.ObserveChunk([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n"))
-	analyzer.ObserveChunk([]byte(": grok2api-reasoning-start\n\n"))
+	analyzer.ObserveChunk([]byte(": provider-reasoning-start\n\n"))
 	analyzer.ObserveChunk([]byte("data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"reasoning\",\"summary\":[]}}\n\n"))
 	if got := analyzer.Preview().ProgressEvents; got != 0 {
 		t.Fatalf("control frames advanced progress: %d", got)

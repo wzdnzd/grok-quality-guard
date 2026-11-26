@@ -26,8 +26,8 @@ const (
 	qualityProtocolChat            = "chat"
 	qualityProtocolResponses       = "responses"
 	qualityProtocolAnthropic       = "anthropic"
-	qualityReasoningSSEComment     = ": grok2api-reasoning-start"
-	qualityReasoningEvidencePrefix = ": grok2api-reasoning-evidence"
+	qualityReasoningStartMarker    = "reasoning-start"
+	qualityReasoningEvidenceMarker = "reasoning-evidence"
 	defaultQualityMinOutput        = int64(8)
 	defaultQualityMinGenerationMS  = int64(1000)
 	defaultQualityMaxVisible       = int64(32)

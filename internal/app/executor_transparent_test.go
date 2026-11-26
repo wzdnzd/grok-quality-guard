@@ -1129,7 +1129,7 @@ func TestTransparentTPSIncludesPreStreamLatency(t *testing.T) {
 		t.Fatalf("reasoning tail should use full request duration: %#v", account.Metrics)
 	}
 	if account.Metrics.TPS <= 0 || account.Metrics.TPS > 500 {
-		t.Fatalf("transparent TPS = %.1f, want a sane grok2api-scale value: %#v", account.Metrics.TPS, account.Metrics)
+		t.Fatalf("transparent TPS = %.1f, want a sane streaming-scale value: %#v", account.Metrics.TPS, account.Metrics)
 	}
 }
 
@@ -1440,7 +1440,7 @@ func TestTransparentThinkingGuardDisabledEmitsAfterUnblockedHold(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	host := newMockHostCall(entries, auths)
 	host.scriptStream("auth-1",
-		streamData(": grok2api-reasoning-start\n\n"),
+		streamData(": provider-reasoning-start\n\n"),
 		streamData("data: {\"choices\":[{\"delta\":{\"content\":\"word word word word word word word word\"}}]}\n\n"),
 		streamData("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"completion_tokens\":12}}\n\n"),
 		pluginapi.HostModelStreamReadResponse{Done: true},
@@ -1523,7 +1523,7 @@ func TestTransparentSilentAfterResponseCreatedFailsOver(t *testing.T) {
 func TestTransparentStubOnlyIdleTimeoutDoesNotFailOpen(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	host := newMockHostCall(entries, auths)
-	host.scriptStream("auth-1", streamData(": grok2api-reasoning-start\n\n"))
+	host.scriptStream("auth-1", streamData(": provider-reasoning-start\n\n"))
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
 		enableTransparentForTest(cfg)
 		cfg.Quality.OnExhausted = "fail_unverified"
@@ -1942,7 +1942,7 @@ func TestTransparentStreamReasoningStubsDoNotResetIdleTimeout(t *testing.T) {
 	host := newMockHostCall(entries, auths)
 	stubs := make([]pluginapi.HostModelStreamReadResponse, 0, 100)
 	for index := 0; index < 100; index++ {
-		stubs = append(stubs, streamData(": grok2api-reasoning-start\n\n"))
+		stubs = append(stubs, streamData(": provider-reasoning-start\n\n"))
 	}
 	host.scriptStream("auth-1", stubs...)
 	plugin := newTestPlugin(t, host, func(cfg *appconfig.Config) {
@@ -2025,7 +2025,7 @@ func TestTransparentDegradedVisibleStreamFailsOverBeforeHoldTimeout(t *testing.T
 	entries, auths := twoGrokAuths(t)
 	host := newMockHostCall(entries, auths)
 	degraded := []pluginapi.HostModelStreamReadResponse{
-		streamData(": grok2api-reasoning-start\n\n"),
+		streamData(": provider-reasoning-start\n\n"),
 		streamData("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_degraded\",\"model\":\"grok-4.6\"}}\n\n"),
 		streamData("data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"rs_degraded\",\"type\":\"reasoning\",\"summary\":[]}}\n\n"),
 	}
@@ -2035,7 +2035,7 @@ func TestTransparentDegradedVisibleStreamFailsOverBeforeHoldTimeout(t *testing.T
 	// A stalled degraded account keeps sending reasoning stubs: the stream never
 	// terminates and never produces thinking evidence.
 	for index := 0; index < 2000; index++ {
-		degraded = append(degraded, streamData(": grok2api-reasoning-start\n\n"))
+		degraded = append(degraded, streamData(": provider-reasoning-start\n\n"))
 	}
 	host.scriptStream("auth-1", degraded...)
 	host.scriptStream("auth-2", goodResponsesStreamScript()...)
@@ -2199,7 +2199,7 @@ func TestTransparentToolCallPreambleWithEncryptedReasoningIsDelivered(t *testing
 // Codex continuation turns on grok-4.7 returned function calls with no
 // reasoning bill and no evidence, while healthy turns of the same size carried
 // 245-294 reasoning tokens. Delivering them let an agent run for nine minutes
-// without reasoning until the quota ran out. grok2api keeps such 0-thinking
+// without reasoning until the quota ran out. The upstream gateway keeps such 0-thinking
 // tool turns behind the gate, and so does the plugin.
 // A well-formed tool call without a reasoning bill depends on the request,
 // not the account: the quality lab sent a real Codex continuation to three

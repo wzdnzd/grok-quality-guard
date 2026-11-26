@@ -44,7 +44,7 @@ func TestClassifyNonStreamQuality(t *testing.T) {
 
 func TestReasoningEvidenceCommentSatisfiesCipherFloor(t *testing.T) {
 	analyzer := NewStreamAnalyzer()
-	analyzer.ObserveChunk([]byte(": grok2api-reasoning-evidence 1024\n\n"))
+	analyzer.ObserveChunk([]byte(": provider-reasoning-evidence 1024\n\n"))
 	analyzer.ObserveChunk([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"visible\"}}]}\n\n"))
 	signals := analyzer.Finalize(true)
 	if !signals.HasThinking || signals.EncryptedBytes != 1024 || signals.EncryptedFloor != 256 {
@@ -52,7 +52,7 @@ func TestReasoningEvidenceCommentSatisfiesCipherFloor(t *testing.T) {
 	}
 
 	short := NewStreamAnalyzer()
-	short.ObserveChunk([]byte(": grok2api-reasoning-evidence 64\n\n"))
+	short.ObserveChunk([]byte(": provider-reasoning-evidence 64\n\n"))
 	shortSignals := short.Finalize(true)
 	if shortSignals.HasThinking {
 		t.Fatalf("short encrypted stub counted as thinking: %#v", shortSignals)

@@ -10,7 +10,7 @@ import (
 
 func TestReasoningStubAndUsageTokensAreNotThinking(t *testing.T) {
 	analyzer := NewStreamAnalyzer()
-	analyzer.ObserveChunk([]byte(": grok2api-reasoning-start\n\n"))
+	analyzer.ObserveChunk([]byte(": provider-reasoning-start\n\n"))
 	analyzer.ObserveChunk([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"answer answer answer answer answer answer answer answer answer answer answer answer answer answer answer answer answer answer answer answer \"}}]}\n\n"))
 	analyzer.ObserveChunk([]byte("data: {\"usage\":{\"completion_tokens\":80,\"completion_tokens_details\":{\"reasoning_tokens\":79}}}\n\n"))
 	sig := analyzer.Finalize(true)
@@ -228,7 +228,7 @@ func TestReasoningEligibilityUsesDynamicModelRules(t *testing.T) {
 		t.Fatal("explicitly disabled reasoning must bypass the thinking gate")
 	}
 	if reasoningRequiredForModel("custom-grok", []byte(`{"reasoning_effort":"high"}`)) {
-		t.Fatal("unknown models must stay outside the thinking gate, matching grok2api")
+		t.Fatal("unknown models must stay outside the thinking gate, matching the upstream gateway")
 	}
 	if !reasoningRequiredForModel("vendor-alias", []byte(`{"model":"grok-4.6","stream":true}`)) {
 		t.Fatal("known body model should resolve an unknown requested alias")

@@ -200,7 +200,7 @@ func TestProbeParsesHostLineChunksWithoutNewlines(t *testing.T) {
 	entries, auths := singleGrokAuth(t, "auth-1", "[EMAIL]", nil)
 	host := newMockHostCall(entries, auths)
 	host.scriptStream("auth-1", []pluginapi.HostModelStreamReadResponse{
-		streamData(": grok2api-reasoning-start"),
+		streamData(": provider-reasoning-start"),
 		streamData("event: response.reasoning_summary_text.delta"),
 		streamData(`data: {"type":"response.reasoning_summary_text.delta","delta":"plan carefully"}`),
 		streamData("event: response.output_text.delta"),
@@ -255,7 +255,7 @@ func TestProbeTPSIncludesPreStreamLatency(t *testing.T) {
 		t.Fatalf("probe TPS clock started after the upstream wait: %#v", account.Metrics)
 	}
 	if account.Metrics.TPS <= 0 || account.Metrics.TPS > 500 {
-		t.Fatalf("probe TPS = %.1f, want a sane grok2api-scale value: %#v", account.Metrics.TPS, account.Metrics)
+		t.Fatalf("probe TPS = %.1f, want a sane streaming-scale value: %#v", account.Metrics.TPS, account.Metrics)
 	}
 }
 

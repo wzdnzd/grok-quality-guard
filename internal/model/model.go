@@ -15,7 +15,7 @@ var knownReasoningFamilies = []string{
 	"grok-4.20-multi-agent",
 }
 
-// knownReasoningEffortSuffixes mirrors grok2api effort aliases so a configured
+// knownReasoningEffortSuffixes mirrors the upstream gateway's effort aliases so a configured
 // base model also covers aliases such as grok-4.8-low.
 var knownReasoningEffortSuffixes = []string{
 	"-minimal",
@@ -34,7 +34,7 @@ func ReasoningSupport(name string) (known bool, supports bool) {
 }
 
 // ReasoningSupportWithExclusions lets users override the inferred capability
-// for models that do not emit reasoning. This follows grok2api's catalog
+// for models that do not emit reasoning. This follows the upstream gateway's catalog
 // profile idea without requiring a code change for every new model.
 func ReasoningSupportWithExclusions(name string, nonReasoning []string) (known bool, supports bool) {
 	slug := NormalizeSlug(name)

@@ -230,12 +230,12 @@ func TestAnalyzerRevisionSkipsControlFrames(t *testing.T) {
 	if got := analyzer.Revision(); got != 0 {
 		t.Fatalf("control frames advanced the revision to %d", got)
 	}
-	analyzer.ObserveChunk([]byte(": grok2api-reasoning-start\n\n"))
+	analyzer.ObserveChunk([]byte(": provider-reasoning-start\n\n"))
 	afterStub := analyzer.Revision()
 	if afterStub == 0 {
 		t.Fatal("reasoning start did not advance the revision")
 	}
-	analyzer.ObserveChunk([]byte(": grok2api-reasoning-start\n\n"))
+	analyzer.ObserveChunk([]byte(": provider-reasoning-start\n\n"))
 	if got := analyzer.Revision(); got != afterStub {
 		t.Fatalf("repeated stub advanced the revision to %d", got)
 	}

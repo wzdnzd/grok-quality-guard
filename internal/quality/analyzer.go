@@ -228,12 +228,10 @@ func (a *StreamAnalyzer) observeEvent(ev SSEEvent, now time.Time) {
 	comment := strings.TrimSpace(strings.ToLower(ev.Comment))
 	if comment != "" {
 		a.signals.EventCount++
-		switch {
-		case strings.HasPrefix(comment, strings.TrimPrefix(qualityReasoningSSEComment, ": ")):
+		if _, ok := reasoningCommentPayload(comment, qualityReasoningStartMarker); ok {
 			a.markReasoningStart(now)
 			a.markFirstToken(now)
-		case strings.HasPrefix(comment, strings.TrimPrefix(qualityReasoningEvidencePrefix, ": ")):
-			value := strings.TrimSpace(strings.TrimPrefix(ev.Comment, strings.TrimPrefix(qualityReasoningEvidencePrefix, ": ")))
+		} else if value, ok := reasoningCommentPayload(comment, qualityReasoningEvidenceMarker); ok {
 			if count, err := strconv.ParseInt(value, 10, 64); err == nil && count > 0 {
 				a.addEncryptedCount(count)
 			}
@@ -256,6 +254,20 @@ func (a *StreamAnalyzer) observeEvent(ev SSEEvent, now time.Time) {
 		a.signals.Terminal = true
 		a.terminalAt = now
 	}
+}
+
+// reasoningCommentPayload matches the stable suffix of upstream reasoning
+// control comments, allowing an optional provider prefix without hard-coding
+// one in the analyzer.
+func reasoningCommentPayload(comment, marker string) (string, bool) {
+	index := strings.LastIndex(comment, marker)
+	if index < 0 {
+		return "", false
+	}
+	if index > 0 && comment[index-1] != '-' && comment[index-1] != ' ' && comment[index-1] != '\t' {
+		return "", false
+	}
+	return strings.TrimSpace(comment[index+len(marker):]), true
 }
 
 func sseEventIsTerminal(event string) bool {

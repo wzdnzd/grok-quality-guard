@@ -188,7 +188,7 @@ func executionModel(req Request, body []byte) string {
 	return firstNonEmpty(req.Model, asString(req.Metadata["model"]), modelFromRequestBody(body), req.Alt)
 }
 
-// ensureTransparentReasoningEvidence mirrors the grok2api Build/Console request
+// ensureTransparentReasoningEvidence mirrors the upstream gateway's Build/Console request
 // boundary. Codex and Responses clients may omit encrypted reasoning from the
 // include list, which makes a healthy stream indistinguishable from a degraded
 // one. Add the include before the quality gate observes the upstream stream.
