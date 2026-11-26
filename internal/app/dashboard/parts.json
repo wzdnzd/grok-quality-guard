@@ -1,0 +1,26 @@
+{
+  "css": [
+    "assets/base.css",
+    "assets/layout.css",
+    "assets/tables-events.css",
+    "assets/settings-forms.css",
+    "assets/task-center.css",
+    "assets/drawers.css",
+    "assets/overlays.css",
+    "assets/responsive.css",
+    "assets/proxy-editor.css"
+  ],
+  "js": [
+    "js/i18n.js",
+    "js/state-helpers.js",
+    "js/runtime.js",
+    "js/navigation-data.js",
+    "js/views.js",
+    "js/proxy.js",
+    "js/tasks.js",
+    "js/events-settings.js",
+    "js/account-detail.js",
+    "js/event-handlers.js",
+    "js/init.js"
+  ]
+}

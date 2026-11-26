@@ -1,0 +1,623 @@
+
+    /* Proxy source editor refinements */
+    :root {
+      --mono: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
+      --editor-shadow: 0 18px 44px rgba(15, 23, 42, .12);
+    }
+
+    :root[data-theme="dark"] {
+      --editor-shadow: 0 18px 44px rgba(0, 0, 0, .44);
+    }
+
+    #proxySourceDrawer .drawer {
+      width: min(800px, 100%);
+      box-shadow: var(--editor-shadow);
+    }
+
+    #proxySourceDrawer .drawer-head {
+      padding: 20px 22px 16px;
+      background: var(--surface);
+    }
+
+    #proxySourceDrawer .drawer-head>div {
+      min-width: 0;
+    }
+
+    #proxySourceDrawer .drawer-head h2 {
+      font-size: 17px;
+      letter-spacing: -.015em;
+    }
+
+    #proxySourceDrawer .drawer-head p {
+      max-width: 660px;
+      font-size: 11px;
+      line-height: 1.55;
+    }
+
+    .drawer-meta {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+      color: var(--subtle);
+      font-size: 10px;
+      line-height: 1.45;
+    }
+
+    .drawer-meta[hidden] {
+      display: none !important;
+    }
+
+    .meta-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface-muted);
+      color: var(--text);
+      font-weight: 550;
+    }
+
+    .meta-chip .icon {
+      width: 11px;
+      height: 11px;
+      color: var(--muted);
+    }
+
+    #proxySourceDrawer .drawer-body {
+      padding: 18px 22px 24px;
+      overflow-x: hidden;
+      scrollbar-gutter: stable;
+    }
+
+    #proxySourceDrawer .drawer-form {
+      gap: 16px;
+    }
+
+    #proxySourceDrawer .drawer-form .card {
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: none;
+      overflow: visible;
+    }
+
+    #proxySourceDrawer .form-section {
+      padding: 18px;
+    }
+
+    #proxySourceDrawer .form-section>.section-title {
+      margin-bottom: 15px;
+      font-size: 13px;
+      letter-spacing: -.005em;
+    }
+
+    #proxySourceDrawer .section-count {
+      margin-left: 2px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: var(--surface-muted);
+      color: var(--muted);
+      font-size: 9.5px;
+      line-height: 1.5;
+    }
+
+    #proxySourceDrawer .field-grid {
+      gap: 14px 16px;
+    }
+
+    #proxySourceDrawer .field {
+      gap: 6px;
+    }
+
+    #proxySourceDrawer .field-label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 16px;
+    }
+
+    #proxySourceDrawer .field-label>label,
+    #proxySourceDrawer .field-label-text {
+      color: var(--text);
+      font-size: 11.5px;
+      font-weight: 600;
+      line-height: 16px;
+    }
+
+    #proxySourceDrawer .field input,
+    #proxySourceDrawer .field select,
+    #proxySourceDrawer .field textarea {
+      min-height: 36px;
+      padding: 7px 10px;
+      border-radius: 8px;
+      background: var(--bg);
+      font-size: 12px;
+      transition: border-color .16s, background .16s, box-shadow .16s, opacity .16s;
+    }
+
+    #proxySourceDrawer .field input:hover:not(:disabled),
+    #proxySourceDrawer .field select:hover:not(:disabled),
+    #proxySourceDrawer .field textarea:hover:not(:disabled) {
+      border-color: color-mix(in srgb, var(--line-strong) 62%, var(--text));
+    }
+
+    #proxySourceDrawer .field input:focus,
+    #proxySourceDrawer .field select:focus,
+    #proxySourceDrawer .field textarea:focus {
+      border-color: var(--focus);
+      background: var(--surface);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 11%, transparent);
+    }
+
+    #proxySourceDrawer .field input:disabled,
+    #proxySourceDrawer .field select:disabled,
+    #proxySourceDrawer .field textarea:disabled {
+      background: var(--surface-muted);
+      color: var(--muted);
+      opacity: .62;
+    }
+
+    #proxySourceDrawer .field.is-disabled>.field-label {
+      opacity: .58;
+    }
+
+    #proxySourceDrawer .check-row {
+      min-height: 36px;
+      padding: 0 10px;
+      background: var(--bg);
+      cursor: default;
+    }
+
+    #proxySourceDrawer .check-choice {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 0;
+      min-height: 34px;
+      cursor: pointer;
+    }
+
+    #proxySourceDrawer .check-row input[type="checkbox"] {
+      width: 15px;
+      height: 15px;
+      min-height: 0;
+      margin: 0;
+      padding: 0;
+    }
+
+    #proxySourceDrawer .check-row .help-tip {
+      margin-left: auto;
+    }
+
+    .help-tip {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 15px;
+      height: 15px;
+      flex: 0 0 15px;
+      border-radius: 50%;
+      color: var(--subtle);
+      cursor: help;
+      vertical-align: middle;
+    }
+
+    .help-tip:hover,
+    .help-tip:focus-visible {
+      background: var(--surface-muted);
+      color: var(--text);
+    }
+
+    .help-tip:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 1px;
+    }
+
+    .help-tip .icon {
+      width: 13px;
+      height: 13px;
+      stroke-width: 2;
+    }
+
+    .help-tooltip {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 120;
+      box-sizing: border-box;
+      display: none;
+      width: max-content;
+      max-width: min(320px, calc(100vw - 24px));
+      padding: 8px 10px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--muted);
+      box-shadow: 0 14px 34px rgba(0, 0, 0, .2);
+      font-size: 10.5px;
+      font-weight: 500;
+      line-height: 1.55;
+      text-align: left;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      pointer-events: none;
+    }
+
+    .help-tooltip.is-open {
+      display: block;
+    }
+
+    #proxySourceDrawer .hint,
+    #proxySourceDrawer .help-tooltip,
+    #proxySourceDrawer .proxy-preview-summary,
+    #proxySourceDrawer .proxy-empty-note,
+    #proxySourceDrawer .proxy-preview-empty {
+      color: var(--muted);
+      font-size: 10.5px;
+      font-weight: 500;
+      line-height: 1.55;
+    }
+
+    #proxySourceDrawer .status-line {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    #proxySourceDrawer .proxy-node-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    #proxySourceDrawer .proxy-node-row {
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--bg);
+    }
+
+    #proxySourceDrawer .proxy-node-row-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 24px;
+      margin-bottom: 10px;
+    }
+
+    #proxySourceDrawer .proxy-node-row-index {
+      color: var(--subtle);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .04em;
+    }
+
+    #proxySourceDrawer .proxy-node-row-index b {
+      margin-left: 3px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-weight: 600;
+    }
+
+    #proxySourceDrawer .proxy-node-row-remove {
+      width: 26px;
+      min-width: 26px;
+      height: 26px;
+      min-height: 26px;
+      padding: 0;
+    }
+
+    #proxySourceDrawer .proxy-node-row-remove[hidden] {
+      display: none;
+    }
+
+    #proxySourceDrawer .proxy-node-row-fields {
+      display: grid;
+      grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+      gap: 12px 14px;
+    }
+
+    #proxySourceDrawer .proxy-node-row-fields .field {
+      min-width: 0;
+    }
+
+    #proxySourceDrawer .proxy-node-row-fields input {
+      width: 100%;
+      min-width: 0;
+      text-overflow: ellipsis;
+    }
+
+    #proxySourceDrawer .proxy-node-row-fields input:focus {
+      text-overflow: clip;
+    }
+
+    #proxySourceDrawer .section-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 15px;
+    }
+
+    #proxySourceDrawer .section-heading .section-title {
+      min-width: 0;
+      margin-bottom: 0;
+    }
+
+    #proxySourceDrawer .section-heading .btn {
+      flex: 0 0 auto;
+    }
+
+    #proxySourceDrawer [data-proxy-node-add] {
+      border-style: dashed;
+      background: var(--bg);
+      color: var(--muted);
+    }
+
+    #proxySourceDrawer [data-proxy-node-add]:hover {
+      border-color: var(--line-strong);
+      background: var(--surface-muted);
+      color: var(--text);
+    }
+
+    #proxySourceDrawer .proxy-template-variable {
+      margin-top: 12px;
+      border-radius: 9px;
+      background: var(--bg);
+      overflow: visible;
+    }
+
+    #proxySourceDrawer .proxy-template-variable>summary {
+      min-height: 40px;
+      padding: 9px 11px;
+    }
+
+    #proxySourceDrawer .proxy-template-variable>summary:hover {
+      background: var(--surface-muted);
+    }
+
+    #proxySourceDrawer .proxy-variable-name {
+      font-size: 11.5px;
+    }
+
+    #proxySourceDrawer .proxy-variable-kind {
+      margin-left: 0;
+      padding: 1px 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface-muted);
+      color: var(--muted);
+      font-size: 9.5px;
+      line-height: 1.5;
+    }
+
+    #proxySourceDrawer .proxy-variable-help {
+      margin-left: auto;
+    }
+
+    #proxySourceDrawer .proxy-variable-body {
+      padding: 14px;
+      background: var(--surface);
+    }
+
+    #proxySourceDrawer .proxy-generation-grid {
+      gap: 12px 14px;
+    }
+
+    #proxySourceDrawer .proxy-group-editor {
+      background: var(--bg);
+    }
+
+    #proxySourceDrawer .proxy-group-editor .hint,
+    #proxySourceDrawer .proxy-variable-body .hint {
+      color: var(--muted);
+    }
+
+    .proxy-preview-summary {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin: 14px 0 8px;
+      color: var(--muted);
+      font-size: 10.5px;
+    }
+
+    .proxy-preview-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .proxy-preview-card {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--bg);
+    }
+
+    .proxy-preview-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 7px 10px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-muted);
+    }
+
+    .proxy-preview-index {
+      color: var(--subtle);
+      font-size: 9.5px;
+      font-weight: 650;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .proxy-preview-badge {
+      padding: 1px 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 9.5px;
+      line-height: 1.5;
+    }
+
+    .proxy-preview-url {
+      padding: 11px 12px 8px;
+      color: var(--text);
+      font-size: 11.5px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .proxy-preview-values {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      padding: 0 12px 11px;
+    }
+
+    .proxy-preview-value {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 4px;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 10px;
+    }
+
+    .proxy-preview-value b {
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 9.5px;
+      font-weight: 600;
+    }
+
+    .proxy-preview-empty,
+    .proxy-empty-note {
+      padding: 13px 14px;
+      border: 1px dashed var(--line-strong);
+      border-radius: 9px;
+      color: var(--subtle);
+      font-size: 10.5px;
+      text-align: center;
+    }
+
+    #proxySourceDrawer .drawer-form>.form-actions {
+      margin-top: 0;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--surface);
+    }
+
+    #proxySourceDrawer .drawer-form>.form-actions .btn {
+      min-height: 34px;
+      padding-left: 12px;
+      padding-right: 12px;
+    }
+
+    #proxySourceDrawer .drawer-form>.form-actions .status-line {
+      max-width: 48%;
+      text-align: right;
+    }
+
+    @media (max-width: 680px) {
+      #proxySourceDrawer .proxy-node-row-fields {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      #proxySourceDrawer .section-heading {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      #proxySourceDrawer .drawer-head {
+        padding: 16px;
+      }
+
+      #proxySourceDrawer .drawer-body {
+        padding: 14px;
+      }
+
+      #proxySourceDrawer .form-section {
+        padding: 15px;
+      }
+
+      #proxySourceDrawer .drawer-form>.form-actions .status-line {
+        max-width: none;
+        text-align: left;
+      }
+    }
+
+    .settings-language-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 14px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+
+    .settings-language-copy {
+      min-width: 0;
+    }
+
+    .settings-language-copy h3 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .settings-language-copy p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .settings-language-control {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .settings-language-control label {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .settings-language-control select {
+      min-width: 148px;
+    }
+
+    @media (max-width: 680px) {
+      .settings-language-card {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .settings-language-control {
+        width: 100%;
+      }
+
+      .settings-language-control select {
+        flex: 1 1 auto;
+      }
+    }
+  

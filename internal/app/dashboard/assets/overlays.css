@@ -1,0 +1,126 @@
+    .confirm-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(0, 0, 0, .34);
+      backdrop-filter: blur(3px);
+    }
+
+    .confirm-card {
+      width: min(460px, 100%);
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, .22);
+      animation: confirm-in .16s ease-out;
+    }
+
+    .confirm-card.wide {
+      width: min(620px, 100%);
+    }
+
+    .confirm-card.source-picker-open {
+      overflow: visible;
+    }
+
+    .confirm-card.source-picker-open .confirm-actions {
+      border-radius: 0 0 12px 12px;
+    }
+
+    @keyframes confirm-in {
+      from {
+        transform: translateY(8px) scale(.985);
+        opacity: .65;
+      }
+
+      to {
+        transform: none;
+        opacity: 1;
+      }
+    }
+
+    .confirm-main {
+      display: flex;
+      gap: 13px;
+      padding: 19px 19px 17px;
+    }
+
+    .confirm-icon {
+      display: grid;
+      flex: 0 0 auto;
+      place-items: center;
+      width: 36px;
+      height: 36px;
+      border: 1px solid color-mix(in srgb, var(--info) 28%, var(--line));
+      border-radius: 10px;
+      background: var(--info-soft);
+      color: var(--info);
+    }
+
+    .confirm-icon.danger {
+      border-color: color-mix(in srgb, var(--bad) 30%, var(--line));
+      background: var(--bad-soft);
+      color: var(--bad);
+    }
+
+    .confirm-title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 650;
+      letter-spacing: -.01em;
+    }
+
+    .confirm-detail {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.65;
+      white-space: pre-line;
+    }
+
+    .confirm-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 7px;
+      padding: 12px 16px;
+      border-top: 1px solid var(--line);
+      background: var(--card);
+    }
+
+    .toast {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 60;
+      max-width: 420px;
+      padding: 10px 13px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: 0 12px 36px rgba(0, 0, 0, .16);
+      font-size: 11px;
+    }
+
+    .toast.success {
+      border-color: color-mix(in srgb, var(--good) 35%, var(--line));
+      background: var(--good-soft);
+      color: var(--good);
+    }
+
+    .toast.error {
+      border-color: color-mix(in srgb, var(--bad) 35%, var(--line));
+      background: var(--bad-soft);
+      color: var(--bad);
+    }
+
+    body.drawer-open,
+    body.confirm-open {
+      overflow: hidden;
+    }
+
+

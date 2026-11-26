@@ -1,0 +1,406 @@
+
+    :root {
+      color-scheme: light;
+      --bg: #fdfdfc;
+      --card: #f8f8f7;
+      --surface: #ffffff;
+      --surface-muted: #f1f1ef;
+      --surface-hover: #f4f4f2;
+      --line: #e7e7e4;
+      --line-strong: #d9d9d5;
+      --text: #18181b;
+      --muted: #71717a;
+      --subtle: #a1a1aa;
+      --primary: #18181b;
+      --on-primary: #ffffff;
+      --focus: #2563eb;
+      --good: #15803d;
+      --good-soft: #f0fdf4;
+      --warn: #b45309;
+      --warn-soft: #fffbeb;
+      --bad: #b42318;
+      --bad-soft: #fef3f2;
+      --info: #0369a1;
+      --info-soft: #f0f9ff;
+      --radius: 8px;
+      --shadow: 0 1px 2px rgba(24, 24, 27, .025);
+    }
+
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0b0b0c;
+      --card: #141416;
+      --surface: #18181b;
+      --surface-muted: #222225;
+      --surface-hover: #27272a;
+      --line: #29292d;
+      --line-strong: #3f3f46;
+      --text: #f4f4f5;
+      --muted: #a1a1aa;
+      --subtle: #71717a;
+      --primary: #f4f4f5;
+      --on-primary: #18181b;
+      --focus: #60a5fa;
+      --good: #4ade80;
+      --good-soft: #10251a;
+      --warn: #fbbf24;
+      --warn-soft: #261f0d;
+      --bad: #f87171;
+      --bad-soft: #2a1414;
+      --info: #7dd3fc;
+      --info-soft: #10212a;
+      --shadow: none;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-height: 100%;
+    }
+
+    html {
+      background: var(--bg);
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: .5;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      outline: none;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible,
+    [role="tab"]:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    .svg-sprite {
+      position: absolute;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+    }
+
+    .icon {
+      width: 15px;
+      height: 15px;
+      flex: 0 0 auto;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .spin {
+      animation: spin .9s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .page {
+      width: min(100%, 1440px);
+      margin: 0 auto;
+      padding: 24px 28px 56px;
+    }
+
+    .page-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 20px;
+    }
+
+    .eyebrow {
+      margin: 0 0 5px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .page-head h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.35;
+      font-weight: 650;
+      letter-spacing: -.015em;
+    }
+
+    .page-head p {
+      margin: 5px 0 0;
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .head-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-top: 2px;
+    }
+
+    .sync-label {
+      color: var(--subtle);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 32px;
+      padding: 0 11px;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 550;
+      white-space: nowrap;
+      transition: background .16s, border-color .16s, color .16s;
+    }
+
+    .btn:hover {
+      background: var(--surface-hover);
+      border-color: var(--subtle);
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: var(--on-primary);
+    }
+
+    .btn-primary:hover {
+      background: var(--primary);
+      border-color: var(--primary);
+      opacity: .88;
+    }
+
+    .btn-danger {
+      border-color: color-mix(in srgb, var(--bad) 32%, var(--line));
+      background: var(--bad-soft);
+      color: var(--bad);
+    }
+
+    .btn-danger:hover {
+      background: color-mix(in srgb, var(--bad-soft) 82%, var(--bad) 18%);
+    }
+
+    .btn-ghost {
+      border-color: transparent;
+      background: transparent;
+      color: var(--muted);
+    }
+
+    .btn-ghost:hover {
+      background: var(--surface-muted);
+      color: var(--text);
+    }
+
+    .btn-xs {
+      min-height: 27px;
+      padding: 0 8px;
+      border-radius: 6px;
+      font-size: 11px;
+    }
+
+    .icon-btn {
+      width: 32px;
+      padding: 0;
+    }
+
+    .icon-btn.btn-xs {
+      width: 27px;
+    }
+
+    .tabs,
+    .settings-tabs {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      width: max-content;
+      max-width: 100%;
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--surface-muted);
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .tabs {
+      width: 100%;
+      margin-bottom: 18px;
+    }
+
+    .settings-tabs {
+      margin-bottom: 14px;
+    }
+
+    .proxy-workspace-bar {
+      display: flex;
+      align-items: stretch;
+      min-height: 46px;
+      margin-bottom: 12px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+
+    .proxy-subnav {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: stretch;
+      gap: 18px;
+    }
+
+    .proxy-subnav .tab-button,
+    .proxy-subnav .tab-button.active {
+      position: relative;
+      min-height: 44px;
+      padding: 0 2px;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .proxy-subnav .tab-button {
+      color: var(--muted);
+    }
+
+    .proxy-subnav .tab-button.active {
+      color: var(--text);
+    }
+
+    .proxy-subnav .tab-button::after {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      height: 2px;
+      border-radius: 2px 2px 0 0;
+      background: transparent;
+      content: "";
+    }
+
+    .proxy-subnav .tab-button.active::after {
+      background: var(--text);
+    }
+
+    .proxy-workspace-status {
+      display: flex;
+      flex: 1 1 auto;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      margin-left: 16px;
+      padding-left: 16px;
+      border-left: 1px solid var(--line);
+    }
+
+    .proxy-workspace-status > .icon {
+      color: var(--subtle);
+    }
+
+    #proxyAutoBindText {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .proxy-workspace-status .notice-actions {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 6px;
+      margin-left: 8px;
+    }
+
+    .tabs::-webkit-scrollbar,
+    .settings-tabs::-webkit-scrollbar {
+      display: none;
+    }
+
+    .tab-button {
+      min-height: 30px;
+      padding: 0 13px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 550;
+      white-space: nowrap;
+      transition: background .16s, color .16s, box-shadow .16s;
+    }
+
+    .tab-button:hover {
+      color: var(--text);
+    }
+
+    .tab-button.active {
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, .07);
+    }
+
+    .tab-panel {
+      display: none;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
